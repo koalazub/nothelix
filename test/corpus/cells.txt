@@ -1,0 +1,124 @@
+================================================================================
+Simple code cell
+================================================================================
+
+# ─── Code Cell [1] ───
+x = 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (code_cell
+    (code_cell_header
+      (execution_count (number)))
+    (cell_content
+      (content_line))))
+
+================================================================================
+Code cell with multiple lines
+================================================================================
+
+# ─── Code Cell [2] ───
+t = 0:0.001:1
+y = sin.(2π*10*t)
+plot(t, y)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (code_cell
+    (code_cell_header
+      (execution_count (number)))
+    (cell_content
+      (content_line)
+      (content_line)
+      (content_line))))
+
+================================================================================
+Markdown cell
+================================================================================
+
+# ─── Markdown Cell ───
+This is a **markdown** cell.
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (markdown_cell
+    (markdown_cell_header)
+    (cell_content
+      (content_line))))
+
+================================================================================
+Code cell with output
+================================================================================
+
+# ─── Code Cell [3] ───
+println("Hello, World!")
+
+# ─── Output ───
+Hello, World!
+# ─────────────
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (code_cell
+    (code_cell_header
+      (execution_count (number)))
+    (cell_content
+      (content_line)
+      (blank_line)))
+  (output_section
+    (output_header)
+    (output_content
+      (output_line))
+    (output_footer)))
+
+================================================================================
+Mixed cells
+================================================================================
+
+# ─── Markdown Cell ───
+# Analysis
+
+# ─── Code Cell [1] ───
+data = load("data.csv")
+
+# ─── Code Cell [2] ───
+result = analyze(data)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (markdown_cell
+    (markdown_cell_header)
+    (cell_content
+      (content_line)
+      (blank_line)))
+  (code_cell
+    (code_cell_header
+      (execution_count (number)))
+    (cell_content
+      (content_line)
+      (blank_line)))
+  (code_cell
+    (code_cell_header
+      (execution_count (number)))
+    (cell_content
+      (content_line))))
+
+================================================================================
+Code cell with no execution count
+================================================================================
+
+# ─── Code Cell [ ] ───
+x = 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (code_cell
+    (code_cell_header)
+    (cell_content
+      (content_line))))

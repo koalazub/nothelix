@@ -1,0 +1,11 @@
+node_modules/
+build/
+target/
+Cargo.lock
+src/
+!src/grammar.json
+*.o
+*.so
+*.dylib
+*.wasm
+.DS_Store

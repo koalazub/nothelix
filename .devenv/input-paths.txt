@@ -1,0 +1,7 @@
+/Users/alielali/projects/tree-sitter-notebook/.devenv/flake.json
+/Users/alielali/projects/tree-sitter-notebook/.devenv.flake.nix
+/Users/alielali/projects/tree-sitter-notebook/.env
+/Users/alielali/projects/tree-sitter-notebook/devenv.local.nix
+/Users/alielali/projects/tree-sitter-notebook/devenv.lock
+/Users/alielali/projects/tree-sitter-notebook/devenv.nix
+/Users/alielali/projects/tree-sitter-notebook/devenv.yaml

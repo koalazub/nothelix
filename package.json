@@ -1,0 +1,28 @@
+{
+  "name": "tree-sitter-notebook",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for notebook cell format (Jupyter, Nothelix)",
+  "main": "bindings/node",
+  "keywords": [
+    "tree-sitter",
+    "notebook",
+    "jupyter",
+    "nothelix",
+    "parser"
+  ],
+  "author": "Nothelix Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "nan": "^2.17.0"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.20.8"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.notebook",
+      "file-types": ["ipynb"],
+      "injection-regex": "notebook|jupyter|ipynb"
+    }
+  ]
+}

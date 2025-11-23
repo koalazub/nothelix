@@ -1,0 +1,20 @@
+[package]
+name = "tree-sitter-notebook"
+version = "0.1.0"
+description = "Notebook grammar for tree-sitter"
+authors = ["Nothelix Contributors"]
+license = "MIT"
+readme = "README.md"
+keywords = ["tree-sitter", "notebook", "jupyter", "parser"]
+categories = ["parsing", "text-editors"]
+repository = "https://github.com/your-org/tree-sitter-notebook"
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+tree-sitter = "0.20"
+
+[build-dependencies]
+cc = "1.0"
