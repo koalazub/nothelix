@@ -309,8 +309,8 @@
 ;; Register keybindings for notebook files
 (keymap (extension "ipynb")
         (normal
-          ("[l" ":previous_cell")
-          ("]l" ":next_cell")
+          ("[" (l ":previous_cell"))
+          ("]" (l ":next_cell"))
           (space (n (r ":execute-cell")
                     (j ":cell-picker")))))
 
