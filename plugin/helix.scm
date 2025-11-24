@@ -323,8 +323,12 @@
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
-        \"]l\": \"next-cell\",
-        \"[l\": \"previous-cell\",
+        \"]\": {
+          \"l\": \"next-cell\"
+        },
+        \"[\": {
+          \"l\": \"previous-cell\"
+        },
         \"g\": {
           \"n\": {
             \"r\": \"execute-cell\"

@@ -72,8 +72,12 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
-        \"]l\": \"next-cell\",
-        \"[l\": \"previous-cell\",
+        \"]\": {
+          \"l\": \"next-cell\"
+        },
+        \"[\": {
+          \"l\": \"previous-cell\"
+        },
         \"g\": {
           \"n\": {
             \"r\": \"execute-cell\"
