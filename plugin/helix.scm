@@ -43,8 +43,7 @@
   (helix.run-shell-command "echo 'After enqueue' >> /tmp/thread-test.log")
   (set-status! "Callback enqueued"))
 
-;;@doc
-;; Execute the current Jupyter cell
+;;@doc Execute the current Jupyter cell
 (define (execute-cell)
   (helix.run-shell-command "echo 'execute-cell called!' > /tmp/exec-debug.log")
   (helix.run-shell-command "date >> /tmp/exec-debug.log")
@@ -208,8 +207,7 @@
   (helix.redraw)
   (set-status! "✓ Cell execution complete!"))
 
-;;@doc
-;; Jump to next cell
+;;@doc Jump to next cell
 (define (next_cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -251,8 +249,7 @@
         (set-status! "Jumped to next cell"))
       (set-status! "No next cell found")))
 
-;;@doc
-;; Jump to previous cell
+;;@doc Jump to previous cell
 (define (previous_cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -320,11 +317,12 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
+;; Using comma (,) as notebook leader to avoid overriding space menu
 (keymap (extension "ipynb")
         (normal
           ("[" (l ":previous_cell"))
           ("]" (l ":next_cell"))
-          (space (n (r ":execute-cell") (j ":cell-picker")))))
+          ("," (r ":execute-cell") (j ":cell-picker"))))
 
 ;; ====== Cell Picker Component ======
 
@@ -418,11 +416,6 @@
             current-style)
           (loop (+ i 1)))))
 
-    ;; Help footer
-    (let ([help-y (+ y height -1)]
-          [help-style (theme-scope "ui.statusline")])
-      (frame-set-string! buf (+ x 2) help-y "j/k:Navigate  1-9:Jump  Enter:Select  ESC/q:Close" help-style))
-
     ;; Render preview panel
     (buffer/clear buf preview-area)
     (block/render buf preview-area
@@ -497,8 +490,7 @@
     render-cell-picker
     (hash "handle_event" handle-cell-picker-event)))
 
-;;@doc
-;; Open the cell picker to jump to any cell
+;;@doc Open cell picker to jump to any cell
 (define (cell-picker)
   (push-component! (make-cell-picker-component)))
 
