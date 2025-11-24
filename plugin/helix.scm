@@ -5,6 +5,7 @@
 (require "helix/ext.scm")
 (require-builtin helix/core/static)
 (require-builtin helix/core/text as text.)
+(require-builtin helix/core/keymaps as helix.keymaps.)
 (require (prefix-in helix. "helix/commands.scm"))
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in kernel. "kernel-manager.scm"))
@@ -319,7 +320,7 @@
 ;; Register keybindings for notebook files
 ;; 'g' menu for goto/execution, 'space' menu for picker
 (define notebook-keymap
-  (helix-string->keymap
+  (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
         \"]l\": \"next-cell\",
@@ -337,7 +338,7 @@
       }
     }"))
 
-(#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
+(helix.keymaps.#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 
 ;; ====== Cell Picker Component ======
 

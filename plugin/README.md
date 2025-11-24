@@ -64,8 +64,12 @@ Opens an interactive cell picker UI.
 All keybindings are scoped to `.ipynb` file extension only using extension-specific keymap registration:
 
 ```scheme
+;; Required at top of file:
+(require-builtin helix/core/keymaps as helix.keymaps.)
+
+;; Keymap definition:
 (define notebook-keymap
-  (helix-string->keymap
+  (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
         \"]l\": \"next-cell\",
@@ -83,7 +87,7 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
       }
     }"))
 
-(#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
+(helix.keymaps.#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 ```
 
 - `[l` - Previous cell
