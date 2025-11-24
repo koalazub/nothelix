@@ -227,21 +227,21 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Start searching at least 1 line ahead (or 2 if on a marker)
-  (define start-line
+  ;; Skip ahead from current position to search for next cell
+  ;; If on a marker, skip 2 lines; otherwise skip 1
+  (define search-start
     (if (is-cell-marker? current-line)
         (+ current-line 2)
         (+ current-line 1)))
 
-  ;; Find next cell marker
+  ;; Find next cell marker starting from search-start
   (define (find-next-cell line-idx)
-    (if (>= line-idx total-lines)
-        #f
-        (if (is-cell-marker? line-idx)
-            line-idx
-            (find-next-cell (+ line-idx 1)))))
+    (cond
+      [(>= line-idx total-lines) #f]
+      [(is-cell-marker? line-idx) line-idx]
+      [else (find-next-cell (+ line-idx 1))]))
 
-  (define next-cell-line (find-next-cell start-line))
+  (define next-cell-line (find-next-cell search-start))
 
   (if next-cell-line
       (begin
@@ -269,21 +269,21 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Start searching at least 1 line back (or 2 if on a marker)
-  (define start-line
+  ;; Skip back from current position to search for previous cell
+  ;; If on a marker, skip 2 lines; otherwise skip 1
+  (define search-start
     (if (is-cell-marker? current-line)
         (- current-line 2)
         (- current-line 1)))
 
-  ;; Find previous cell marker
+  ;; Find previous cell marker starting from search-start
   (define (find-prev-cell line-idx)
-    (if (< line-idx 0)
-        #f
-        (if (is-cell-marker? line-idx)
-            line-idx
-            (find-prev-cell (- line-idx 1)))))
+    (cond
+      [(< line-idx 0) #f]
+      [(is-cell-marker? line-idx) line-idx]
+      [else (find-prev-cell (- line-idx 1))]))
 
-  (define prev-cell-line (find-prev-cell start-line))
+  (define prev-cell-line (find-prev-cell search-start))
 
   (if prev-cell-line
       (begin
@@ -317,12 +317,23 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
-(keymap (extension "ipynb")
-        (normal
-          ("[" (l ":previous-cell"))
-          ("]" (l ":next-cell"))
-          (space (n (r ":execute-cell")
-                    (j ":cell-picker")))))
+;; Using proper extension-specific keymap registration
+(define notebook-keymap
+  (helix-string->keymap
+    "{
+      \"normal\": {
+        \"]l\": \"next-cell\",
+        \"[l\": \"previous-cell\",
+        \"space\": {
+          \"n\": {
+            \"r\": \"execute-cell\",
+            \"j\": \"cell-picker\"
+          }
+        }
+      }
+    }"))
+
+(#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 
 ;; ====== Cell Picker Component ======
 

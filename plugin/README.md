@@ -61,15 +61,25 @@ Opens an interactive cell picker UI.
 
 ## Keybindings
 
-All keybindings are scoped to `.ipynb` file extension only using the `keymap` macro:
+All keybindings are scoped to `.ipynb` file extension only using extension-specific keymap registration:
 
 ```scheme
-(keymap (extension "ipynb")
-        (normal
-          ("[" (l ":previous-cell"))
-          ("]" (l ":next-cell"))
-          (space (n (r ":execute-cell")
-                    (j ":cell-picker")))))
+(define notebook-keymap
+  (helix-string->keymap
+    "{
+      \"normal\": {
+        \"]l\": \"next-cell\",
+        \"[l\": \"previous-cell\",
+        \"space\": {
+          \"n\": {
+            \"r\": \"execute-cell\",
+            \"j\": \"cell-picker\"
+          }
+        }
+      }
+    }"))
+
+(#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 ```
 
 - `[l` - Previous cell
@@ -77,7 +87,10 @@ All keybindings are scoped to `.ipynb` file extension only using the `keymap` ma
 - `<space>nr` - Execute (run) cell
 - `<space>nj` - Cell picker (jump to cell)
 
-**Note:** The notebook commands are added under `<space>n` (notebook) submenu, preserving all other space menu functionality.
+**How it works:** The `#%add-extension-or-labeled-keymap` function registers the keymap specifically for `.ipynb` files. The keymaps are **merged recursively** with Helix's default keymaps, so:
+- Notebook-specific bindings are available in `.ipynb` files
+- All other Helix keybindings remain intact (space menu, goto menu, etc.)
+- Extension-specific bindings are checked first, falling back to defaults for unbound keys
 
 ## How It Works
 
