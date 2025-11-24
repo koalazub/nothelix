@@ -1,14 +1,27 @@
-[package]
-name = "tree-sitter-notebook"
-description = "Grammar for parsing Jupyter notebook cells with language injection"
+[workspace]
+members = [
+  "libnothelix",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 authors = ["koalazub <elali@cokoala.me>"]
 license = "MIT"
+repository = "https://github.com/koalazub/nothelix"
+edition = "2021"
+
+[package]
+name = "tree-sitter-notebook"
+description = "Grammar for parsing Jupyter notebook cells with language injection"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "notebook"]
 categories = ["parser-implementations", "parsing", "text-editors"]
-repository = "https://github.com/koalazub/nothelix"
-edition = "2021"
+repository.workspace = true
+edition.workspace = true
 autoexamples = false
 
 build = "bindings/rust/build.rs"

@@ -1,0 +1,18 @@
+# Nothelix Configuration
+# Copy to ~/.config/helix/nothelix.toml
+
+[graphics]
+# Graphics protocol for inline image rendering
+# Options:
+#   "auto"   - Auto-detect based on terminal (default)
+#   "kitty"  - Kitty graphics protocol (Kitty, Ghostty, WezTerm)
+#   "iterm2" - iTerm2 inline images protocol
+#   "sixel"  - Sixel graphics (xterm, mlterm, foot)
+#   "none"   - Disable graphics, use text placeholders
+#
+# Detection hierarchy (when "auto"):
+#   1. Kitty  - Best quality, efficient caching
+#   2. iTerm2 - Good quality, wide macOS support
+#   3. Sixel  - Limited colours, but widely supported
+#   4. None   - Fallback for unsupported terminals
+protocol = "auto"

@@ -1,4 +1,4 @@
-# Nothelix Steel Plugin
+# Nothelix - Jupyter Notebook Plugin for Helix
 
 Interactive cell execution plugin for Jupyter notebooks in Helix editor.
 
@@ -6,32 +6,35 @@ Interactive cell execution plugin for Jupyter notebooks in Helix editor.
 
 This Steel plugin provides:
 - Cell execution with persistent kernel state
-- vim-style cell navigation
+- Vim-style cell navigation (`]l`, `[l`)
 - Custom UI components (cell picker with preview)
-- File-scoped keybindings for `.ipynb` files
+- File-scoped keybindings for `.ipynb` files only
+- Optional auto-conversion of raw JSON notebooks
 
 ## Files
 
-- `helix.scm` - Main plugin with commands, UI components, and keybindings
+- `nothelix.scm` - Main plugin with commands, UI components, and keybindings
 - `kernel-manager.scm` - Kernel process lifecycle management
-- `init.scm` - Optional auto-converter for raw .ipynb JSON files
+- `nothelix-autoconvert.scm` - Optional auto-converter for raw .ipynb JSON files
 
 ## Installation
 
-Copy the plugin files to your Helix config directory:
+**See [INSTALL.md](INSTALL.md) for detailed installation instructions.**
+
+Quick install:
 
 ```bash
-cp helix.scm ~/.config/helix/
-cp kernel-manager.scm ~/.config/helix/
+# Copy plugin files
+mkdir -p ~/.config/helix/plugins
+cp nothelix.scm kernel-manager.scm ~/.config/helix/plugins/
+cp nothelix-autoconvert.scm ~/.config/helix/plugins/  # Optional
+
+# Add to your ~/.config/helix/init.scm:
+(require "plugins/nothelix.scm")
+(require "plugins/nothelix-autoconvert.scm")  # Optional
 ```
 
-**Optional:** If you want automatic conversion of raw .ipynb JSON files to cell format:
-
-```bash
-cp init.scm ~/.config/helix/
-```
-
-Restart Helix for changes to take effect.
+**Important:** This plugin is loaded as a module, so it won't overwrite your existing Helix configuration.
 
 ## Commands
 

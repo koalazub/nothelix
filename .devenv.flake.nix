@@ -2,14 +2,14 @@
   inputs =
     let
       vars = {
-  version = "1.10.1";
+  version = "1.11.2";
   system = "aarch64-darwin";
-  devenv_root = "/Users/alielali/projects/tree-sitter-notebook";
-  project_input_ref = "path:/Users/alielali/projects/tree-sitter-notebook";
-  devenv_dotfile = "/Users/alielali/projects/tree-sitter-notebook/.devenv";
+  devenv_root = "/Users/alielali/projects/nothelix";
+  project_input_ref = "path:/Users/alielali/projects/nothelix";
+  devenv_dotfile = "/Users/alielali/projects/nothelix/.devenv";
   devenv_dotfile_path = ./.devenv;
   devenv_tmpdir = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/";
-  devenv_runtime = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/devenv-981a360";
+  devenv_runtime = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/devenv-ccd5a83";
   devenv_istesting = false;
   devenv_direnvrc_latest_version = 1;
   container_name = null;
@@ -17,7 +17,7 @@
   ];
   hostname = "KoalaBook.local";
   username = "alielali";
-  git_root = null;
+  git_root = "/Users/alielali/projects/nothelix";
   secretspec = null;
 };
     in
@@ -39,14 +39,14 @@
     { nixpkgs, ... }@inputs:
     let
       vars = {
-  version = "1.10.1";
+  version = "1.11.2";
   system = "aarch64-darwin";
-  devenv_root = "/Users/alielali/projects/tree-sitter-notebook";
-  project_input_ref = "path:/Users/alielali/projects/tree-sitter-notebook";
-  devenv_dotfile = "/Users/alielali/projects/tree-sitter-notebook/.devenv";
+  devenv_root = "/Users/alielali/projects/nothelix";
+  project_input_ref = "path:/Users/alielali/projects/nothelix";
+  devenv_dotfile = "/Users/alielali/projects/nothelix/.devenv";
   devenv_dotfile_path = ./.devenv;
   devenv_tmpdir = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/";
-  devenv_runtime = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/devenv-981a360";
+  devenv_runtime = "/var/folders/tt/_2f670z12g5112tbhqvlz0080000gp/T/devenv-ccd5a83";
   devenv_istesting = false;
   devenv_direnvrc_latest_version = 1;
   container_name = null;
@@ -54,7 +54,7 @@
   ];
   hostname = "KoalaBook.local";
   username = "alielali";
-  git_root = null;
+  git_root = "/Users/alielali/projects/nothelix";
   secretspec = null;
 };
       devenv =

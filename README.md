@@ -1,211 +1,149 @@
 # Nothelix
 
-Interactive Jupyter notebook support for Helix editor with persistent kernel execution, vim-style navigation, and full syntax highlighting.
+Jupyter notebooks in the Helix editor.
 
-## Overview
+Nothelix brings interactive notebook workflows to Helix, letting you execute code cells, view outputs, and render inline images without leaving your terminal. It's built for developers and researchers who prefer modal editing but need the exploratory capabilities of notebooks.
 
-Nothelix brings the power of Jupyter notebooks to Helix, combining:
-- **Tree-sitter grammar** for syntax highlighting and cell parsing
-- **Steel plugin** for interactive cell execution with persistent kernels
-- **vim-style navigation** for seamless notebook editing
+## Why Nothelix?
 
-Execute code cells and see output inline, similar to VSCode or JupyterLab, but entirely within your terminal.
+Jupyter notebooks are powerful for data exploration, but the browser-based interface doesn't suit everyone. If you've ever wanted to edit `.ipynb` files with the speed of Helix's modal editing, or run notebook cells from a proper text editor, Nothelix bridges that gap.
 
-## Features
+The plugin converts notebooks into a readable cell format, manages kernel connections for code execution, and handles inline image rendering for plot outputs. All the heavy lifting happens in a Rust library, while Steel (Helix's embedded Scheme) handles the editor integration.
 
-### Interactive Execution
-- Execute code cells with live output capture
-- Persistent REPL kernel maintains state across executions
-- Output sections update in-place without stacking
-- Visual cell picker with live preview
+## Requirements
 
-### Syntax Highlighting
-- Multi-language injection (Julia, Python, Markdown)
-- Code cells get full language-specific highlighting
-- Output sections styled distinctly
-- Cell boundaries clearly marked
-
-### Navigation
-- Jump between cells with vim-style keybindings (`[l`, `]l`)
-- Visual picker to jump to any cell (`<space>nj`)
-- Text objects for cell selection (`ac`, `ic`)
-- All keybindings scoped to `.ipynb` files only
+- Helix built with Steel plugin support (from the [steel-event-system branch](https://github.com/helix-editor/helix/pull/8675))
+- A Julia installation (for kernel execution)
+- A terminal with graphics support (Kitty, Ghostty, WezTerm, iTerm2) for inline images
 
 ## Installation
 
-### Prerequisites
+### Using devenv (recommended)
 
-- Helix editor (v25.07+)
-- Julia installed and in PATH
-- Steel scripting support (built into Helix)
-
-### Step 1: Install Tree-sitter Grammar
-
-Add to `~/.config/helix/languages.toml`:
-
-```toml
-[[language]]
-name = "notebook"
-scope = "source.notebook"
-injection-regex = "notebook|jupyter|ipynb"
-file-types = ["ipynb"]
-comment-token = "#"
-indent = { tab-width = 4, unit = "    " }
-
-[[grammar]]
-name = "notebook"
-source = { git = "https://github.com/your-org/nothelix", rev = "main" }
-```
-
-Then run:
-```bash
-hx --grammar fetch
-hx --grammar build
-```
-
-### Step 2: Install Steel Plugin
-
-Copy the plugin files to your Helix config directory:
+If you have devenv set up:
 
 ```bash
-cp plugin/helix.scm ~/.config/helix/
-cp plugin/kernel-manager.scm ~/.config/helix/
+git clone https://github.com/yourusername/nothelix
+cd nothelix
+devenv shell
+nothelix-install
 ```
 
-**Optional:** Auto-convert raw .ipynb JSON files to cell format on open:
+### Manual installation
+
+Build the library:
 
 ```bash
-cp plugin/init.scm ~/.config/helix/
+cargo build --release -p libnothelix
 ```
 
-Restart Helix and you're done!
+Copy the library to Steel's native directory:
+
+```bash
+mkdir -p ~/.steel/native
+cp target/release/libnothelix.dylib ~/.steel/native/  # macOS
+cp target/release/libnothelix.so ~/.steel/native/     # Linux
+```
+
+Copy the plugin to your Helix config:
+
+```bash
+mkdir -p ~/.config/helix/plugins
+cp plugin/nothelix.scm ~/.config/helix/plugins/
+```
+
+Add to your `~/.config/helix/init.scm`:
+
+```scheme
+(require "nothelix.scm")
+```
 
 ## Usage
 
+Open any `.ipynb` file in Helix. The plugin provides these commands:
+
+| Command | Description |
+|---------|-------------|
+| `:convert-notebook` | Convert the raw JSON to readable cell format |
+| `:execute-cell` | Run the code cell under your cursor |
+| `:next-cell` | Jump to the next cell |
+| `:previous-cell` | Jump to the previous cell |
+| `:cell-picker` | Open an interactive cell navigator |
+| `:select-cell` | Select the entire current cell |
+| `:select-cell-code` | Select just the code portion |
+| `:select-output` | Select the output section |
+| `:graphics-check` | Show which graphics protocol is active |
+
 ### Keybindings
 
-All keybindings are scoped to `.ipynb` files only:
+The plugin adds these bindings for `.ipynb` files:
 
-- `gnr` - Execute (run) current cell
-- `<space>nj` - Open cell picker (jump to cell)
-- `]l` - Jump to next cell
-- `[l` - Jump to previous cell
+- `]l` — next cell
+- `[l` — previous cell
+- `gnr` — execute cell
+- `<space>nj` — cell picker
+- `<space>nc` — select cell
+- `<space>ns` — select cell code
+- `<space>no` — select output
 
-### Cell Picker
+## Configuration
 
-Press `<space>nj` to open an interactive cell picker:
+Create `~/.config/helix/nothelix.toml` to override defaults:
 
-- `j` / `k` - Navigate up/down
-- `1-9` - Jump directly to cell number
-- `Enter` - Jump to selected cell
-- `ESC` or `q` - Close picker
-
-The picker shows a live preview of each cell's content as you navigate.
-
-### Executing Cells
-
-1. Position cursor anywhere in a code cell
-2. Press `gnr`
-3. Editor will block while kernel executes (shows "⚙ Executing cell..." status)
-4. Output appears below the cell when complete
-
-The kernel stays alive between executions, so variables persist across cells.
-
-## Notebook Format
-
-Nothelix works with Jupyter notebooks converted to a text-based cell format:
-
-```julia
-# ─── Code Cell [1] ───
-x = 10
-y = x + 5
-
-# ─── Output ───
-15
-# ─────────────
-
-# ─── Code Cell [2] ───
-println(y)
+```toml
+[graphics]
+# Graphics protocol: "auto", "kitty", "iterm2", "sixel", or "none"
+protocol = "auto"
 ```
 
-Conversion tools for `.ipynb` files coming soon.
+The auto-detection checks your terminal environment and selects the best available protocol. Override this if detection doesn't work for your setup.
+
+## Graphics Protocol Support
+
+Nothelix renders plot outputs inline using your terminal's graphics protocol:
+
+| Protocol | Terminals | Quality |
+|----------|-----------|---------|
+| Kitty | Kitty, Ghostty, WezTerm | Excellent |
+| iTerm2 | iTerm2 | Good |
+| Sixel | xterm, mlterm, foot | Limited |
+
+If no graphics protocol is available, plot outputs display as text placeholders.
 
 ## Architecture
 
-Nothelix consists of two main components:
+The project has two parts:
 
-### 1. Tree-sitter Grammar (`grammar.js`, `src/`, `queries/`)
-Parses notebook cell format and provides:
-- Syntax highlighting via language injection
-- Cell boundary detection
-- Text objects for navigation
+**libnothelix** is a Rust library that handles performance-critical operations: parsing notebook JSON, detecting image formats, converting between formats (SVG to PNG, etc.), and generating terminal escape sequences for inline images.
 
-### 2. Steel Plugin (`plugin/`)
-Provides interactive execution:
-- Spawns persistent Julia kernel per notebook
-- Sends code to kernel via file-based IPC
-- Captures output and inserts into buffer
-- Custom UI components (cell picker)
+**nothelix.scm** is a Steel plugin that integrates with Helix. It manages kernel processes, handles cell navigation, and orchestrates the rendering pipeline. Steel handles the editor-side logic while Rust does the heavy computation.
 
-See [docs/NOTEBOOK_ARCHITECTURE.md](docs/NOTEBOOK_ARCHITECTURE.md) for full technical details.
+This split keeps the plugin responsive. Notebook parsing and image conversion happen in compiled Rust code, while the Scheme layer stays focused on editor integration.
 
 ## Current Limitations
 
-**Phase 1 Implementation:**
-- Editor blocks during execution (async coming in Phase 2)
-- Julia only (Python support planned)
-- Text output only (rich output rendering planned)
-- Synchronous kernel communication via files
-
-**Not Yet Implemented:**
-- Error highlighting
-- Execution interruption (Ctrl-C)
-- Multiple concurrent cell executions
-- Markdown cell rendering
-- .ipynb save/export
+- Only Julia kernels are supported currently
+- The RawContent API for true inline rendering requires additional Helix patches
+- Sixel encoding is not yet implemented (falls back to text placeholders)
+- Python kernel support is planned but not yet available
 
 ## Development
 
-### Building the Grammar
+With devenv:
 
 ```bash
-npm install
-npx tree-sitter generate
-npx tree-sitter test
+devenv shell
+nothelix-build      # build the library
+nothelix-install    # build and install to ~/.steel and ~/.config/helix
+nothelix-uninstall  # remove installed files
 ```
 
-### Testing the Plugin
+Generate documentation:
 
-Open any `.ipynb` file in Helix and use the keybindings above.
+```bash
+cargo doc --open -p libnothelix
+```
 
-## Contributing
-
-This is Phase 1 of the implementation. Contributions welcome for:
-
-- Async execution implementation
-- Python kernel support
-- Error handling improvements
-- Rich output rendering (plots, tables, LaTeX)
-- .ipynb bidirectional conversion
-
-## License
+## Licence
 
 MIT
-
-## Project Structure
-
-```
-nothelix/
-├── grammar.js              # Tree-sitter grammar definition
-├── src/                    # Generated parser (C)
-├── queries/                # Syntax highlighting queries
-│   ├── highlights.scm      # Highlighting rules
-│   ├── injections.scm      # Language injection
-│   └── textobjects.scm     # Cell text objects
-├── plugin/                 # Helix Steel plugin
-│   ├── helix.scm          # Main plugin (commands, keybindings, UI)
-│   └── kernel-manager.scm  # Kernel lifecycle management
-├── docs/                   # Documentation
-├── package.json            # Tree-sitter metadata
-└── README.md              # This file
-```
