@@ -1,0 +1,41 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "notebook",
+      "camelcase": "Notebook",
+      "title": "Notebook",
+      "scope": "source.notebook",
+      "file-types": [
+        "ipynb"
+      ],
+      "injection-regex": "^notebook$",
+      "class-name": "TreeSitterNotebook"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Grammar for parsing Jupyter notebook cells with language injection",
+    "authors": [
+      {
+        "name": "koalazub",
+        "email": "elali@cokoala.me",
+        "url": "https://www.cokoala.me/"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/koalazub/nothelix",
+      "funding": "https://github.com/koalazub/nothelix"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": true,
+    "node": true,
+    "python": true,
+    "rust": true,
+    "swift": true,
+    "zig": false
+  }
+}

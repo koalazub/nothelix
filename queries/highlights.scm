@@ -6,15 +6,6 @@
   (output_footer)
 ] @comment.block.documentation
 
-; Execution count as constant
+; Execution count as constant (using field syntax)
 (code_cell_header
-  (execution_count) @constant.numeric)
-
-; Cell markers (the ─── symbols) as punctuation
-(code_cell_header
-  (execution_count) @constant.numeric)
-
-; "Code Cell", "Markdown Cell", "Output" as keywords
-(code_cell_header) @keyword.directive
-(markdown_cell_header) @keyword.directive
-(output_header) @keyword.directive
+  execution_count: (number) @constant.numeric)

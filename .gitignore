@@ -9,3 +9,19 @@ src/
 *.dylib
 *.wasm
 .DS_Store
+
+# Plugin kernel temp files
+/tmp/helix-kernel-*
+
+# Test notebooks
+*.ipynb.bak
+test-*.ipynb
+
+# Editor
+*.swp
+*.swo
+*~
+
+# devenv
+.devenv/
+.devenv.flake.nix

@@ -11,14 +11,17 @@
 module.exports = grammar({
   name: 'notebook',
 
-  extras: $ => [],
+  extras: $ => [/[ \t]/],
 
   rules: {
-    source_file: $ => repeat(
-      choice(
-        $.code_cell,
-        $.markdown_cell,
-        $.output_section
+    source_file: $ => seq(
+      repeat($.blank_line),
+      repeat(
+        choice(
+          $.code_cell,
+          $.markdown_cell,
+          $.output_section
+        )
       )
     ),
 
@@ -85,7 +88,11 @@ module.exports = grammar({
     ),
 
     content_line: $ => seq(
-      /[^#\n][^\n]*/,
+      choice(
+        /[^#\n][^\n]*/,      // Lines not starting with #
+        /#[^─ \t\n][^\n]*/,  // # followed by non-dash/non-space (##, #A, etc.)
+        /#[ \t]+[^─\n][^\n]*/ // # + spaces + non-dash
+      ),
       '\n'
     ),
 
@@ -98,7 +105,11 @@ module.exports = grammar({
     ),
 
     output_line: $ => seq(
-      /[^#\n][^\n]*/,
+      choice(
+        /[^#\n][^\n]*/,      // Lines not starting with #
+        /#[^─ \t\n][^\n]*/,  // # followed by non-dash/non-space (##, #A, etc.)
+        /#[ \t]+[^─\n][^\n]*/ // # + spaces + non-dash
+      ),
       '\n'
     ),
 

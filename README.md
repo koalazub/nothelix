@@ -1,40 +1,45 @@
-# tree-sitter-notebook
+# Nothelix
 
-Tree-sitter grammar for notebook cell format, designed for [Nothelix](https://github.com/your-org/nothelix) (Jupyter notebooks in Helix editor).
+Interactive Jupyter notebook support for Helix editor with persistent kernel execution, vim-style navigation, and full syntax highlighting.
 
 ## Overview
 
-This grammar parses notebook files that have been converted to a readable cell format:
+Nothelix brings the power of Jupyter notebooks to Helix, combining:
+- **Tree-sitter grammar** for syntax highlighting and cell parsing
+- **Steel plugin** for interactive cell execution with persistent kernels
+- **vim-style navigation** for seamless notebook editing
 
-```julia
-# ─── Code Cell [1] ───
-t = 0:0.001:1
-y = sin.(2π*10*t)
-
-# ─── Markdown Cell ───
-This is a markdown cell with **bold** text.
-
-# ─── Output ───
-Result: [0.0, 0.001, 0.002, ...]
-# ─────────────
-```
-
-The grammar enables:
-- Syntax highlighting via tree-sitter injections (Julia, Python, Markdown)
-- Cell navigation as text objects
-- LSP integration for code cells
-- Seamless editing of Jupyter notebooks in Helix
+Execute code cells and see output inline, similar to VSCode or JupyterLab, but entirely within your terminal.
 
 ## Features
 
-- **Multi-language injection**: Code cells automatically highlight as Julia (configurable)
-- **Markdown support**: Markdown cells render with full markdown syntax
-- **Output sections**: Captured and styled distinctly
-- **Text objects**: Navigate and select cells with `]c`, `[c`, `ac`, `ic`
+### Interactive Execution
+- Execute code cells with live output capture
+- Persistent REPL kernel maintains state across executions
+- Output sections update in-place without stacking
+- Visual cell picker with live preview
+
+### Syntax Highlighting
+- Multi-language injection (Julia, Python, Markdown)
+- Code cells get full language-specific highlighting
+- Output sections styled distinctly
+- Cell boundaries clearly marked
+
+### Navigation
+- Jump between cells with vim-style keybindings (`[l`, `]l`)
+- Visual picker to jump to any cell (`<space>nj`)
+- Text objects for cell selection (`ac`, `ic`)
+- All keybindings scoped to `.ipynb` files only
 
 ## Installation
 
-### Using with Helix
+### Prerequisites
+
+- Helix editor (v25.07+)
+- Julia installed and in PATH
+- Steel scripting support (built into Helix)
+
+### Step 1: Install Tree-sitter Grammar
 
 Add to `~/.config/helix/languages.toml`:
 
@@ -49,7 +54,7 @@ indent = { tab-width = 4, unit = "    " }
 
 [[grammar]]
 name = "notebook"
-source = { git = "https://github.com/your-org/tree-sitter-notebook", rev = "main" }
+source = { git = "https://github.com/your-org/nothelix", rev = "main" }
 ```
 
 Then run:
@@ -58,7 +63,104 @@ hx --grammar fetch
 hx --grammar build
 ```
 
-### Building from source
+### Step 2: Install Steel Plugin
+
+Copy the plugin files to your Helix config directory:
+
+```bash
+cp plugin/helix.scm ~/.config/helix/
+cp plugin/kernel-manager.scm ~/.config/helix/
+```
+
+Restart Helix and you're done!
+
+## Usage
+
+### Keybindings
+
+All keybindings are scoped to `.ipynb` files only:
+
+- `<space>nr` - Execute current cell
+- `]l` - Jump to next cell
+- `[l` - Jump to previous cell
+- `<space>nj` - Open cell picker
+
+### Cell Picker
+
+Press `<space>nj` to open an interactive cell picker:
+
+- `j` / `k` - Navigate up/down
+- `1-9` - Jump directly to cell number
+- `Enter` - Jump to selected cell
+- `ESC` or `q` - Close picker
+
+The picker shows a live preview of each cell's content as you navigate.
+
+### Executing Cells
+
+1. Position cursor anywhere in a code cell
+2. Press `<space>nr`
+3. Editor will block while kernel executes (shows "⚙ Executing cell..." status)
+4. Output appears below the cell when complete
+
+The kernel stays alive between executions, so variables persist across cells.
+
+## Notebook Format
+
+Nothelix works with Jupyter notebooks converted to a text-based cell format:
+
+```julia
+# ─── Code Cell [1] ───
+x = 10
+y = x + 5
+
+# ─── Output ───
+15
+# ─────────────
+
+# ─── Code Cell [2] ───
+println(y)
+```
+
+Conversion tools for `.ipynb` files coming soon.
+
+## Architecture
+
+Nothelix consists of two main components:
+
+### 1. Tree-sitter Grammar (`grammar.js`, `src/`, `queries/`)
+Parses notebook cell format and provides:
+- Syntax highlighting via language injection
+- Cell boundary detection
+- Text objects for navigation
+
+### 2. Steel Plugin (`plugin/`)
+Provides interactive execution:
+- Spawns persistent Julia kernel per notebook
+- Sends code to kernel via file-based IPC
+- Captures output and inserts into buffer
+- Custom UI components (cell picker)
+
+See [docs/NOTEBOOK_ARCHITECTURE.md](docs/NOTEBOOK_ARCHITECTURE.md) for full technical details.
+
+## Current Limitations
+
+**Phase 1 Implementation:**
+- Editor blocks during execution (async coming in Phase 2)
+- Julia only (Python support planned)
+- Text output only (rich output rendering planned)
+- Synchronous kernel communication via files
+
+**Not Yet Implemented:**
+- Error highlighting
+- Execution interruption (Ctrl-C)
+- Multiple concurrent cell executions
+- Markdown cell rendering
+- .ipynb save/export
+
+## Development
+
+### Building the Grammar
 
 ```bash
 npm install
@@ -66,76 +168,38 @@ npx tree-sitter generate
 npx tree-sitter test
 ```
 
-## Grammar Structure
+### Testing the Plugin
 
-```
-source_file
-├── code_cell
-│   ├── code_cell_header
-│   │   └── execution_count
-│   └── cell_content (injected: Julia/Python)
-├── markdown_cell
-│   ├── markdown_cell_header
-│   └── cell_content (injected: Markdown)
-└── output_section
-    ├── output_header
-    ├── output_content
-    └── output_footer
-```
-
-## Queries
-
-### Injections (`queries/injections.scm`)
-- Code cells → Julia syntax highlighting
-- Markdown cells → Markdown rendering
-- Output → Plain text
-
-### Highlights (`queries/highlights.scm`)
-- Cell headers styled as documentation comments
-- Execution counts as constants
-- Cell markers as keywords
-
-### Text Objects (`queries/textobjects.scm`)
-- `ac` / `ic` - Around/inside cell
-- `]c` / `[c` - Next/previous cell (via Nothelix keybindings)
-
-## Language Detection
-
-Currently defaults to Julia for all code cells. Future enhancements:
-
-1. **Header annotation**:
-   ```
-   # ─── Code Cell [1] (python) ───
-   ```
-
-2. **Metadata comments**:
-   ```
-   # ─── Code Cell [1] ───
-   #| language: python
-   ```
-
-3. **Content-based detection**: Shebang or syntax patterns
-
-## Integration with Nothelix
-
-This grammar is designed for the [Nothelix](https://github.com/your-org/nothelix) plugin, which provides:
-- Automatic `.ipynb` to cell format conversion
-- Persistent Julia/Python kernels
-- Cell execution with inline output
-- Bidirectional sync (editing → saving back to .ipynb)
+Open any `.ipynb` file in Helix and use the keybindings above.
 
 ## Contributing
 
-Contributions welcome! Areas for improvement:
-- Python language detection
-- Rich output parsing (HTML, LaTeX, images)
-- Multi-language support in single notebook
-- Performance optimization for large notebooks
+This is Phase 1 of the implementation. Contributions welcome for:
+
+- Async execution implementation
+- Python kernel support
+- Error handling improvements
+- Rich output rendering (plots, tables, LaTeX)
+- .ipynb bidirectional conversion
 
 ## License
 
 MIT
 
-## Credits
+## Project Structure
 
-Built for the Nothelix project - bringing Jupyter notebook editing to Helix with full IDE features.
+```
+nothelix/
+├── grammar.js              # Tree-sitter grammar definition
+├── src/                    # Generated parser (C)
+├── queries/                # Syntax highlighting queries
+│   ├── highlights.scm      # Highlighting rules
+│   ├── injections.scm      # Language injection
+│   └── textobjects.scm     # Cell text objects
+├── plugin/                 # Helix Steel plugin
+│   ├── helix.scm          # Main plugin (commands, keybindings, UI)
+│   └── kernel-manager.scm  # Kernel lifecycle management
+├── docs/                   # Documentation
+├── package.json            # Tree-sitter metadata
+└── README.md              # This file
+```
