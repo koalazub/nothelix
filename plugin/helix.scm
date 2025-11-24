@@ -317,16 +317,20 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
-;; Using proper extension-specific keymap registration
+;; 'g' menu for goto/execution, 'space' menu for picker
 (define notebook-keymap
   (helix-string->keymap
     "{
       \"normal\": {
         \"]l\": \"next-cell\",
         \"[l\": \"previous-cell\",
+        \"g\": {
+          \"n\": {
+            \"r\": \"execute-cell\"
+          }
+        },
         \"space\": {
           \"n\": {
-            \"r\": \"execute-cell\",
             \"j\": \"cell-picker\"
           }
         }

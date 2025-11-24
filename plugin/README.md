@@ -70,9 +70,13 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
       \"normal\": {
         \"]l\": \"next-cell\",
         \"[l\": \"previous-cell\",
+        \"g\": {
+          \"n\": {
+            \"r\": \"execute-cell\"
+          }
+        },
         \"space\": {
           \"n\": {
-            \"r\": \"execute-cell\",
             \"j\": \"cell-picker\"
           }
         }
@@ -84,7 +88,7 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
 
 - `[l` - Previous cell
 - `]l` - Next cell
-- `<space>nr` - Execute (run) cell
+- `gnr` - Execute (run) cell
 - `<space>nj` - Cell picker (jump to cell)
 
 **How it works:** The `#%add-extension-or-labeled-keymap` function registers the keymap specifically for `.ipynb` files. The keymaps are **merged recursively** with Helix's default keymaps, so:

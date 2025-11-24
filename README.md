@@ -86,7 +86,7 @@ Restart Helix and you're done!
 
 All keybindings are scoped to `.ipynb` files only:
 
-- `<space>nr` - Execute (run) current cell
+- `gnr` - Execute (run) current cell
 - `<space>nj` - Open cell picker (jump to cell)
 - `]l` - Jump to next cell
 - `[l` - Jump to previous cell
@@ -105,7 +105,7 @@ The picker shows a live preview of each cell's content as you navigate.
 ### Executing Cells
 
 1. Position cursor anywhere in a code cell
-2. Press `<space>nr`
+2. Press `gnr`
 3. Editor will block while kernel executes (shows "⚙ Executing cell..." status)
 4. Output appears below the cell when complete
 
