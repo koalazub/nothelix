@@ -14,14 +14,21 @@ This Steel plugin provides:
 
 - `helix.scm` - Main plugin with commands, UI components, and keybindings
 - `kernel-manager.scm` - Kernel process lifecycle management
+- `init.scm` - Optional auto-converter for raw .ipynb JSON files
 
 ## Installation
 
-Copy both files to your Helix config directory:
+Copy the plugin files to your Helix config directory:
 
 ```bash
 cp helix.scm ~/.config/helix/
 cp kernel-manager.scm ~/.config/helix/
+```
+
+**Optional:** If you want automatic conversion of raw .ipynb JSON files to cell format:
+
+```bash
+cp init.scm ~/.config/helix/
 ```
 
 Restart Helix for changes to take effect.
@@ -114,6 +121,47 @@ The picker:
 - Renders two panels: list + preview
 - Truncates long lines to fit preview width
 - Updates preview as you navigate
+
+## Auto-Conversion (init.scm)
+
+The optional `init.scm` file provides automatic conversion of raw `.ipynb` JSON files to the text-based cell format when opened in Helix.
+
+### How It Works
+
+When you open a `.ipynb` file containing raw JSON:
+
+```json
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": 1,
+      "source": ["x = 10\n", "y = x + 5"]
+    }
+  ]
+}
+```
+
+It's automatically converted to:
+
+```julia
+# ─── Code Cell [1] ───
+x = 10
+y = x + 5
+```
+
+### Features
+
+- Detects already-converted files (skips if cell markers present)
+- Validates JSON before attempting conversion
+- Shows transient status messages (not inserted into buffer)
+- Runs on both startup (for open files) and when new files are opened
+- Handles both code and markdown cells
+- Preserves execution counts
+
+### Why Optional?
+
+Many users prefer to work with pre-converted notebook files or have their own conversion workflow. The core plugin (helix.scm + kernel-manager.scm) works with the cell format directly, so conversion is only needed if you're opening raw .ipynb files.
 
 ## Limitations (Phase 1)
 

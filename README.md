@@ -72,6 +72,12 @@ cp plugin/helix.scm ~/.config/helix/
 cp plugin/kernel-manager.scm ~/.config/helix/
 ```
 
+**Optional:** Auto-convert raw .ipynb JSON files to cell format on open:
+
+```bash
+cp plugin/init.scm ~/.config/helix/
+```
+
 Restart Helix and you're done!
 
 ## Usage
