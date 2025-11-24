@@ -418,6 +418,11 @@
             current-style)
           (loop (+ i 1)))))
 
+    ;; Help footer
+    (let ([help-y (+ y height -1)]
+          [help-style (theme-scope "ui.statusline")])
+      (frame-set-string! buf (+ x 2) help-y "j/k:Navigate  1-9:Jump  Enter:Select  ESC/q:Close" help-style))
+
     ;; Render preview panel
     (buffer/clear buf preview-area)
     (block/render buf preview-area
