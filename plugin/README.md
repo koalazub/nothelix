@@ -66,17 +66,18 @@ All keybindings are scoped to `.ipynb` file extension only using the `keymap` ma
 ```scheme
 (keymap (extension "ipynb")
         (normal
-          ("[" (l ":previous_cell"))
-          ("]" (l ":next_cell"))
-          ("," (r ":execute-cell") (j ":cell-picker"))))
+          ("[l" ":previous_cell")
+          ("]l" ":next_cell")
+          (space (n (r ":execute-cell")
+                    (j ":cell-picker")))))
 ```
 
 - `[l` - Previous cell
 - `]l` - Next cell
-- `,r` - Execute (run) cell
-- `,j` - Cell picker (jump to cell)
+- `<space>nr` - Execute (run) cell
+- `<space>nj` - Cell picker (jump to cell)
 
-**Note:** Using `,` (comma) as the notebook leader key avoids overriding the built-in `<space>` menu, which allows the which-key popup to continue working normally for all standard Helix commands.
+**Note:** The notebook commands are added under `<space>n` (notebook) submenu, preserving all other space menu functionality.
 
 ## How It Works
 

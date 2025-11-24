@@ -227,21 +227,16 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; If we're on a cell marker, skip to the next line first
-  (define start-search-line
-    (if (is-cell-marker? current-line)
-        (+ current-line 2)  ;; Skip at least 2 lines to get past current cell header
-        (+ current-line 1)))
-
-  ;; Find next cell marker
+  ;; Find next cell marker, skipping current line
   (define (find-next-cell line-idx)
     (if (>= line-idx total-lines)
         #f
-        (if (is-cell-marker? line-idx)
+        (if (and (is-cell-marker? line-idx)
+                 (> line-idx current-line))  ;; Must be past current position
             line-idx
             (find-next-cell (+ line-idx 1)))))
 
-  (define next-cell-line (find-next-cell start-search-line))
+  (define next-cell-line (find-next-cell (+ current-line 1)))
 
   (if next-cell-line
       (begin
@@ -269,21 +264,16 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; If we're on a cell marker, skip back at least 2 lines
-  (define start-search-line
-    (if (is-cell-marker? current-line)
-        (- current-line 2)
-        (- current-line 1)))
-
-  ;; Find previous cell marker
+  ;; Find previous cell marker, skipping current line
   (define (find-prev-cell line-idx)
     (if (< line-idx 0)
         #f
-        (if (is-cell-marker? line-idx)
+        (if (and (is-cell-marker? line-idx)
+                 (< line-idx current-line))  ;; Must be before current position
             line-idx
             (find-prev-cell (- line-idx 1)))))
 
-  (define prev-cell-line (find-prev-cell start-search-line))
+  (define prev-cell-line (find-prev-cell (- current-line 1)))
 
   (if prev-cell-line
       (begin
@@ -317,12 +307,12 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
-;; Using comma (,) as notebook leader to avoid overriding space menu
 (keymap (extension "ipynb")
         (normal
-          ("[" (l ":previous_cell"))
-          ("]" (l ":next_cell"))
-          ("," (r ":execute-cell") (j ":cell-picker"))))
+          ("[l" ":previous_cell")
+          ("]l" ":next_cell")
+          (space (n (r ":execute-cell")
+                    (j ":cell-picker")))))
 
 ;; ====== Cell Picker Component ======
 
