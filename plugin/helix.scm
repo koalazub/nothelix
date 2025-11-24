@@ -308,8 +308,9 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
-;; Merge with default keymap to preserve all existing bindings
-(define notebook-additions
+;; Extension keymaps are automatically merged with defaults
+;; Unbound keys fall back to default Helix keybindings
+(define notebook-keymap
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
@@ -331,12 +332,6 @@
         }
       }
     }"))
-
-;; Merge with default keymap to preserve existing bindings
-(define notebook-keymap
-  (helix.keymaps.helix-merge-keybindings
-    (helix.keymaps.helix-default-keymap)
-    notebook-additions))
 
 (helix.keymaps.#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 
