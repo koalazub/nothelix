@@ -2,6 +2,7 @@
 ;; Auto-conversion from .ipynb JSON format to cell format
 
 (require "helix/editor.scm")
+(require "helix/misc.scm")
 (require-builtin helix/core/static)
 (require-builtin helix/core/text as text.)
 (require-builtin steel/json)
