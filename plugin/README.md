@@ -66,8 +66,8 @@ All keybindings are scoped to `.ipynb` file extension only using the `keymap` ma
 ```scheme
 (keymap (extension "ipynb")
         (normal
-          ("[" (l ":previous_cell"))
-          ("]" (l ":next_cell"))
+          ("[" (l ":previous-cell"))
+          ("]" (l ":next-cell"))
           (space (n (r ":execute-cell")
                     (j ":cell-picker")))))
 ```

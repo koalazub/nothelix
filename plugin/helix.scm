@@ -10,7 +10,7 @@
 (require (prefix-in kernel. "kernel-manager.scm"))
 (require "helix/components.scm")
 
-(provide execute-cell test-apis next_cell previous_cell test-thread cell-picker)
+(provide execute-cell test-apis next-cell previous-cell test-thread cell-picker)
 
 ;;@doc
 ;; Test Steel APIs (get current line, selection, document text)
@@ -208,7 +208,7 @@
   (set-status! "✓ Cell execution complete!"))
 
 ;;@doc Jump to next cell
-(define (next_cell)
+(define (next-cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
@@ -227,16 +227,21 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Find next cell marker, skipping current line
+  ;; Start searching at least 1 line ahead (or 2 if on a marker)
+  (define start-line
+    (if (is-cell-marker? current-line)
+        (+ current-line 2)
+        (+ current-line 1)))
+
+  ;; Find next cell marker
   (define (find-next-cell line-idx)
     (if (>= line-idx total-lines)
         #f
-        (if (and (is-cell-marker? line-idx)
-                 (> line-idx current-line))  ;; Must be past current position
+        (if (is-cell-marker? line-idx)
             line-idx
             (find-next-cell (+ line-idx 1)))))
 
-  (define next-cell-line (find-next-cell (+ current-line 1)))
+  (define next-cell-line (find-next-cell start-line))
 
   (if next-cell-line
       (begin
@@ -245,7 +250,7 @@
       (set-status! "No next cell found")))
 
 ;;@doc Jump to previous cell
-(define (previous_cell)
+(define (previous-cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
@@ -264,16 +269,21 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Find previous cell marker, skipping current line
+  ;; Start searching at least 1 line back (or 2 if on a marker)
+  (define start-line
+    (if (is-cell-marker? current-line)
+        (- current-line 2)
+        (- current-line 1)))
+
+  ;; Find previous cell marker
   (define (find-prev-cell line-idx)
     (if (< line-idx 0)
         #f
-        (if (and (is-cell-marker? line-idx)
-                 (< line-idx current-line))  ;; Must be before current position
+        (if (is-cell-marker? line-idx)
             line-idx
             (find-prev-cell (- line-idx 1)))))
 
-  (define prev-cell-line (find-prev-cell (- current-line 1)))
+  (define prev-cell-line (find-prev-cell start-line))
 
   (if prev-cell-line
       (begin
@@ -309,8 +319,8 @@
 ;; Register keybindings for notebook files
 (keymap (extension "ipynb")
         (normal
-          ("[" (l ":previous_cell"))
-          ("]" (l ":next_cell"))
+          ("[" (l ":previous-cell"))
+          ("]" (l ":next-cell"))
           (space (n (r ":execute-cell")
                     (j ":cell-picker")))))
 
