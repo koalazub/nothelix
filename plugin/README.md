@@ -68,24 +68,25 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
 (require-builtin helix/core/keymaps as helix.keymaps.)
 
 ;; Keymap definition:
+;; IMPORTANT: Steel commands must be prefixed with ':' in keymaps
 (define notebook-keymap
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
         \"]\": {
-          \"l\": \"next-cell\"
+          \"l\": \":next-cell\"
         },
         \"[\": {
-          \"l\": \"previous-cell\"
+          \"l\": \":previous-cell\"
         },
         \"g\": {
           \"n\": {
-            \"r\": \"execute-cell\"
+            \"r\": \":execute-cell\"
           }
         },
         \"space\": {
           \"n\": {
-            \"j\": \"cell-picker\"
+            \"j\": \":cell-picker\"
           }
         }
       }

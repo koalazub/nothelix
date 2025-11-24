@@ -319,24 +319,25 @@
 
 ;; Register keybindings for notebook files
 ;; 'g' menu for goto/execution, 'space' menu for picker
+;; Note: Steel commands must be prefixed with ':' in keymaps
 (define notebook-keymap
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
         \"]\": {
-          \"l\": \"next-cell\"
+          \"l\": \":next-cell\"
         },
         \"[\": {
-          \"l\": \"previous-cell\"
+          \"l\": \":previous-cell\"
         },
         \"g\": {
           \"n\": {
-            \"r\": \"execute-cell\"
+            \"r\": \":execute-cell\"
           }
         },
         \"space\": {
           \"n\": {
-            \"j\": \"cell-picker\"
+            \"j\": \":cell-picker\"
           }
         }
       }
