@@ -228,21 +228,16 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Skip ahead from current position to search for next cell
-  ;; If on a marker, skip 2 lines; otherwise skip 1
-  (define search-start
-    (if (is-cell-marker? current-line)
-        (+ current-line 2)
-        (+ current-line 1)))
-
-  ;; Find next cell marker starting from search-start
+  ;; Find next cell marker starting from NEXT line
+  ;; Skip any marker at current position to ensure we find a DIFFERENT cell
   (define (find-next-cell line-idx)
     (cond
       [(>= line-idx total-lines) #f]
-      [(is-cell-marker? line-idx) line-idx]
+      [(and (is-cell-marker? line-idx) (not (= line-idx current-line)))
+       line-idx]
       [else (find-next-cell (+ line-idx 1))]))
 
-  (define next-cell-line (find-next-cell search-start))
+  (define next-cell-line (find-next-cell (+ current-line 1)))
 
   (if next-cell-line
       (begin
@@ -270,21 +265,16 @@
       (or (string-contains? line "# ─── Code Cell")
           (string-contains? line "# ─── Markdown Cell"))))
 
-  ;; Skip back from current position to search for previous cell
-  ;; If on a marker, skip 2 lines; otherwise skip 1
-  (define search-start
-    (if (is-cell-marker? current-line)
-        (- current-line 2)
-        (- current-line 1)))
-
-  ;; Find previous cell marker starting from search-start
+  ;; Find previous cell marker starting from PREVIOUS line
+  ;; Skip any marker at current position to ensure we find a DIFFERENT cell
   (define (find-prev-cell line-idx)
     (cond
       [(< line-idx 0) #f]
-      [(is-cell-marker? line-idx) line-idx]
+      [(and (is-cell-marker? line-idx) (not (= line-idx current-line)))
+       line-idx]
       [else (find-prev-cell (- line-idx 1))]))
 
-  (define prev-cell-line (find-prev-cell search-start))
+  (define prev-cell-line (find-prev-cell (- current-line 1)))
 
   (if prev-cell-line
       (begin
@@ -318,9 +308,8 @@
             (loop s (+ pos 1))))))
 
 ;; Register keybindings for notebook files
-;; 'g' menu for goto/execution, 'space' menu for picker
-;; Note: Steel commands must be prefixed with ':' in keymaps
-(define notebook-keymap
+;; Merge with default keymap to preserve all existing bindings
+(define notebook-additions
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
@@ -342,6 +331,12 @@
         }
       }
     }"))
+
+;; Merge with default keymap to preserve existing bindings
+(define notebook-keymap
+  (helix.keymaps.helix-merge-keybindings
+    (helix.keymaps.helix-default-keymap)
+    notebook-additions))
 
 (helix.keymaps.#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 

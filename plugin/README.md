@@ -68,8 +68,10 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
 (require-builtin helix/core/keymaps as helix.keymaps.)
 
 ;; Keymap definition:
-;; IMPORTANT: Steel commands must be prefixed with ':' in keymaps
-(define notebook-keymap
+;; IMPORTANT:
+;; 1. Steel commands must be prefixed with ':' in keymaps
+;; 2. Merge with default keymap to preserve all existing Helix keybindings
+(define notebook-additions
   (helix.keymaps.helix-string->keymap
     "{
       \"normal\": {
@@ -92,6 +94,12 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
       }
     }"))
 
+;; Merge with default keymap to preserve existing bindings
+(define notebook-keymap
+  (helix.keymaps.helix-merge-keybindings
+    (helix.keymaps.helix-default-keymap)
+    notebook-additions))
+
 (helix.keymaps.#%add-extension-or-labeled-keymap "ipynb" notebook-keymap)
 ```
 
@@ -100,10 +108,16 @@ All keybindings are scoped to `.ipynb` file extension only using extension-speci
 - `gnr` - Execute (run) cell
 - `<space>nj` - Cell picker (jump to cell)
 
-**How it works:** The `#%add-extension-or-labeled-keymap` function registers the keymap specifically for `.ipynb` files. The keymaps are **merged recursively** with Helix's default keymaps, so:
-- Notebook-specific bindings are available in `.ipynb` files
-- All other Helix keybindings remain intact (space menu, goto menu, etc.)
-- Extension-specific bindings are checked first, falling back to defaults for unbound keys
+**How it works:**
+1. We create a keymap with just notebook-specific bindings (`notebook-additions`)
+2. We **merge** it with the default Helix keymap using `helix-merge-keybindings`
+3. The merged keymap is registered for `.ipynb` files via `#%add-extension-or-labeled-keymap`
+
+This merge approach ensures:
+- All default Helix keybindings remain functional (space menu, goto menu, etc.)
+- Notebook commands are added to existing menus (`gn` submenu, `space n` submenu)
+- No existing functionality is lost
+- The merge is recursive, preserving nested submenus
 
 ## How It Works
 
