@@ -2,7 +2,7 @@
   inputs =
     let
       vars = {
-  version = "1.11.2";
+  version = "1.11.3";
   system = "aarch64-darwin";
   devenv_root = "/Users/alielali/projects/nothelix";
   project_input_ref = "path:/Users/alielali/projects/nothelix";
@@ -39,7 +39,7 @@
     { nixpkgs, ... }@inputs:
     let
       vars = {
-  version = "1.11.2";
+  version = "1.11.3";
   system = "aarch64-darwin";
   devenv_root = "/Users/alielali/projects/nothelix";
   project_input_ref = "path:/Users/alielali/projects/nothelix";

@@ -34,12 +34,16 @@
     mkdir -p ~/.steel/native
     mkdir -p ~/.config/helix/plugins
 
-    # Install dylib (lib name is "nothelix" -> libnothelix.dylib/so)
-    # Steel expects the name passed to #%require-dylib without the lib prefix
+    # Get absolute path to project
+    PROJECT_DIR="$(pwd)"
+
+    # Symlink dylib to both locations (Steel native + Helix plugins)
     if [[ -f target/release/libnothelix.dylib ]]; then
-      cp target/release/libnothelix.dylib ~/.steel/native/libnothelix.dylib
+      ln -sf "$PROJECT_DIR/target/release/libnothelix.dylib" ~/.steel/native/libnothelix.dylib
+      ln -sf "$PROJECT_DIR/target/release/libnothelix.dylib" ~/.config/helix/plugins/libnothelix.dylib
     elif [[ -f target/release/libnothelix.so ]]; then
-      cp target/release/libnothelix.so ~/.steel/native/libnothelix.so
+      ln -sf "$PROJECT_DIR/target/release/libnothelix.so" ~/.steel/native/libnothelix.so
+      ln -sf "$PROJECT_DIR/target/release/libnothelix.so" ~/.config/helix/plugins/libnothelix.so
     else
       echo "Error: Could not find built library"
       echo "Expected: target/release/libnothelix.dylib or .so"
@@ -47,11 +51,16 @@
       exit 1
     fi
 
-    # Install plugin
-    cp plugin/nothelix.scm ~/.config/helix/plugins/
+    # Symlink plugin files
+    ln -sf "$PROJECT_DIR/plugin/nothelix.scm" ~/.config/helix/plugins/nothelix.scm
+    ln -sf "$PROJECT_DIR/plugin/nothelix" ~/.config/helix/plugins/nothelix
 
     echo ""
-    echo "=== Installed ==="
+    echo "=== Installed (symlinked) ==="
+    echo "Library: ~/.steel/native/libnothelix.dylib -> $PROJECT_DIR/target/release/libnothelix.dylib"
+    echo "Plugin:  ~/.config/helix/plugins/nothelix.scm -> $PROJECT_DIR/plugin/nothelix.scm"
+    echo "Modules: ~/.config/helix/plugins/nothelix -> $PROJECT_DIR/plugin/nothelix"
+    echo ""
     echo "Add to ~/.config/helix/init.scm:"
     echo '  (require "nothelix.scm")'
   '';
