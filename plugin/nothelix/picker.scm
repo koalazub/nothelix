@@ -131,7 +131,8 @@
        (when (< selected (length cells))
          (let* ([cell (list-ref cells selected)]
                 [line-num (list-ref cell 0)])
-           (helix.goto (number->string line-num))))
+           ;; line-num is 0-indexed, helix.goto expects 1-indexed
+           (helix.goto (number->string (+ line-num 1)))))
        event-result/close]
       [else
        (let ([num (char->number (or char #\null))])
@@ -139,7 +140,8 @@
              (begin
                (let* ([cell (list-ref cells (- num 1))]
                       [line-num (list-ref cell 0)])
-                 (helix.goto (number->string line-num)))
+                 ;; line-num is 0-indexed, helix.goto expects 1-indexed
+                 (helix.goto (number->string (+ line-num 1))))
                event-result/close)
              event-result/consume))])))
 

@@ -103,6 +103,7 @@ function execute_cell(cell_idx::Int, code::String)
     cell.outputs = captured.return_value
     cell.stdout = captured.stdout
     cell.stderr = captured.stderr
+    cell.images = captured.images  # Store captured images (format, base64_data)
     cell.error = captured.error
     cell.status = captured.error === nothing ? :done : :error
 
@@ -142,6 +143,15 @@ function get_cell_result_json(cell_idx::Int)
     # Output representation
     result["output_type"] = get_output_type(cell.outputs)
     result["output_repr"] = get_output_repr(cell.outputs)
+
+    # Include images for inline rendering (base64 encoded)
+    # Format: [{"format": "png", "data": "base64..."}]
+    if !isempty(cell.images)
+        result["images"] = [
+            Dict("format" => fmt, "data" => data)
+            for (fmt, data) in cell.images
+        ]
+    end
 
     result
 end

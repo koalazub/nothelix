@@ -172,5 +172,39 @@
     (displayln (string-append "✗ " (number->string (- test-count pass-count)) " TESTS FAILED")))
 (displayln "")
 
+;; Test 11: Graphics rendering pipeline
+(displayln "Test 11: Testing graphics rendering pipeline...")
+
+;; Minimal 1x1 red PNG as base64 (from Rust tests)
+(define test-png-b64 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNg+M8AAAQAAQE=")
+
+;; Test protocol detection for current terminal
+(define detected-protocol (detect-graphics-protocol))
+(displayln (string-append "  Detected protocol: " detected-protocol))
+(test "Protocol detected" (not (equal? detected-protocol "none")))
+
+;; Test escape sequence generation
+(define escape-seq (render-b64-for-protocol test-png-b64 detected-protocol 999))
+(displayln (string-append "  Escape sequence length: " (number->string (string-length escape-seq))))
+
+(test "Escape sequence not error" (not (string-starts-with? escape-seq "ERROR:")))
+
+;; Check escape sequence format based on protocol
+(cond
+  [(equal? detected-protocol "kitty")
+   (displayln "  Checking Kitty protocol format...")
+   (test "Starts with ESC_G" (string-starts-with? escape-seq "\x1b_G"))
+   (displayln (string-append "    First 80 chars: " (substring escape-seq 0 (min 80 (string-length escape-seq)))))
+   ;; Note: Can't easily check end due to escape chars in Steel
+   ]
+  [(equal? detected-protocol "iterm2")
+   (displayln "  Checking iTerm2 protocol format...")
+   (test "Starts with OSC 1337" (string-starts-with? escape-seq "\x1b]1337;"))
+   ]
+  [else
+   (displayln "  Unknown protocol - skipping format checks")])
+
+(displayln "")
+
 ;; Return test results
 (list pass-count test-count)

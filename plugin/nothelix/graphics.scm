@@ -1,4 +1,7 @@
 ;;; graphics.scm - Graphics protocol detection and image rendering
+;;;
+;;; Uses viuer for protocol detection and our custom implementation
+;;; for generating escape sequences (which don't print directly to stdout).
 
 (require "string-utils.scm")
 (require "helix/editor.scm")
@@ -9,8 +12,9 @@
                  (only-in nothelix
                           config-get-protocol
                           detect-graphics-protocol
-                          render-image-for-protocol
-                          render-b64-for-protocol
+                          render-image-bytes
+                          render-image-b64-bytes
+                          viuer-protocol
                           image-detect-format
                           image-detect-format-bytes
                           notebook-cell-image-data))
@@ -21,43 +25,18 @@
          render-image
          render-image-b64
          render-cell-image
-         next-image-id
-         *raw-content-available*)
-
-;; Current active protocol (cached after first detection)
-(define *active-protocol* #f)
-(define *protocol-checked* #f)
-
-;; Image ID counter for unique IDs
-(define *image-id-counter* 1)
-
-(define (next-image-id)
-  (define id *image-id-counter*)
-  (set! *image-id-counter* (+ *image-id-counter* 1))
-  id)
-
-;; Check if add-raw-content! API is available in this helix build
-;; feature/inline-image-rendering branch has this binding registered globally
-;; in helix-term/src/commands/engine/steel/mod.rs:5762
-;; It's a global function, NOT imported from libnothelix
-(define *raw-content-available* #t)
+         get-image-escape-seq
+         get-image-b64-escape-seq
+         test-kitty-image)
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Protocol Detection and Configuration
+;;; Protocol Detection (via viuer)
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-;; Get the active graphics protocol
-;; Checks config first (for user override), then auto-detects
-;; Returns: "kitty", "iterm2", "sixel", or "none"
+;; Get the graphics protocol viuer will use
+;; Returns: "kitty", "iterm", or "block"
 (define (graphics-protocol)
-  (when (not *protocol-checked*)
-    (define config-protocol (config-get-protocol))
-    (set! *active-protocol*
-          (if (equal? config-protocol "auto")
-              (detect-graphics-protocol)
-              config-protocol))
-    (set! *protocol-checked* #t))
-  *active-protocol*)
+  (viuer-protocol))
 
 ;; Check graphics capability and report to user
 ;; Returns: #t if graphics available, #f otherwise
@@ -66,92 +45,75 @@
   (define msg
     (cond
       [(equal? protocol "kitty")
-       "Graphics: Kitty protocol (full colour, efficient caching)"]
-      [(equal? protocol "iterm2")
+       "Graphics: Kitty protocol (full colour, efficient)"]
+      [(equal? protocol "iterm")
        "Graphics: iTerm2 protocol (inline images)"]
-      [(equal? protocol "sixel")
-       "Graphics: Sixel protocol (limited colour support)"]
       [else
-       "Graphics: None (text placeholders only)"]))
+       "Graphics: Unicode halfblocks (fallback)"]))
   (set-status! msg)
-  (not (equal? protocol "none")))
+  (not (equal? protocol "block")))
 
 ;; Show full nothelix status
 (define (nothelix-status)
   (define protocol (graphics-protocol))
-  (define config-protocol (config-get-protocol))
-  (define raw-api (if *raw-content-available* "available" "not available"))
   (set-status!
-    (string-append
-      "Nothelix | Protocol: " protocol
-      " (config: " config-protocol ")"
-      " | RawContent API: " raw-api)))
+    (string-append "Nothelix | Graphics: " protocol " (via viuer)")))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Image Rendering (Rust-backed, format-aware)
+;;; Image Rendering (returns escape sequences, does NOT print to stdout)
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-;; All escape sequence generation is handled in Rust.
-;; Steel is purely orchestration - no terminal escape codes here.
+;; Get escape sequence bytes for an image file.
+;; Returns the raw escape sequence string that can be written to terminal.
+;; Does NOT print directly - caller must handle output.
+;;
+;; Args:
+;;   path: Path to image file
+;;   width: Width in terminal columns (0 = auto)
+;;   height: Height in terminal rows (0 = auto)
+;;
+;; Returns: escape sequence string on success, #f on error
+(define (get-image-escape-seq path width height)
+  (define result (render-image-bytes path width height))
+  (cond
+    [(string-starts-with? result "ERROR:")
+     (set-status! result)
+     #f]
+    [else result]))
 
-;; Render an image file for the current protocol
-;; Returns: escape sequence string, or error message
+;; Get escape sequence bytes for base64-encoded image.
+;; Returns the raw escape sequence string.
+;;
+;; Args:
+;;   b64-data: Base64-encoded image data
+;;   width: Width in terminal columns (0 = auto)
+;;   height: Height in terminal rows (0 = auto)
+;;
+;; Returns: escape sequence string on success, #f on error
+(define (get-image-b64-escape-seq b64-data width height)
+  (define result (render-image-b64-bytes b64-data width height))
+  (cond
+    [(string-starts-with? result "ERROR:")
+     (set-status! result)
+     #f]
+    [else result]))
+
+;;; ─────────────────────────────────────────────────────────────────────────────
+;;; Legacy API (for compatibility with existing code)
+;;; ─────────────────────────────────────────────────────────────────────────────
+
+;; Render an image file (legacy API)
+;; Returns escape sequence bytes for caller to handle
 (define (render-image path rows char-idx)
-  (define protocol (graphics-protocol))
-  (define id (next-image-id))
+  (get-image-escape-seq path 0 rows))
 
-  (cond
-    [(equal? protocol "none")
-     (set-status! "No graphics protocol available")
-     #f]
-    [else
-     ;; Rust handles: format detection, conversion, escape sequence generation
-     (define escape-seq (render-image-for-protocol path protocol id))
-     (cond
-       [(string-starts-with? escape-seq "ERROR:")
-        (set-status! escape-seq)
-        #f]
-       [(not *raw-content-available*)
-        ;; RawContent API not yet available - show info
-        (define format (image-detect-format path))
-        (set-status!
-          (string-append "[" protocol "/" format " image ready] (RawContent API pending)"))
-        #f]
-       [else
-        ;; Full rendering path (when API available)
-        ;; (add-raw-content! escape-seq rows char-idx)
-        rows])]))
-
-;; Render base64 image data for the current protocol
+;; Render base64 image data (legacy API)
+;; Returns escape sequence bytes for caller to handle
 (define (render-image-b64 b64-data rows char-idx)
-  (define protocol (graphics-protocol))
-  (define id (next-image-id))
-
-  (cond
-    [(equal? protocol "none")
-     (set-status! "No graphics protocol available")
-     #f]
-    [else
-     ;; Rust handles everything
-     (define escape-seq (render-b64-for-protocol b64-data protocol id))
-     (cond
-       [(string-starts-with? escape-seq "ERROR:")
-        (set-status! escape-seq)
-        #f]
-       [(not *raw-content-available*)
-        (define format (image-detect-format-bytes b64-data))
-        (set-status!
-          (string-append "[" protocol "/" format " image: "
-                         (number->string (quotient (string-length b64-data) 1024))
-                         "KB] (RawContent API pending)"))
-        #f]
-       [else
-        ;; Convert string escape sequence to bytes and add to document
-        (define payload (string->bytes escape-seq))
-        (add-raw-content! payload rows char-idx)
-        rows])]))
+  (get-image-b64-escape-seq b64-data 0 rows))
 
 ;; Render image output from a notebook cell
+;; Returns escape sequence bytes for caller to handle
 (define (render-cell-image notebook-path cell-index char-idx rows)
   (define b64-data (notebook-cell-image-data notebook-path cell-index))
   (cond
@@ -161,3 +123,35 @@
      #f]
     [else
      (render-image-b64 b64-data rows char-idx)]))
+
+;;; ─────────────────────────────────────────────────────────────────────────────
+;;; Debug/Test Functions
+;;; ─────────────────────────────────────────────────────────────────────────────
+
+;; FFI import for testing
+(#%require-dylib "libnothelix"
+                 (only-in nothelix
+                          kitty-display-image
+                          write-raw-to-tty))
+
+;; Test Kitty graphics by displaying a tiny red square
+;; Usage: :scm (test-kitty-image)
+(define (test-kitty-image)
+  ;; Tiny 2x2 red PNG (base64 encoded)
+  ;; This is a valid PNG that should display as a small red square
+  (define tiny-red-png "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVQI12P4z8DAwMAAAw4B/xnq5OkAAAAASUVORK5CYII=")
+  
+  (define protocol (graphics-protocol))
+  (set-status! (string-append "Testing Kitty graphics (protocol: " protocol ")"))
+  
+  ;; Get the escape sequence
+  (define escape-seq-b64 (kitty-display-image tiny-red-png 999 2))
+  
+  (set-status! (string-append "Escape seq length: " (number->string (string-length escape-seq-b64)) " bytes (b64)"))
+  
+  ;; Write to TTY
+  (define result (write-raw-to-tty escape-seq-b64))
+  
+  (if (> (string-length result) 0)
+      (set-status! (string-append "TTY write error: " result))
+      (set-status! "TTY write succeeded - check if image appears")))

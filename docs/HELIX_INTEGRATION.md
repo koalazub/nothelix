@@ -33,91 +33,46 @@ The RawContent rendering pipeline is fully implemented in `feature/inline-image-
 ;; - char-idx: usize - document position
 ```
 
-### Nothelix Plugin (TODO)
+### Nothelix Plugin (COMPLETE)
 
-What remains to implement in this repo:
+All rendering components are now implemented:
 
-## TODO List
+## Implementation Status
 
-### 1. Kitty Graphics Protocol Helper
+### 1. Graphics Protocol (COMPLETE)
 
-Create `plugin/kitty-graphics.scm`:
+Implemented in `plugin/nothelix/graphics.scm` and `libnothelix/src/lib.rs`:
 
-```scheme
-;; Generate Kitty graphics escape sequence
-(define (kitty-image-payload id base64-data width height rows)
-  ;; Returns bytes for: \x1b_Gf=100,a=T,i={id},s={width},v={height};{base64}\x1b\\
-  ...)
+- Protocol detection (Kitty, iTerm2, Sixel)
+- Escape sequence generation in Rust for performance
+- `render-image-b64` function to render base64 image data
+- `graphics-protocol` to check current terminal support
 
-;; Check if terminal supports Kitty graphics
-(define (kitty-graphics-supported?)
-  ;; Check TERM/TERM_PROGRAM env vars
-  ...)
+### 2. Image Capture (COMPLETE)
 
-;; Render image at position (high-level API)
-(define (render-image path char-idx rows)
-  (let* ((data (read-file-bytes path))
-         (b64 (base64-encode data))
-         (id (generate-unique-id))
-         (payload (kitty-image-payload id b64 0 0 rows)))
-    (add-raw-content! payload rows char-idx)))
-```
+Implemented in Julia kernel (`kernel/output_capture.jl`, `kernel/cell_macros.jl`):
 
-### 2. Base64 Encoding
+- Plot detection for Plots.jl, Makie, etc.
+- PNG capture via `show(io, MIME("image/png"), plot)`
+- Base64 encoding
+- Images included in cell execution JSON result
 
-Either:
-- Use Rust FFI from libnothelix
-- Implement in Steel (slower but simpler)
+### 3. Output Rendering Integration (COMPLETE)
 
-```scheme
-;; In libnothelix, expose:
-(define (base64-encode bytes) ...)
-(define (read-file-bytes path) ...)
-```
+Implemented in `plugin/nothelix/execution.scm`:
 
-### 3. Output Rendering Integration
+- `update-cell-output` checks for images after cell execution
+- `json-get-first-image` (Rust FFI) extracts image data
+- `render-image-b64` generates escape sequences via Rust
+- `add-raw-content!` injects into document
 
-Update `plugin/nothelix.scm` to render cell outputs:
+### 4. Terminal Detection (COMPLETE)
 
-```scheme
-(define (render-cell-output cell-idx)
-  (let* ((output (notebook-get-cell-output cell-idx))
-         (mime-type (output-mime-type output)))
-    (cond
-      ((string=? mime-type "image/png")
-       (render-image-output output))
-      ((string=? mime-type "text/plain")
-       (render-text-output output))
-      (else
-       (render-fallback output)))))
+Implemented in `libnothelix/src/lib.rs`:
 
-(define (render-image-output output)
-  (let* ((b64-data (output-data output))
-         (char-idx (output-char-position output))
-         (rows (calculate-image-rows output)))
-    (when (kitty-graphics-supported?)
-      (let ((payload (kitty-image-payload (output-id output) b64-data 0 0 rows)))
-        (add-raw-content! payload rows char-idx)))))
-```
-
-### 4. Terminal Detection
-
-```scheme
-(define (detect-graphics-protocol)
-  (let ((term (getenv "TERM"))
-        (term-program (getenv "TERM_PROGRAM")))
-    (cond
-      ((or (string-contains? term "kitty")
-           (string=? term-program "kitty")
-           (string=? term-program "ghostty"))
-       'kitty)
-      ((or (string=? term-program "WezTerm")
-           (string=? term-program "iTerm.app"))
-       'iterm2)
-      ((string-contains? term "xterm")
-       'sixel)
-      (else 'none))))
-```
+- `detect-graphics-protocol` checks env vars
+- `config-get-protocol` allows user override
+- Supports: Kitty, Ghostty, iTerm2, WezTerm, Sixel
 
 ## Testing
 
@@ -188,17 +143,120 @@ For Kitty protocol specifically:
 - First render: full base64 data (~2MB for large image)
 - Subsequent renders: `\x1b_Ga=p,i={id}\x1b\\` (30 bytes)
 
-## Files to Create
+## Detailed Data Flow
+
+The complete path from cell execution to image display:
 
 ```
-nothelix/
-├── plugin/
-│   ├── kitty-graphics.scm    # TODO: Kitty protocol encoder
-│   ├── sixel.scm             # TODO: Sixel fallback (optional)
-│   └── image-render.scm      # TODO: High-level render API
-├── libnothelix/
-│   └── src/
-│       └── base64.rs         # TODO: Base64 + file reading FFI
+1. Cell Execution (execution.scm)
+   └── kernel-execute-cell-start → Julia kernel
+       └── Captures plot as PNG, base64 encodes, returns in JSON
+
+2. Image Extraction (execution.scm:203)
+   └── json-get-first-image (Rust FFI) → extracts base64 image data
+
+3. Escape Sequence Generation (graphics.scm:127)
+   └── render-image-b64 → render-b64-for-protocol (Rust FFI)
+       └── libnothelix/src/lib.rs:382 → ffi_render_b64
+           └── libnothelix/src/graphics/mod.rs:71 → render_base64_to_string
+               └── libnothelix/src/graphics/kitty.rs:140 → encode()
+                   └── Returns: "\x1b_Gf=100,t=d,a=T,i={id};{base64}\x1b\\"
+
+4. RawContent Injection (graphics.scm:152)
+   └── add-raw-content! (Helix Steel binding)
+       └── helix-term/src/commands/engine/steel/mod.rs:5765
+           └── doc.add_raw_content(view_id, RawContent{id, payload, height, char_idx})
+
+5. Document Storage (helix-view/src/document.rs)
+   └── raw_content: HashMap<ViewId, Vec<RawContent>>
+
+6. Text Annotations (helix-view/src/view.rs:513)
+   └── text_annotations.add_raw_content(raw_content)
+
+7. Document Formatting (helix-core/src/doc_formatter.rs:454)
+   └── FormattedGrapheme includes raw_content reference
+
+8. Text Rendering (helix-term/src/ui/document.rs:321)
+   └── draw_raw_content() → surface.write_raw_bytes(id, x, y, payload)
+
+9. Buffer Storage (helix-tui/src/buffer.rs:300)
+   └── raw_writes: Vec<(u64, u16, u16, Vec<u8>)>
+
+10. Terminal Flush (helix-tui/src/terminal.rs:159)
+    └── ID-based diffing: only sends new IDs not in previous frame
+        └── backend.draw_raw(&new_writes)
+
+11. Backend Output (helix-tui/src/backend/termina.rs:562)
+    └── write!(terminal, "\x1b[{};{}H", y+1, x+1) → cursor position
+        └── terminal.write_all(bytes) → escape sequence to terminal
+```
+
+## Troubleshooting
+
+### Issue: Image data flows but nothing displays
+
+**Symptoms**:
+- Logs show `add-raw-content!` called with correct payload
+- Logs show `backend.draw_raw completed successfully`
+- No image visible in terminal
+
+**Diagnostic Steps**:
+
+1. **Verify terminal protocol support**:
+   ```bash
+   /tmp/test_kitty_graphics.sh  # Created test script
+   ```
+
+2. **Check escape sequence format** (in helix.log):
+   ```
+   [termina.rs:draw_raw] first_100_str="\x1b_Gf=100,t=d,a=T,i=1;..."
+   ```
+   Should start with `\x1b_G` for Kitty protocol.
+
+3. **Verify ID-based diffing**:
+   ```
+   [terminal.rs:flush] new_writes (after diff) count=1
+   ```
+   If count=0, the image was already sent in a previous frame.
+
+4. **Check screen position**:
+   ```
+   [termina.rs:draw_raw] MoveTo(8,55)
+   ```
+   Position must be within visible terminal bounds.
+
+### Issue: Protocol detection returns wrong value
+
+**Fix for Ghostty**:
+`libnothelix/src/graphics/registry.rs:40-47` now checks for `term.contains("ghostty")`.
+
+### Issue: Escape sequence corrupted
+
+If hex dump shows unexpected bytes, check:
+1. String encoding in `render_base64_to_string` (should use `String::from_utf8_lossy`)
+2. Steel string handling (UTF-8 safe)
+
+### Issue: Image shows as empty square / line numbers disappear
+
+**Root cause**: Kitty graphics protocol requires chunked transmission for payloads > 4096 bytes.
+
+**Fix applied**: `libnothelix/src/graphics/kitty.rs` now chunks large payloads:
+- First chunk: `\x1b_Gf=100,t=d,a=T,i=1,m=1;[data]\x1b\\`
+- Middle chunks: `\x1b_Gm=1;[data]\x1b\\`
+- Last chunk: `\x1b_Gm=0;[data]\x1b\\`
+
+**Tests added**:
+- `chunked_transmission_for_large_payloads` - verifies chunking for >4096 byte payloads
+- `small_payload_not_chunked` - verifies small payloads remain unchunked
+
+## Test Infrastructure
+
+```bash
+# Rust library tests
+cd libnothelix && cargo test
+
+# Steel diagnostic tests (in Helix)
+:scm (require "plugins/tests/diagnostic-tests.scm")
 ```
 
 ## References

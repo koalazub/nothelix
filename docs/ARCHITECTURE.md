@@ -168,25 +168,30 @@ nothelix/
 ├── README.md                    # Main entry point
 ├── docs/
 │   ├── ARCHITECTURE.md          # This file
-│   └── HELIX_INTEGRATION.md     # For upstreaming to helix
+│   ├── HELIX_INTEGRATION.md     # RawContent integration
+│   ├── KEYBINDINGS.md           # User keybindings
+│   └── TESTING.md               # Testing guide
 ├── plugin/
-│   ├── README.md                # Plugin usage guide
-│   ├── INSTALL.md               # Installation instructions
-│   ├── nothelix.scm             # Main plugin
-│   ├── notebook-rust.scm        # Rust interface
-│   ├── nothelix-autoconvert.scm # Optional converter
-│   ├── kernel-manager-rust.scm  # Kernel interface
-│   ├── string-utils.scm         # Utilities
-│   └── kitty-graphics.scm       # Graphics rendering
+│   ├── nothelix.scm             # Main plugin entry
+│   └── nothelix/
+│       ├── string-utils.scm     # String utilities
+│       ├── graphics.scm         # Graphics rendering
+│       ├── kernel.scm           # Kernel lifecycle
+│       ├── conversion.scm       # Notebook conversion
+│       ├── navigation.scm       # Cell navigation
+│       ├── execution.scm        # Cell execution
+│       ├── selection.scm        # Text selection
+│       └── picker.scm           # Cell picker UI
 ├── libnothelix/
-│   ├── README.md                # Library API docs
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs               # C FFI exports
-│       └── bin/
-│           └── notebook-server.rs  # JSON-RPC server
-└── notebooks/
-    └── *.scm                    # Parser, renderer modules
+│       └── lib.rs               # Rust FFI (parsing, graphics, kernel)
+└── kernel/
+    ├── runner.jl                # Kernel main loop
+    ├── cell_registry.jl         # Cell state management
+    ├── ast_analysis.jl          # Dependency extraction
+    ├── output_capture.jl        # Output/plot capture
+    └── cell_macros.jl           # @cell and @markdown macros
 ```
 
 ## Design Principles
@@ -223,14 +228,18 @@ Rust library has C FFI, usable from:
 - Execute cell: Depends on code (kernel latency)
 - Memory: <1MB for metadata, loaded cells only
 
+## Completed Features
+
+1. ✅ **Async execution**: Non-blocking kernel execution via `enqueue-thread-local-callback-with-delay`
+2. ✅ **Inline images**: RawContent API for plots/graphs (Kitty/iTerm2 protocols)
+3. ✅ **Kernel lifecycle**: Start, stop, cleanup on editor exit
+
 ## Future Enhancements
 
 1. **Virtual scrolling**: Only render visible cells
 2. **Persistent cache**: Save parsed data, instant reopens
 3. **Progressive rendering**: Display cells as they load
-4. **Async execution**: Non-blocking kernel execution
-5. **Inline images**: Use RawContent for plots/graphs
-6. **Output streaming**: Real-time output during execution
+4. **Output streaming**: Real-time output during execution
 
 ## Testing Strategy
 

@@ -7,11 +7,14 @@
          string-suffix?
          string-contains?
          string-join
+         string-split
          string->bytes
          string->number
          string-replace-all
          char->number
-         json-get-string)
+         json-get-string
+         sanitise-error-message
+         truncate-string)
 
 (define (string-find str substr start)
   (let loop ([pos start])
@@ -82,6 +85,17 @@
         (if (null? rest)
             result
             (loop (cdr rest) (string-append result sep (car rest)))))))
+
+;; Split string by delimiter
+(define (string-split str delim)
+  (if (or (not str) (equal? str ""))
+      '()
+      (let loop ([s str] [result '()])
+        (let ([pos (string-find s delim 0)])
+          (if (not pos)
+              (reverse (cons s result))
+              (loop (substring s (+ pos (string-length delim)) (string-length s))
+                    (cons (substring s 0 pos) result)))))))
 
 (define (string->bytes str)
   (if (not (string? str))
@@ -180,3 +194,35 @@
                               (string-find trimmed "}" 0)
                               (string-length trimmed)))
            (string-trim (substring trimmed 0 end-pos))]))))
+
+;;; ─────────────────────────────────────────────────────────────────────────────
+;;; Error Message Utilities
+;;; ─────────────────────────────────────────────────────────────────────────────
+
+;; Truncate a string to a maximum length, adding "..." if truncated
+(define (truncate-string str max-len)
+  (if (or (not (string? str)) (<= (string-length str) max-len))
+      str
+      (string-append (substring str 0 (- max-len 3)) "...")))
+
+;; Sanitise an error message for safe display in the status bar
+;; - Removes/replaces control characters and escape sequences
+;; - Removes newlines (replaces with space)
+;; - Truncates to reasonable length
+;; - Extracts key error info from JSON if present
+(define (sanitise-error-message msg)
+  (if (not (string? msg))
+      "Unknown error"
+      (let* (;; Try to extract just the error message from JSON
+             [error-text (or (json-get-string msg "error") msg)]
+             ;; Replace newlines and escape sequences with spaces
+             [clean1 (string-replace-all error-text "\\n" " ")]
+             [clean2 (string-replace-all clean1 "\n" " ")]
+             [clean3 (string-replace-all clean2 "\\r" "")]
+             [clean4 (string-replace-all clean3 "\r" "")]
+             [clean5 (string-replace-all clean4 "\\t" " ")]
+             [clean6 (string-replace-all clean5 "\t" " ")]
+             ;; Remove excessive whitespace
+             [trimmed (string-trim clean6)])
+        ;; Truncate to status bar friendly length
+        (truncate-string trimmed 120))))

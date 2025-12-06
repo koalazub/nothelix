@@ -40,6 +40,9 @@ using .ASTAnalysis
 using .OutputCapture
 using .CellMacros
 
+# Set log file for OutputCapture module
+OutputCapture.set_log_file(LOG_FILE)
+
 log_info("Modules loaded successfully")
 
 # Export macros to Main module so they're available in cell execution
@@ -62,6 +65,7 @@ function handle_execute_cell(cmd::Dict)
     code = get(cmd, "code", "")
 
     log_info("Executing cell $cell_idx ($(length(code)) bytes)")
+    log_debug("Code preview: $(first(code, min(100, length(code))))...")
 
     try
         # Execute the cell
@@ -69,6 +73,11 @@ function handle_execute_cell(cmd::Dict)
 
         if result.success
             log_info("Cell $cell_idx executed successfully")
+            # Log what variables are now defined in Main
+            main_vars = filter(n -> !startswith(string(n), "#") && n ∉ [:Base, :Core, :Main, :InteractiveUtils], names(Main, all=false))
+            log_info("Variables in Main after cell $cell_idx: $main_vars")
+            # Explicit check for common variables
+            log_info("  t defined: $(isdefined(Main, :t)), y defined: $(isdefined(Main, :y))")
             cell_result = CellMacros.get_cell_result_json(cell_idx)
             write_response(Dict(
                 "status" => "ok",
@@ -256,33 +265,25 @@ touch(READY_FILE)
 log_info("Entering main loop")
 while true
     try
-        if isfile(INPUT_FILE)
-            log_debug("Input file detected")
-
-            # Read and parse command
-            cmd_str = read(INPUT_FILE, String)
-
-            # Remove safely (might already be gone due to race condition)
-            try
-                rm(INPUT_FILE)
-            catch
-                # File already removed - that's fine
+        cmd_str = nothing
+        try
+            if isfile(INPUT_FILE)
+                cmd_str = read(INPUT_FILE, String)
             end
+        catch
+        end
 
-            if !isempty(cmd_str)
-                cmd = JSON3.read(cmd_str, Dict)
-                handle_command(cmd)
-            end
+        try
+            rm(INPUT_FILE, force=true)
+        catch
+        end
+
+        if cmd_str !== nothing && !isempty(cmd_str)
+            cmd = JSON3.read(cmd_str, Dict)
+            handle_command(cmd)
         end
     catch e
         log_error("Error in main loop: $e")
-        try
-            write_response(Dict(
-                "status" => "error",
-                "error" => sprint(showerror, e)
-            ))
-        catch
-        end
     end
 
     sleep(0.05)  # 50ms polling interval

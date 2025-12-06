@@ -13,12 +13,13 @@ mutable struct Cell
     outputs::Any
     stdout::String
     stderr::String
+    images::Vector{Tuple{String, String}}  # (format, base64_data) for inline rendering
     error::Union{Exception, Nothing}
     status::Symbol  # :pending, :running, :done, :error
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", nothing, :pending)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], nothing, :pending)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()

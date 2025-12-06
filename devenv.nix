@@ -4,10 +4,64 @@
   config,
   ...
 }:
+let
+  beads = pkgs.buildGoModule {
+    pname = "beads";
+    version = "0.24.4";
+    
+    src = pkgs.fetchFromGitHub {
+      owner = "steveyegge";
+      repo = "beads";
+      rev = "main";
+      sha256 = "sha256-PCsU2GwrPYFAE2KTCdk60E6ZTPRtgNdbPF+bzf8qi3Q=";
+    };
+    
+    subPackages = [ "cmd/bd" ];
+    doCheck = false;
+    vendorHash = "sha256-iTPi8+pbKr2Q352hzvIOGL2EneF9agrDmBwTLMUjDBE=";
+    
+    nativeBuildInputs = [ pkgs.git ];
+    
+    meta = with pkgs.lib; {
+      description = "beads (bd) - An issue tracker designed for AI-supervised coding workflows";
+      homepage = "https://github.com/steveyegge/beads";
+      license = licenses.mit;
+      mainProgram = "bd";
+    };
+  };
+
+  beads-viewer = pkgs.buildGoModule {
+    pname = "beads-viewer";
+    version = "0.10.2";
+    
+    src = pkgs.fetchFromGitHub {
+      owner = "Dicklesworthstone";
+      repo = "beads_viewer";
+      rev = "v0.10.2";
+      sha256 = "sha256-GteCe909fpjjiFzjVKUY9dgfU7ubzue8vDOxn0NEt/A=";
+    };
+    
+    subPackages = [ "cmd/bv" ];
+    doCheck = false;
+    proxyVendor = true;
+    vendorHash = "sha256-eVGiZI2Bha+o+n3YletLzg05TGIwqCkfwMVBZhFn6qw=";
+    
+    meta = with pkgs.lib; {
+      description = "beads-viewer (bv) - TUI for viewing beads issues";
+      homepage = "https://github.com/Dicklesworthstone/beads_viewer";
+      license = licenses.mit;
+      mainProgram = "bv";
+    };
+  };
+in
 {
-  packages = [
-    pkgs.bun
-    pkgs.tree-sitter
+  packages = with pkgs; [
+    bun
+    tree-sitter
+    git
+    beads
+    beads-viewer
+    bacon  # Background Rust checker for better error visibility
   ];
 
   languages.javascript.enable = true;
