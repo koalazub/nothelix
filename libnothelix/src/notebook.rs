@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 // ─── Cell types ───────────────────────────────────────────────────────────────
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum CellKind {
     Code,
     Markdown,
@@ -383,6 +383,209 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
     ) {
         Ok(_) => format!("Synced to {out_path}"),
         Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_path(name: &str) -> String {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        format!("{manifest}/tests/fixtures/{name}")
+    }
+
+    #[test]
+    fn validate_valid_notebook() {
+        let result = notebook_validate(fixture_path("simple.ipynb"));
+        assert_eq!(
+            result, "",
+            "Expected empty string for valid notebook, got: {result}"
+        );
+    }
+
+    #[test]
+    fn validate_nonexistent_file() {
+        let result = notebook_validate("/nonexistent/file.ipynb".into());
+        assert!(
+            result.contains("Cannot read"),
+            "Expected read error, got: {result}"
+        );
+    }
+
+    #[test]
+    fn cell_count() {
+        assert_eq!(notebook_cell_count(fixture_path("simple.ipynb")), 4);
+    }
+
+    #[test]
+    fn cell_count_nonexistent() {
+        assert_eq!(notebook_cell_count("/nonexistent.ipynb".into()), 0);
+    }
+
+    #[test]
+    fn get_cell_code_first_cell() {
+        let code = notebook_get_cell_code(fixture_path("simple.ipynb"), 0);
+        assert_eq!(code, "using Plots");
+    }
+
+    #[test]
+    fn get_cell_code_multiline() {
+        let code = notebook_get_cell_code(fixture_path("simple.ipynb"), 1);
+        assert_eq!(code, "x = 1:10\ny = x.^2");
+    }
+
+    #[test]
+    fn get_cell_code_out_of_range() {
+        let code = notebook_get_cell_code(fixture_path("simple.ipynb"), 99);
+        assert_eq!(code, "");
+    }
+
+    #[test]
+    fn convert_sync_produces_cell_markers() {
+        let result = notebook_convert_sync(fixture_path("simple.ipynb"));
+        assert!(!result.starts_with("ERROR"), "Conversion failed: {result}");
+        assert!(result.contains("@cell 0 julia"));
+        assert!(result.contains("@cell 1 julia"));
+        assert!(result.contains("@markdown 2"));
+        assert!(result.contains("@cell 3 julia"));
+        assert!(result.contains("using Plots"));
+        assert!(result.contains("plot(x, y)"));
+    }
+
+    #[test]
+    fn convert_sync_header() {
+        let result = notebook_convert_sync(fixture_path("simple.ipynb"));
+        assert!(result.starts_with("# ═══ Nothelix Notebook:"));
+        assert!(result.contains("# Cells: 4"));
+    }
+
+    #[test]
+    fn convert_sync_markdown_commented() {
+        let result = notebook_convert_sync(fixture_path("simple.ipynb"));
+        assert!(result.contains("# # Results"));
+        assert!(result.contains("# This shows the quadratic function."));
+    }
+
+    #[test]
+    fn parse_jl_file_roundtrip() {
+        let (cells, source_path) = parse_jl_file(&fixture_path("simple.jl")).unwrap();
+        assert_eq!(cells.len(), 4);
+        assert!(source_path.ends_with("simple.ipynb"));
+
+        // Cell 0: code
+        assert_eq!(cells[0].index, 0);
+        assert_eq!(cells[0].kind, CellKind::Code);
+        assert_eq!(cells[0].code, "using Plots");
+
+        // Cell 1: code, multiline
+        assert_eq!(cells[1].index, 1);
+        assert_eq!(cells[1].code, "x = 1:10\ny = x.^2");
+
+        // Cell 2: markdown
+        assert_eq!(cells[2].index, 2);
+        assert_eq!(cells[2].kind, CellKind::Markdown);
+
+        // Cell 3: code
+        assert_eq!(cells[3].index, 3);
+        assert_eq!(cells[3].code, "plot(x, y)");
+    }
+
+    #[test]
+    fn get_cell_at_line_first_cell() {
+        let result = get_cell_at_line(fixture_path("simple.jl"), 4);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["cell_index"].as_str().unwrap(), "0");
+        assert_eq!(parsed["error"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn get_cell_at_line_markdown() {
+        let result = get_cell_at_line(fixture_path("simple.jl"), 11);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["cell_index"].as_str().unwrap(), "2");
+    }
+
+    #[test]
+    fn get_cell_code_from_jl_valid() {
+        let result = get_cell_code_from_jl(fixture_path("simple.jl"), 3);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["code"].as_str().unwrap(), "plot(x, y)");
+        assert_eq!(parsed["error"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn get_cell_code_from_jl_missing() {
+        let result = get_cell_code_from_jl(fixture_path("simple.jl"), 99);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("not found"));
+    }
+
+    #[test]
+    fn list_jl_code_cells_all() {
+        let result = list_jl_code_cells(fixture_path("simple.jl"), 0);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        // Should list cells 0, 1, 3 (not markdown cell 2)
+        assert_eq!(parsed["indices"].as_str().unwrap(), "0,1,3");
+    }
+
+    #[test]
+    fn list_jl_code_cells_limited() {
+        let result = list_jl_code_cells(fixture_path("simple.jl"), 2);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["indices"].as_str().unwrap(), "0,1");
+    }
+
+    #[test]
+    fn source_to_string_array() {
+        let v = serde_json::json!(["line1\n", "line2"]);
+        assert_eq!(source_to_string(&v), "line1\nline2");
+    }
+
+    #[test]
+    fn source_to_string_string() {
+        let v = serde_json::json!("single string");
+        assert_eq!(source_to_string(&v), "single string");
+    }
+
+    #[test]
+    fn source_to_string_null() {
+        assert_eq!(source_to_string(&Value::Null), "");
+    }
+
+    #[test]
+    fn notebook_cell_image_data_no_images() {
+        let result = notebook_cell_image_data(fixture_path("simple.ipynb"), 0);
+        assert_eq!(result, ""); // simple.ipynb has no image outputs
+    }
+
+    #[test]
+    fn convert_to_ipynb_roundtrip() {
+        // Write the .jl to a temp file, convert back, verify structure
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let jl_content = std::fs::read_to_string(fixture_path("simple.jl")).unwrap();
+
+        // Modify the header to point to a temp .ipynb
+        let tmp_ipynb = tmp.path().with_extension("ipynb");
+        std::fs::copy(fixture_path("simple.ipynb"), &tmp_ipynb).unwrap();
+
+        let jl_path = tmp.path().with_extension("jl");
+        let modified =
+            jl_content.replace(&fixture_path("simple.ipynb"), &tmp_ipynb.to_string_lossy());
+        std::fs::write(&jl_path, &modified).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(
+            result.starts_with("Synced to"),
+            "Expected success, got: {result}"
+        );
+
+        // Verify the output is valid JSON with 4 cells
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        assert_eq!(nb["cells"].as_array().unwrap().len(), 4);
+        assert_eq!(nb["cells"][0]["cell_type"], "code");
+        assert_eq!(nb["cells"][2]["cell_type"], "markdown");
     }
 }
 

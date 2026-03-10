@@ -189,6 +189,102 @@ pub fn kitty_display_image(b64_data: String, image_id: isize, rows: isize) -> St
     kitty_display_image_bytes(b64_data, image_id, rows)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_png() {
+        let data = b"\x89PNG\r\n\x1a\n rest of png";
+        assert_eq!(detect_format_from_magic(data), "png");
+    }
+
+    #[test]
+    fn detect_jpeg() {
+        let data = b"\xff\xd8\xff\xe0 rest of jpeg";
+        assert_eq!(detect_format_from_magic(data), "jpeg");
+    }
+
+    #[test]
+    fn detect_gif() {
+        assert_eq!(detect_format_from_magic(b"GIF89a"), "gif");
+        assert_eq!(detect_format_from_magic(b"GIF87a"), "gif");
+    }
+
+    #[test]
+    fn detect_webp() {
+        let mut data = b"RIFF____WEBP".to_vec();
+        data[4..8].copy_from_slice(b"\x00\x00\x00\x00");
+        assert_eq!(detect_format_from_magic(&data), "webp");
+    }
+
+    #[test]
+    fn detect_svg() {
+        assert_eq!(detect_format_from_magic(b"<svg xmlns="), "svg");
+        assert_eq!(detect_format_from_magic(b"<?xml version="), "svg");
+    }
+
+    #[test]
+    fn detect_unknown() {
+        assert_eq!(detect_format_from_magic(b"hello world"), "unknown");
+        assert_eq!(detect_format_from_magic(b""), "unknown");
+    }
+
+    #[test]
+    fn kitty_escape_single_chunk() {
+        // Small enough data for a single chunk
+        let b64 = "iVBORw0KGgo=";
+        let result = kitty_escape_for_b64_png(b64, 1, 10);
+        assert!(result.starts_with("\x1b_G"));
+        assert!(result.contains("a=T"));
+        assert!(result.contains("f=100"));
+        assert!(result.contains("t=d"));
+        assert!(result.contains("I=1"));
+        assert!(result.contains("r=10"));
+        assert!(result.contains("m=0")); // single chunk, no more
+        assert!(result.contains("iVBORw0KGgo="));
+        assert!(result.ends_with("\x1b\\"));
+    }
+
+    #[test]
+    fn kitty_escape_multiple_chunks() {
+        // Create data larger than 4096 bytes
+        let b64: String = "A".repeat(5000);
+        let result = kitty_escape_for_b64_png(&b64, 42, 15);
+        // Should have at least 2 chunks
+        let chunk_count = result.matches("\x1b_G").count();
+        assert!(
+            chunk_count >= 2,
+            "Expected multiple chunks, got {chunk_count}"
+        );
+        // First chunk has m=1 (more), last has m=0
+        assert!(result.contains("m=1"));
+        assert!(result.contains("m=0"));
+        assert!(result.contains("I=42"));
+        assert!(result.contains("r=15"));
+    }
+
+    #[test]
+    fn ensure_png_passthrough() {
+        let png_header = b"\x89PNG\r\n\x1a\n";
+        let result = ensure_png(png_header.as_slice());
+        assert_eq!(result, png_header.as_slice());
+    }
+
+    #[test]
+    fn image_detect_format_bytes_base64_png() {
+        // Base64 of PNG magic bytes
+        let b64 = BASE64.encode(b"\x89PNG\r\n\x1a\n");
+        assert_eq!(image_detect_format_bytes(b64), "png");
+    }
+
+    #[test]
+    fn image_detect_format_bytes_base64_jpeg() {
+        let b64 = BASE64.encode(b"\xff\xd8\xff\xe0");
+        assert_eq!(image_detect_format_bytes(b64), "jpeg");
+    }
+}
+
 /// Write the escape sequence directly to `/dev/tty`.
 pub fn write_raw_to_tty(escape_seq: String) -> String {
     use std::io::Write as _;

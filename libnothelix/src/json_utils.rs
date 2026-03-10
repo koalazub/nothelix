@@ -37,6 +37,82 @@ pub fn json_get_first_image(json_str: String) -> String {
     find_first_image_b64(&parsed).unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_get_string_field() {
+        let json = r#"{"name": "hello", "count": 42}"#;
+        assert_eq!(json_get(json.into(), "name".into()), "hello");
+    }
+
+    #[test]
+    fn json_get_number_field() {
+        let json = r#"{"count": 42}"#;
+        assert_eq!(json_get(json.into(), "count".into()), "42");
+    }
+
+    #[test]
+    fn json_get_missing_field() {
+        let json = r#"{"name": "hello"}"#;
+        assert_eq!(json_get(json.into(), "missing".into()), "");
+    }
+
+    #[test]
+    fn json_get_bool_true() {
+        let json = r#"{"flag": true}"#;
+        assert_eq!(json_get_bool(json.into(), "flag".into()), "true");
+    }
+
+    #[test]
+    fn json_get_bool_missing_defaults_false() {
+        let json = r#"{"other": 1}"#;
+        assert_eq!(json_get_bool(json.into(), "flag".into()), "false");
+    }
+
+    #[test]
+    fn json_get_bool_from_string() {
+        let json = r#"{"flag": "true"}"#;
+        assert_eq!(json_get_bool(json.into(), "flag".into()), "true");
+    }
+
+    #[test]
+    fn first_image_runner_format() {
+        let json = r#"{"images": [{"format": "png", "data": "iVBORw0KGgo="}]}"#;
+        assert_eq!(json_get_first_image(json.into()), "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn first_image_jupyter_format() {
+        let json = r#"{"image/png": "iVBORw0KGgo="}"#;
+        assert_eq!(json_get_first_image(json.into()), "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn first_image_nested() {
+        let json = r#"{"data": {"image/png": "abc123"}}"#;
+        assert_eq!(json_get_first_image(json.into()), "abc123");
+    }
+
+    #[test]
+    fn first_image_empty_data_skipped() {
+        let json = r#"{"images": [{"format": "png", "data": ""}]}"#;
+        assert_eq!(json_get_first_image(json.into()), "");
+    }
+
+    #[test]
+    fn first_image_no_images() {
+        let json = r#"{"stdout": "hello"}"#;
+        assert_eq!(json_get_first_image(json.into()), "");
+    }
+
+    #[test]
+    fn json_get_invalid_json() {
+        assert_eq!(json_get("not json".into(), "key".into()), "");
+    }
+}
+
 /// Recursively search `v` for base64 image data.
 ///
 /// Handles two formats:

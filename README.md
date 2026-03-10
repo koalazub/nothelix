@@ -12,55 +12,147 @@ The plugin converts notebooks into a readable cell format, manages kernel connec
 
 ## Requirements
 
-- Helix built with Steel plugin support (from the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering), which includes the RawContent API for inline rendering)
-- A Julia installation (for kernel execution)
-- A terminal with graphics support (Kitty, Ghostty, WezTerm, iTerm2) for inline images
+- **Helix with Steel plugin support** -- from the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering), which includes the RawContent API for inline rendering
+- **Rust nightly toolchain** -- for building both Helix and libnothelix
+- **Julia** -- for kernel execution (only Julia kernels are supported currently)
+- **A terminal with Kitty graphics protocol support** -- for inline images (Kitty, Ghostty, WezTerm)
 
-## Installation
+### Terminal multiplexer caveat
 
-### Using devenv (recommended)
+Terminal multiplexers like **Zellij** and **tmux** intercept escape sequences and will prevent inline images from rendering. Run Helix directly in your terminal for image support, or use a multiplexer that passes through Kitty graphics protocol escapes.
 
-If you have devenv set up:
+## Getting Started
 
-```bash
-git clone https://github.com/koalazub/nothelix
-cd nothelix
-devenv shell
-nothelix-install
+This walks through the full setup from scratch: building the Helix fork, building libnothelix, installing the plugin, and running a notebook.
+
+### 1. Clone and build the Helix fork
+
+The Helix fork adds the RawContent API that Nothelix needs for inline image rendering. Both Helix and libnothelix must be built against the same Steel commit for ABI compatibility.
+
+```
+git clone https://github.com/koalazub/helix.git
+cd helix
+
+# Build with Steel plugin support (skip grammar builds -- they take a while)
+HELIX_DISABLE_AUTO_GRAMMAR_BUILD=1 cargo build --release --features steel
+
+# Fetch tree-sitter grammars separately
+./target/release/hx --grammar fetch
+./target/release/hx --grammar build
 ```
 
-### Manual installation
+Put the `hx` binary on your PATH or symlink it:
 
-Build the library:
+```
+ln -sf "$(pwd)/target/release/hx" ~/.local/bin/hx
+```
 
-```bash
+The Helix runtime directory must also be findable. Set `HELIX_RUNTIME` if you don't install Helix system-wide:
+
+```
+export HELIX_RUNTIME="/path/to/helix/runtime"
+```
+
+### 2. Set STEEL_HOME
+
+Steel needs a home directory for native dylibs. Set this in your shell profile:
+
+```
+export STEEL_HOME="$HOME/.steel"
+```
+
+Make sure this is set whenever you run `hx`.
+
+### 3. Clone and build Nothelix
+
+```
+git clone https://github.com/koalazub/nothelix.git
+cd nothelix
 cargo build --release -p libnothelix
 ```
 
-Copy the library to Steel's native directory:
+### 4. Install the dylib and plugin files
 
-```bash
+The library goes into Steel's native directory. The plugin files go into your Helix config.
+
+**Option A: Symlinks (recommended for development)**
+
+Symlinks let you rebuild without re-copying. This is what `nothelix-install` does in the Nix dev shell.
+
+```
 mkdir -p ~/.steel/native
-cp target/release/libnothelix.dylib ~/.steel/native/  # macOS
-cp target/release/libnothelix.so ~/.steel/native/     # Linux
+mkdir -p ~/.config/helix
+
+# Dylib
+ln -sf "$(pwd)/target/release/libnothelix.dylib" ~/.steel/native/   # macOS
+ln -sf "$(pwd)/target/release/libnothelix.so" ~/.steel/native/      # Linux
+
+# Plugin files
+ln -sf "$(pwd)/plugin/nothelix.scm" ~/.config/helix/nothelix.scm
+ln -sf "$(pwd)/plugin/nothelix" ~/.config/helix/nothelix
 ```
 
-Copy the plugin files to your Helix config:
+**Option B: Copy**
 
-```bash
+```
+mkdir -p ~/.steel/native
+mkdir -p ~/.config/helix
+
+# Dylib
+cp target/release/libnothelix.dylib ~/.steel/native/   # macOS
+cp target/release/libnothelix.so ~/.steel/native/       # Linux
+
+# Plugin files
 cp plugin/nothelix.scm ~/.config/helix/
 cp -r plugin/nothelix ~/.config/helix/nothelix
 ```
 
-Add to your `~/.config/helix/init.scm`:
+### 5. Load the plugin
+
+Add this to `~/.config/helix/init.scm` (create the file if it doesn't exist):
 
 ```scheme
 (require "nothelix.scm")
 ```
 
+### 6. Try the example notebook
+
+There's a demo notebook in the repo you can use to verify everything works:
+
+```
+hx examples/simple.ipynb
+```
+
+The raw `.ipynb` is JSON. You need to convert it to the editable cell format first:
+
+1. Run `:convert-notebook` -- this creates a `.jl` file and opens it. You'll see cells like:
+
+```
+@cell 0 julia
+using Plots
+
+@cell 1 julia
+x = 1:10
+y = x.^2
+
+@markdown 2
+# # Results
+
+@cell 3 julia
+plot(x, y)
+```
+
+2. Run `:execute-all-cells` to execute every cell top-to-bottom. The first run takes a while because Julia needs to precompile `Plots`.
+
+3. Once execution finishes, outputs appear inline below each cell. Cell 1 shows the computed vector, and cell 3 renders the plot as an image directly in the terminal.
+
+You can also execute individual cells with `:execute-cell` (or `<space>nr`) while your cursor is inside a cell.
+
+To save edits back to the original `.ipynb`, run `:sync-to-ipynb`.
+
 ## Usage
 
-Open any `.ipynb` file in Helix. The plugin provides these commands:
+### Commands
 
 | Command | Description |
 |---------|-------------|
@@ -120,41 +212,51 @@ If no graphics protocol is available, plot outputs display as text placeholders.
 
 The project has two parts:
 
-**libnothelix** is a Rust library that handles performance-critical operations: parsing notebook JSON, detecting image formats, converting raster images to PNG, and generating Kitty terminal escape sequences for inline images.
+**libnothelix** is a Rust library (compiled as a cdylib) that handles performance-critical operations: parsing notebook JSON, managing Julia kernel processes via IPC, detecting image formats, converting raster images to PNG, and generating Kitty terminal escape sequences for inline images. It's loaded by Steel at runtime via `#%require-dylib`.
 
-**nothelix.scm** is a Steel plugin that integrates with Helix. It manages kernel processes, handles cell navigation, and orchestrates the rendering pipeline. Steel handles the editor-side logic while Rust does the heavy computation.
+**plugin/** is a set of Steel (Scheme) modules that integrate with Helix. They manage cell navigation, orchestrate execution, handle output rendering, and register keybindings. Steel handles the editor-side logic while Rust does the heavy computation and system-level work.
 
-This split keeps the plugin responsive. Notebook parsing and image conversion happen in compiled Rust code, while the Scheme layer stays focused on editor integration.
+The kernel IPC protocol is file-based: Rust writes `input.json` with the cell code, Julia processes it and writes `output.json` (with text and image data), and Steel polls for results. Plot images are captured as PNG via Julia's `MIME("image/png")` display system.
 
 ## Current Limitations
 
 - Only Julia kernels are supported currently
-- The RawContent API for true inline rendering requires additional Helix patches (available in the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering))
+- The RawContent API for inline rendering requires the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering)
+- Terminal multiplexers (Zellij, tmux) block Kitty graphics protocol escape sequences
 - Sixel encoding is not yet implemented (falls back to text placeholders)
 - Python kernel support is planned but not yet available
 
 ## Development
 
-With devenv:
+### With Nix flake (recommended)
 
-```bash
-devenv shell
+```
+nix develop
 nothelix-build      # build the library
-nothelix-install    # build and install to ~/.steel and ~/.config/helix
+nothelix-install    # build, symlink to ~/.steel and ~/.config/helix
 nothelix-uninstall  # remove installed files
 ```
 
-Or with the Nix flake directly:
+### Without Nix
 
-```bash
-nix develop
-nothelix-build
-nothelix-install
+```
+cargo build --release -p libnothelix
 ```
 
-Generate documentation:
+Then follow the manual install steps from the Getting Started section above.
 
-```bash
+### Running tests
+
+From within Helix, you can run the plugin's Steel tests:
+
+- `:run-all-tests` -- run all test suites
+- `:run-cell-tests` -- cell extraction tests
+- `:run-kernel-tests` -- kernel persistence tests
+- `:run-execution-tests` -- execution flow tests
+
+### Generating documentation
+
+```
 cargo doc --open -p libnothelix
 ```
 
