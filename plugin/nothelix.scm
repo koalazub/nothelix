@@ -18,6 +18,11 @@
 (require-builtin helix/core/keymaps as helix.keymaps.)
 (require (prefix-in helix. "helix/commands.scm"))
 
+;; FFI import for shell-free utilities
+(#%require-dylib "libnothelix"
+                 (only-in nothelix
+                          resolve-symlink-dir))
+
 ;; Nothelix modules
 (require "nothelix/string-utils.scm")
 (require "nothelix/graphics.scm")
@@ -118,8 +123,7 @@
 (define (get-nothelix-plugin-dir)
   (when (not *nothelix-plugin-dir*)
     (set! *nothelix-plugin-dir*
-      (string-trim (helix.run-shell-command
-        "dirname $(readlink -f ~/.config/helix/plugins/nothelix.scm 2>/dev/null) 2>/dev/null || dirname ~/.config/helix/plugins/nothelix.scm"))))
+      (resolve-symlink-dir "~/.config/helix/nothelix.scm")))
   *nothelix-plugin-dir*)
 
 ;;@doc

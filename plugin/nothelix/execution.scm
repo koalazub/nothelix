@@ -47,7 +47,9 @@
                           ;; Base64 decode utility
                           base64-decode-to-string
                           ;; Logging
-                          log-info))
+                          log-info
+                          ;; Shell-free utilities
+                          sleep-ms))
 
 (provide execute-cell
          execute-all-cells
@@ -635,7 +637,7 @@
   ;; IMPORTANT: Save file first so Rust can read the latest content
   (helix.write)
   ;; Small delay to ensure file is flushed to disk
-  (helix.run-shell-command "sleep 0.1")
+  (sleep-ms 100)
 
   ;; Only works on converted files
   (when (string-suffix? path ".ipynb")

@@ -13,7 +13,8 @@
                           notebook-validate
                           notebook-convert-sync
                           notebook-cell-count
-                          convert-to-ipynb))
+                          convert-to-ipynb
+                          write-string-to-file))
 
 (provide convert-notebook
          sync-to-ipynb
@@ -62,11 +63,10 @@
                            (string-append
                              (substring path 0 (- (string-length path) 6))  ; Remove ".ipynb"
                              ".jl"))
-                         ;; Write converted content to .jl file
-                         (helix.run-shell-command
-                           (string-append "cat > " output-path " <<'NOTHELIXEOF'\n"
-                                         result
-                                         "\nNOTHELIXEOF"))
+                          ;; Write converted content to .jl file
+                          (define write-err (write-string-to-file output-path result))
+                          (when (not (equal? write-err ""))
+                            (set-status! write-err))
                          (set-status! (string-append "Converted to " output-path ": "
                                                     (number->string cell-count)
                                                     " cells. Run :open " output-path))))))))))]))

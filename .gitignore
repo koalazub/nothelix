@@ -1,9 +1,12 @@
 node_modules/
 build/
+.build/
 target/
-Cargo.lock
-src/
-!src/grammar.json
+# Ignore tree-sitter Cargo.lock, but not the workspace one
+/Cargo.lock
+# Tree-sitter generated source (root only)
+/src/
+!/src/grammar.json
 *.o
 *.so
 *.dylib

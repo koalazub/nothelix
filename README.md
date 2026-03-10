@@ -12,7 +12,7 @@ The plugin converts notebooks into a readable cell format, manages kernel connec
 
 ## Requirements
 
-- Helix built with Steel plugin support (from the [steel-event-system branch](https://github.com/helix-editor/helix/pull/8675))
+- Helix built with Steel plugin support (from the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering), which includes the RawContent API for inline rendering)
 - A Julia installation (for kernel execution)
 - A terminal with graphics support (Kitty, Ghostty, WezTerm, iTerm2) for inline images
 
@@ -23,7 +23,7 @@ The plugin converts notebooks into a readable cell format, manages kernel connec
 If you have devenv set up:
 
 ```bash
-git clone https://github.com/yourusername/nothelix
+git clone https://github.com/koalazub/nothelix
 cd nothelix
 devenv shell
 nothelix-install
@@ -45,11 +45,11 @@ cp target/release/libnothelix.dylib ~/.steel/native/  # macOS
 cp target/release/libnothelix.so ~/.steel/native/     # Linux
 ```
 
-Copy the plugin to your Helix config:
+Copy the plugin files to your Helix config:
 
 ```bash
-mkdir -p ~/.config/helix/plugins
-cp plugin/nothelix.scm ~/.config/helix/plugins/
+cp plugin/nothelix.scm ~/.config/helix/
+cp -r plugin/nothelix ~/.config/helix/nothelix
 ```
 
 Add to your `~/.config/helix/init.scm`:
@@ -65,26 +65,33 @@ Open any `.ipynb` file in Helix. The plugin provides these commands:
 | Command | Description |
 |---------|-------------|
 | `:convert-notebook` | Convert the raw JSON to readable cell format |
+| `:sync-to-ipynb` | Sync edits in the `.jl` file back to the `.ipynb` |
 | `:execute-cell` | Run the code cell under your cursor |
+| `:execute-all-cells` | Run all cells top-to-bottom |
+| `:execute-cells-above` | Run all cells from the top to the current cell |
+| `:cancel-cell` | Interrupt a running execution |
 | `:next-cell` | Jump to the next cell |
 | `:previous-cell` | Jump to the previous cell |
 | `:cell-picker` | Open an interactive cell navigator |
 | `:select-cell` | Select the entire current cell |
 | `:select-cell-code` | Select just the code portion |
 | `:select-output` | Select the output section |
+| `:kernel-shutdown` | Stop the kernel for the current document |
+| `:kernel-shutdown-all` | Stop all running kernels |
 | `:graphics-check` | Show which graphics protocol is active |
+| `:nothelix-status` | Show full status info |
 
 ### Keybindings
 
-The plugin adds these bindings for `.ipynb` files:
+The plugin adds these bindings for `.ipynb` and `.jl` files:
 
-- `]l` — next cell
-- `[l` — previous cell
-- `gnr` — execute cell
-- `<space>nj` — cell picker
-- `<space>nc` — select cell
-- `<space>ns` — select cell code
-- `<space>no` — select output
+- `]l` -- next cell
+- `[l` -- previous cell
+- `<space>nr` -- execute cell
+- `<space>nj` -- cell picker
+- `<space>nc` -- select cell
+- `<space>ns` -- select cell code
+- `<space>no` -- select output
 
 ## Configuration
 
@@ -92,7 +99,7 @@ Create `~/.config/helix/nothelix.toml` to override defaults:
 
 ```toml
 [graphics]
-# Graphics protocol: "auto", "kitty", "iterm2", "sixel", or "none"
+# Graphics protocol: "auto", "kitty", "iterm", or "block"
 protocol = "auto"
 ```
 
@@ -106,15 +113,14 @@ Nothelix renders plot outputs inline using your terminal's graphics protocol:
 |----------|-----------|---------|
 | Kitty | Kitty, Ghostty, WezTerm | Excellent |
 | iTerm2 | iTerm2 | Good |
-| Sixel | xterm, mlterm, foot | Limited |
 
-If no graphics protocol is available, plot outputs display as text placeholders.
+If no graphics protocol is available, plot outputs display as text placeholders. Sixel support is planned but not yet implemented.
 
 ## Architecture
 
 The project has two parts:
 
-**libnothelix** is a Rust library that handles performance-critical operations: parsing notebook JSON, detecting image formats, converting between formats (SVG to PNG, etc.), and generating terminal escape sequences for inline images.
+**libnothelix** is a Rust library that handles performance-critical operations: parsing notebook JSON, detecting image formats, converting raster images to PNG, and generating Kitty terminal escape sequences for inline images.
 
 **nothelix.scm** is a Steel plugin that integrates with Helix. It manages kernel processes, handles cell navigation, and orchestrates the rendering pipeline. Steel handles the editor-side logic while Rust does the heavy computation.
 
@@ -123,7 +129,7 @@ This split keeps the plugin responsive. Notebook parsing and image conversion ha
 ## Current Limitations
 
 - Only Julia kernels are supported currently
-- The RawContent API for true inline rendering requires additional Helix patches
+- The RawContent API for true inline rendering requires additional Helix patches (available in the [koalazub/helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering))
 - Sixel encoding is not yet implemented (falls back to text placeholders)
 - Python kernel support is planned but not yet available
 
@@ -136,6 +142,14 @@ devenv shell
 nothelix-build      # build the library
 nothelix-install    # build and install to ~/.steel and ~/.config/helix
 nothelix-uninstall  # remove installed files
+```
+
+Or with the Nix flake directly:
+
+```bash
+nix develop
+nothelix-build
+nothelix-install
 ```
 
 Generate documentation:

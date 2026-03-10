@@ -3,7 +3,6 @@
 (require "string-utils.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")  ; For set-status!
-(require (prefix-in helix. "helix/commands.scm"))
 
 ;; FFI imports for kernel functions
 (#%require-dylib "libnothelix"
@@ -11,7 +10,10 @@
                           find-julia-executable
                           kernel-start-macro
                           kernel-stop
-                          kernel-stop-all-processes))
+                          kernel-stop-all-processes
+                          sleep-ms
+                          path-exists
+                          read-file-tail))
 
 (provide kernel-start
          kernel-get-for-notebook
@@ -49,22 +51,20 @@
   (define ready-file (string-append kernel-dir "/ready"))
 
   ;; Wait for kernel to be ready (runner.jl creates ready file)
-  (helix.run-shell-command "sleep 0.5")
+  (sleep-ms 500)
 
   ;; Check if kernel directory was actually created
-  (define dir-exists
-    (string-trim (helix.run-shell-command (string-append "[ -d " kernel-dir " ] && echo 'yes' || echo 'no'"))))
+  (define dir-exists (path-exists kernel-dir))
 
   (when (equal? dir-exists "no")
     (set-status! (string-append "✗ Kernel dir not created: " kernel-dir))
     #f)
 
-  (define ready-check
-    (string-trim (helix.run-shell-command (string-append "[ -f " ready-file " ] && echo 'yes' || echo 'no'"))))
+  (define ready-check (path-exists ready-file))
 
   (when (equal? ready-check "no")
     (define log-contents
-      (string-trim (helix.run-shell-command (string-append "tail -3 " kernel-dir "/kernel.log 2>&1 || echo 'No log'"))))
+      (read-file-tail (string-append kernel-dir "/kernel.log") 3))
     (set-status! (string-append "✗ Kernel not ready: " (sanitise-error-message log-contents)))
     #f)
 
