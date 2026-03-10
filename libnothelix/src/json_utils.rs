@@ -37,6 +37,17 @@ pub fn json_get_first_image(json_str: String) -> String {
     find_first_image_b64(&parsed).unwrap_or_default()
 }
 
+/// Extract the `plot_data` field as a JSON string for the braille chart renderer.
+/// Returns "" if absent or not an array.
+pub fn json_get_plot_data(json_str: String) -> String {
+    serde_json::from_str::<Value>(&json_str)
+        .ok()
+        .and_then(|v| v.get("plot_data").cloned())
+        .filter(|v| v.is_array())
+        .map(|v| v.to_string())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

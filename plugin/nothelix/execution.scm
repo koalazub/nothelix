@@ -1,37 +1,31 @@
 ;;; execution.scm - Cell execution and output management
+;;;
+;;; Orchestrates the full execution cycle: locating cell boundaries in the
+;;; document, starting async kernel execution, polling for results via
+;;; `enqueue-thread-local-callback-with-delay`, and inserting output
+;;; (text, errors, inline images) back into the buffer.
 
+(require "common.scm")
 (require "string-utils.scm")
 (require "kernel.scm")
-(require "graphics.scm")  ; For render-image-b64, graphics-protocol
-(require "spinner.scm")   ; For spinner-next-frame, spinner-reset
+(require "graphics.scm")
+(require "spinner.scm")
+(require "chart-viewer.scm")
 (require "helix/editor.scm")
-(require "helix/misc.scm")  ; For cursor-position, set-status!
+(require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in helix. "helix/commands.scm"))
-;; enqueue-thread-local-callback-with-delay is a global Helix function
 
-;; Global counter for unique image IDs (incremented each time an image is rendered)
+;; Global counter for unique Kitty image IDs (wraps at 16M to stay in range).
 (define *image-id-counter* 1)
-
-;; Helper: Get current line number (0-indexed)
-(define (current-line-number)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define rope (editor->text doc-id))
-  (define pos (cursor-position))
-  (text.rope-char->line rope pos))
 
 ;; FFI imports for execution functions
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           get-cell-at-line
-                          get-notebook-source-path
-                          notebook-cell-count
-                          notebook-get-cell-code
                           get-cell-code-from-jl      ;; Extract code from .jl files by @cell marker
                           list-jl-code-cells         ;; List all code cell indices from .jl file
-                          kernel-execute-cell
                           kernel-interrupt
                           ;; Async execution (non-blocking)
                           kernel-execute-cell-start
@@ -40,14 +34,12 @@
                           json-get
                           json-get-bool
                           json-get-first-image
+                          json-get-plot-data
                           ;; Kitty graphics - returns raw escape sequence bytes
                           kitty-display-image-bytes
-                          ;; Kitty graphics - Unicode placeholder mode (proper scrolling)
-                          kitty-placeholder-image
-                          ;; Base64 decode utility
-                          base64-decode-to-string
-                          ;; Logging
-                          log-info
+                          ;; Image cache persistence
+                          save-image-to-cache
+                          load-image-from-cache
                           ;; Shell-free utilities
                           sleep-ms))
 
@@ -55,7 +47,7 @@
          execute-all-cells
          execute-cells-above
          cancel-cell
-         doc-get-line
+         render-cached-images
          find-cell-start-line
          find-cell-code-end
          find-output-start
@@ -64,56 +56,52 @@
          delete-line-range
          find-cell-marker-by-index)
 
-;; Helper: Get line content by index
-(define (doc-get-line rope total-lines line-idx)
-  (if (< line-idx total-lines)
-      (text.rope->string (text.rope->line rope line-idx))
-      ""))
-
-;; Helper: Find cell start (searching backwards for @cell or @markdown marker)
+;;@doc
+;; Find the cell start line by searching backwards for an @cell or @markdown marker.
+;; Returns 0 if no marker is found above `line-idx`.
 (define (find-cell-start-line get-line line-idx)
   (if (< line-idx 0) 0
       (let ([line (get-line line-idx)])
-        (if (or (string-starts-with? line "@cell ")
-                (string-starts-with? line "@markdown "))
+        (if (cell-marker? line)
             line-idx
             (find-cell-start-line get-line (- line-idx 1))))))
 
-;; Helper: Find cell code end (next @cell/@markdown marker, output section, or EOF)
+;;@doc
+;; Find where cell code ends: the next marker, output section header, or EOF.
 (define (find-cell-code-end get-line total-lines line-idx)
   (if (>= line-idx total-lines) total-lines
       (let ([line (get-line line-idx)])
-        (if (or (string-starts-with? line "@cell ")
-                (string-starts-with? line "@markdown ")
-                (string-starts-with? line "# ═══")  ; Cell separator line
+        (if (or (cell-marker? line)
+                (string-starts-with? line "# ═══")
                 (string-contains? line "# ─── Output"))
             line-idx
             (find-cell-code-end get-line total-lines (+ line-idx 1))))))
 
-;; Helper: Find output section start (returns #f if not found)
-;; Searches from line-idx until next cell marker or EOF
-(define (find-output-start get-line total-lines line-idx limit)
-  (if (>= line-idx total-lines) #f
+;;@doc
+;; Find the "# --- Output ---" header line starting from `line-idx`.
+;; Returns #false if no output section exists before the next cell marker or EOF.
+(define (find-output-start get-line total-lines line-idx)
+  (if (>= line-idx total-lines) #false
       (let ([line (get-line line-idx)])
         (cond
           [(string-contains? line "# ─── Output ───") line-idx]
-          [(or (string-starts-with? line "@cell ")
-               (string-starts-with? line "@markdown ")
-               (string-starts-with? line "# ═══")) #f]
-          [else (find-output-start get-line total-lines (+ line-idx 1) limit)]))))
+          [(or (cell-marker? line)
+               (string-starts-with? line "# ═══")) #false]
+          [else (find-output-start get-line total-lines (+ line-idx 1))]))))
 
-;; Helper: Find output section end
+;;@doc
+;; Find the end of an output section (the "# -----" footer, or next marker).
 (define (find-output-end-line get-line total-lines line-idx)
   (if (>= line-idx total-lines) line-idx
       (let ([line (get-line line-idx)])
         (cond
           [(string-contains? line "# ─────────────") (+ line-idx 1)]
-          [(or (string-starts-with? line "@cell ")
-               (string-starts-with? line "@markdown ")
+          [(or (cell-marker? line)
                (string-starts-with? line "# ═══")) line-idx]
           [else (find-output-end-line get-line total-lines (+ line-idx 1))]))))
 
-;; Helper: Extract code lines from cell (skips @cell marker and separator lines)
+;;@doc
+;; Extract code lines from a cell, skipping the @cell marker and separator lines.
 (define (extract-cell-code get-line start end)
   (let loop ([idx (+ start 1)] [acc '()])
     (if (>= idx end)
@@ -124,7 +112,10 @@
               (loop (+ idx 1) acc)
               (loop (+ idx 1) (cons line acc)))))))
 
-;; Helper: Delete lines from start to end (inclusive of start, exclusive of end)
+;;@doc
+;; Delete lines from `start-line` to `end-line` (start inclusive, end exclusive).
+;; Deletes one line at a time to avoid confusing Helix's position tracking,
+;; then commits the transaction so async callbacks see a consistent state.
 (define (delete-line-range start-line end-line)
   ;; Instead of extending selection in a loop, delete lines one by one from the top
   ;; This avoids creating huge selections that confuse Helix's position tracking
@@ -148,12 +139,19 @@
   ;; CRITICAL: Commit changes to history immediately to prevent async callback crashes
   (helix.static.commit-changes-to-history))
 
-;; Helper: Update cell output when execution completes
-;; Searches for the spinner line instead of using cached positions
-(define (update-cell-output result-json)
-  (set! *executing-kernel-dir* #f)
+;;@doc
+;; Insert execution results into the buffer, replacing the "Executing..." spinner.
+;; Handles stdout, stderr, images (via Kitty graphics), and errors.
+;; `jl-path` and `cell-index` are used to persist images to the cache directory.
+(define (update-cell-output result-json jl-path cell-index)
+  (set! *executing-kernel-dir* #false)
 
-  ;; Re-read document state FRESH
+  ;; Stash raw plot data for the interactive chart viewer (:view-plot).
+  (define plot-data-str (json-get-plot-data result-json))
+  (when (> (string-length plot-data-str) 0)
+    (set! *last-plot-data* plot-data-str))
+
+  ;; Re-read document state fresh.
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
@@ -164,10 +162,9 @@
         (text.rope->string (text.rope->line rope idx))
         ""))
 
-  ;; Search entire document for "Executing..." placeholder
   (define (find-running-marker line-idx)
     (cond
-      [(>= line-idx total-lines) #f]
+      [(>= line-idx total-lines) #false]
       [(string-contains? (get-line line-idx) "Executing...") line-idx]
       [else (find-running-marker (+ line-idx 1))]))
 
@@ -203,34 +200,34 @@
        (when (not (string-suffix? stdout-text "\n"))
          (helix.static.insert_string "\n")))
 
-     ;; Check for images first - if we successfully render an image, skip output_repr
-     (log-info (string-append "[execution] result-json: " (truncate-string result-json 500)))
+     ;; Check for images — if we render one, skip the text output_repr.
      (define image-b64 (json-get-first-image result-json))
-     (log-info (string-append "[execution] image-b64 length: " (number->string (string-length image-b64))))
-     (define image-rendered #f)
-     
+     (define image-rendered #false)
+
      (when (> (string-length image-b64) 0)
        (define image-id *image-id-counter*)
        (set! *image-id-counter* (+ *image-id-counter* 1))
        (when (> *image-id-counter* 16777200)
          (set! *image-id-counter* 1))
        (define image-rows 12)
-
-       (log-info (string-append "[execution] Calling kitty-display-image-bytes with id=" (number->string image-id)))
        (define escape-seq (kitty-display-image-bytes image-b64 image-id image-rows))
-       (log-info (string-append "[execution] escape-seq length: " (number->string (string-length escape-seq))))
-       (log-info (string-append "[execution] escape-seq starts-with ERROR?: " (if (string-starts-with? escape-seq "ERROR:") "yes" "no")))
 
        (if (not (string-starts-with? escape-seq "ERROR:"))
            (begin
+             ;; Persist the image to the cache directory so it survives close/reopen.
+             (define cache-path (save-image-to-cache jl-path cell-index image-b64))
+
+             ;; Insert a marker line that references the cached file.
+             (if (string-starts-with? cache-path "ERROR:")
+                 (helix.static.insert_string (string-append "# @image [render only]\n"))
+                 (helix.static.insert_string (string-append "# @image " cache-path "\n")))
+
+             ;; Render the image inline via RawContent.
              (define char-idx (cursor-position))
-             (log-info (string-append "[execution] Calling add-raw-content! at char-idx=" (number->string char-idx) " image-id=" (number->string image-id)))
              (helix.static.add-raw-content! escape-seq image-id image-rows char-idx)
-             (log-info "[execution] add-raw-content! called successfully")
-             (set! image-rendered #t))
-           (begin
-             (log-info (string-append "[execution] ERROR from kitty-display-image-bytes: " escape-seq))
-             (helix.static.insert_string (string-append "# 📊 [Plot: " (number->string (quotient (string-length image-b64) 1024)) "KB - render failed]\n")))))
+             (set! image-rendered #true))
+           (helix.static.insert_string
+             (string-append "# [Plot: " (number->string (quotient (string-length image-b64) 1024)) "KB - render failed]\n"))))
 
      ;; Insert output representation only if no image was rendered
      (when (and (not image-rendered) (> (string-length output-repr) 0))
@@ -254,25 +251,19 @@
 
   (helix.redraw))
 
-;; Helper: Update the spinner frame in the "Executing..." line
-;; Searches for the spinner line instead of using cached positions
+;;@doc
+;; Advance the spinner animation in the "Executing..." line.
+;; Re-reads document state each tick to find the current spinner position.
 (define (update-spinner-frame)
-  ;; Re-read document state FRESH each time
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define (get-line idx)
-    (if (< idx total-lines)
-        (text.rope->string (text.rope->line rope idx))
-        ""))
-
-  ;; Search entire document for "Executing..." line
   (define (find-spinner-line line-idx)
     (cond
-      [(>= line-idx total-lines) #f]
-      [(string-contains? (get-line line-idx) "Executing...") line-idx]
+      [(>= line-idx total-lines) #false]
+      [(string-contains? (doc-get-line rope total-lines line-idx) "Executing...") line-idx]
       [else (find-spinner-line (+ line-idx 1))]))
 
   (define spinner-line (find-spinner-line 0))
@@ -295,19 +286,17 @@
     (helix.redraw)))
 
 ;; Helper: Poll for execution result (called repeatedly via delayed callback)
-(define (poll-for-result kernel-dir)
+(define (poll-for-result kernel-dir jl-path cell-index)
   (define result-json (kernel-poll-result kernel-dir))
   (define status (json-get result-json "status"))
 
   (cond
     [(equal? status "pending")
-     ;; Still running - update spinner and poll again in 100ms (non-blocking)
      (update-spinner-frame)
      (enqueue-thread-local-callback-with-delay 100
-       (lambda () (poll-for-result kernel-dir)))]
+       (lambda () (poll-for-result kernel-dir jl-path cell-index)))]
     [else
-     ;; Done - update UI with result
-     (update-cell-output result-json)]))
+     (update-cell-output result-json jl-path cell-index)]))
 
 ;;@doc
 ;; Execute the code cell under the cursor (async, non-blocking)
@@ -331,7 +320,7 @@
   (when (equal? (string-length code) 0)
     (set-status! "Cell is empty")
     (helix.redraw)
-    (void))
+    (error "Cell is empty"))
 
   ;; Detect language
   (define path (editor-document->path doc-id))
@@ -342,7 +331,7 @@
                  [else "julia"]))
 
   ;; Find and delete existing output section if present
-  (define output-start (find-output-start get-line total-lines cell-code-end (+ cell-code-end 5)))
+  (define output-start (find-output-start get-line total-lines cell-code-end))
 
   (when output-start
     (define output-end (find-output-end-line get-line total-lines (+ output-start 1)))
@@ -356,6 +345,12 @@
   ;; Get kernel for this notebook
   (define notebook-path (editor-document->path doc-id))
   (define kernel-state (kernel-get-for-notebook notebook-path lang))
+
+  (when (not kernel-state)
+    ;; kernel-start already showed an error via set-status!
+    (helix.redraw)
+    (error "Kernel failed to start"))
+
   (define kernel-dir (hash-get kernel-state 'kernel-dir))
 
   ;; Get cell index for dependency tracking
@@ -385,8 +380,8 @@
     [(equal? start-status "started")
      ;; Execution started - begin polling for result
      ;; Uses enqueue-thread-local-callback-with-delay for non-blocking polling
-     (enqueue-thread-local-callback-with-delay 100
-       (lambda () (poll-for-result kernel-dir)))]
+      (enqueue-thread-local-callback-with-delay 100
+        (lambda () (poll-for-result kernel-dir path cell-index)))]
     [else
      ;; Error starting execution
      (define err (let ([e (json-get start-result "error")]) (if (> (string-length e) 0) e "Unknown error")))
@@ -402,8 +397,8 @@
      (set-status! (string-append "✗ " err))
      ;; CRITICAL: Commit changes to history immediately
      (helix.static.commit-changes-to-history)
-     (set! *executing-kernel-dir* #f)
-     (helix.redraw)]))
+      (set! *executing-kernel-dir* #false)
+      (helix.redraw)]))
 
 ;;@doc
 ;; Cancel/interrupt any running cell execution
@@ -419,23 +414,19 @@
            (set-status! "Cell execution interrupted")
            (set! *executing-kernel-dir* #f)))]))
 
-;;; Find the line number of a cell marker with given index in a converted file.
-;;; Returns the line number of the "@cell N ..." marker, or #f if not found.
+;;@doc
+;; Find the line number of a cell marker with given index in a converted file.
+;; Returns the line number of the "@cell N ..." or "@markdown N" marker, or
+;; #false if not found.
 (define (find-cell-marker-by-index rope total-lines cell-index)
-  ;; Pattern: @cell N (where N is the cell index)
   (define code-pattern (string-append "@cell " (number->string cell-index) " "))
-  (define markdown-pattern (string-append "@markdown " (number->string cell-index)))
-
-  (define (get-line idx)
-    (if (< idx total-lines)
-        (text.rope->string (text.rope->line rope idx))
-        ""))
+  (define md-pattern (string-append "@markdown " (number->string cell-index)))
 
   (let loop ([line-idx 0])
     (cond
-      [(>= line-idx total-lines) #f]  ; Not found
-      [(string-starts-with? (get-line line-idx) code-pattern) line-idx]  ; Found code cell!
-      [(string-starts-with? (get-line line-idx) markdown-pattern) line-idx]  ; Found markdown cell!
+      [(>= line-idx total-lines) #false]
+      [(string-starts-with? (doc-get-line rope total-lines line-idx) code-pattern) line-idx]
+      [(string-starts-with? (doc-get-line rope total-lines line-idx) md-pattern) line-idx]
       [else (loop (+ line-idx 1))])))
 
 ;;@doc
@@ -482,6 +473,11 @@
 
   ;; Start kernel
   (define kernel-state (kernel-get-for-notebook notebook-path lang))
+
+  (when (not kernel-state)
+    (helix.redraw)
+    (error "Kernel failed to start"))
+
   (define kernel-dir (hash-get kernel-state 'kernel-dir))
 
   (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
@@ -539,7 +535,7 @@
         (define cell-code-end (find-cell-code-end get-line updated-total-lines (+ cell-marker-line 1)))
 
         ;; Delete existing output if present
-        (define output-start (find-output-start get-line updated-total-lines cell-code-end (+ cell-code-end 5)))
+        (define output-start (find-output-start get-line updated-total-lines cell-code-end))
         (when output-start
           (define output-end (find-output-end-line get-line updated-total-lines (+ output-start 1)))
           (delete-line-range output-start output-end))
@@ -563,7 +559,7 @@
         (if (equal? start-status "started")
             ;; Started successfully - begin polling
             (enqueue-thread-local-callback-with-delay 100
-              (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))
+              (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)))
             ;; Error starting - show error and continue
             (let ()
               (define err (json-get start-result "error"))
@@ -602,7 +598,7 @@
   (helix.static.commit-changes-to-history)
   (helix.redraw))
 
-(define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)
+(define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)
   (define result-json (kernel-poll-result kernel-dir))
   (define status (json-get result-json "status"))
 
@@ -610,9 +606,9 @@
     [(equal? status "pending")
      (update-spinner-frame)
      (enqueue-thread-local-callback-with-delay 100
-       (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]
+       (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)))]
     [else
-     (update-cell-output result-json)
+     (update-cell-output result-json jl-path cell-idx)
      (enqueue-thread-local-callback-with-delay 10
        (lambda () (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]))
 
@@ -673,7 +669,55 @@
 
   ;; Start kernel
   (define kernel-state (kernel-get-for-notebook notebook-path lang))
+
+  (when (not kernel-state)
+    (helix.redraw)
+    (error "Kernel failed to start"))
+
   (define kernel-dir (hash-get kernel-state 'kernel-dir))
 
   (set-status! (string-append "Executing cells: " indices-str))
   (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))
+
+;;; ---------------------------------------------------------------------------
+;;; Image cache rendering (for file re-open)
+;;; ---------------------------------------------------------------------------
+
+;;@doc
+;; Scan the current buffer for `# @image <path>` markers and re-render
+;; the cached images via RawContent.  Called on file open for .jl files.
+(define (render-cached-images)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+
+  (when (and path (string-suffix? path ".jl"))
+    (define rope (editor->text doc-id))
+    (define total-lines (text.rope-len-lines rope))
+
+    (let loop ([line-idx 0] [rendered 0])
+      (when (< line-idx total-lines)
+        (define line (doc-get-line rope total-lines line-idx))
+        (if (string-starts-with? line "# @image ")
+            (let ()
+              (define rel-path (string-trim (substring line 9 (string-length line))))
+              (define image-b64 (load-image-from-cache path rel-path))
+
+              (if (> (string-length image-b64) 0)
+                  (let ()
+                    (define image-id *image-id-counter*)
+                    (set! *image-id-counter* (+ *image-id-counter* 1))
+                    (when (> *image-id-counter* 16777200)
+                      (set! *image-id-counter* 1))
+                    (define image-rows 12)
+                    (define escape-seq (kitty-display-image-bytes image-b64 image-id image-rows))
+
+                    (when (not (string-starts-with? escape-seq "ERROR:"))
+                      ;; Get char position of this line for RawContent placement.
+                      (define char-pos (text.rope-line->char rope line-idx))
+                      (helix.static.add-raw-content! escape-seq image-id image-rows char-pos))
+
+                    (loop (+ line-idx 1) (+ rendered 1)))
+                  ;; Cache file missing — skip silently.
+                  (loop (+ line-idx 1) rendered)))
+            (loop (+ line-idx 1) rendered))))))

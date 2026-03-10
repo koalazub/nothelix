@@ -8,7 +8,7 @@
 //!
 //! Signals are sent via `nix` for proper POSIX semantics (SIGTERM / SIGINT).
 
-use std::{fs, path::Path, process::Command, time::Duration};
+use std::{fs, path::Path, process::Command};
 
 use nix::{
     sys::signal::{self, Signal},
@@ -99,19 +99,25 @@ pub fn write_kernel_command(kernel_dir: &str, cmd: &Value) -> Result<(), String>
 
 // ─── FFI-facing functions ─────────────────────────────────────────────────────
 
-pub fn find_julia_executable() -> String {
-    which("julia")
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default()
-}
-
 pub fn kernel_start_macro(kernel_dir: String) -> String {
     let kdir = Path::new(&kernel_dir);
 
     // Kill any pre-existing process cleanly via SIGTERM.
     if let Some(pid) = read_pid(kdir) {
         sigterm_pid(pid);
-        let _ = fs::remove_file(kdir.join("pid"));
+    }
+
+    // Remove all stale IPC files so the new process starts clean.
+    // Without this, a leftover `ready` file tricks the Scheme side into
+    // thinking the new kernel is up before it actually is.
+    for f in &[
+        "pid",
+        "ready",
+        "input.json",
+        "output.json",
+        "output.json.done",
+    ] {
+        let _ = fs::remove_file(kdir.join(f));
     }
 
     if let Err(e) = fs::create_dir_all(kdir) {
@@ -138,7 +144,7 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
         .map_err(|e| format!("Cannot create kernel.log: {e}"));
     let (stdout_cfg, stderr_cfg) = match log_file {
         Ok(f) => {
-            let f2 = f.try_clone().unwrap_or_else(|_| f.try_clone().unwrap());
+            let f2 = f.try_clone().expect("failed to clone log file handle");
             (std::process::Stdio::from(f), std::process::Stdio::from(f2))
         }
         Err(_) => (std::process::Stdio::null(), std::process::Stdio::null()),
@@ -195,29 +201,6 @@ pub fn kernel_stop_all_processes() -> String {
     "All kernel processes stopped".to_string()
 }
 
-pub fn kernel_execute_cell(kernel_dir: String, cell_index: isize, code: String) -> String {
-    let cmd = json!({"type": "execute_cell", "cell_index": cell_index, "code": code});
-
-    if let Err(e) = write_kernel_command(&kernel_dir, &cmd) {
-        return json!({"status": "error", "error": e}).to_string();
-    }
-
-    // Block until done (up to 60 s).
-    let done_file = Path::new(&kernel_dir).join("output.json.done");
-    let start = std::time::Instant::now();
-    loop {
-        if done_file.exists() {
-            break;
-        }
-        if start.elapsed() > Duration::from_secs(60) {
-            return json!({"status": "error", "error": "Kernel execution timed out"}).to_string();
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    kernel_poll_result(kernel_dir)
-}
-
 pub fn kernel_execute_cell_start(kernel_dir: String, cell_index: isize, code: String) -> String {
     let cmd = json!({"type": "execute_cell", "cell_index": cell_index, "code": code});
     match write_kernel_command(&kernel_dir, &cmd) {
@@ -269,6 +252,10 @@ pub fn kernel_poll_result(kernel_dir: String) -> String {
 
     if let Some(images) = cell.get("images") {
         response["images"] = images.clone();
+    }
+
+    if let Some(plot_data) = cell.get("plot_data") {
+        response["plot_data"] = plot_data.clone();
     }
 
     response.to_string()

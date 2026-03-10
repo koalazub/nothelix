@@ -1,8 +1,11 @@
 ;;; conversion.scm - Notebook conversion between .ipynb and .jl formats
+;;;
+;;; :convert-notebook reads an .ipynb, parses it in Rust, and writes a .jl
+;;; file in the Nothelix cell format.  :sync-to-ipynb does the reverse.
 
 (require "string-utils.scm")
 (require "helix/editor.scm")
-(require "helix/misc.scm")  ; For set-status!
+(require "helix/misc.scm")
 (require "helix/ext.scm")
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in helix. "helix/commands.scm"))
@@ -17,17 +20,13 @@
                           write-string-to-file))
 
 (provide convert-notebook
-         sync-to-ipynb
-         replace-document-contents!)
-
-(define (replace-document-contents! content)
-  (helix.static.select_all)
-  (helix.static.delete_selection)
-  (helix.static.insert_string content)
-  (helix.static.goto_file_start))
+         sync-to-ipynb)
 
 ;;@doc
-;; Convert current .ipynb to readable cell format (fast Rust parsing)
+;; Convert the current .ipynb to the Nothelix .jl cell format.
+;; Validates the notebook JSON, then spawns a native thread for the conversion
+;; so the editor stays responsive.  Writes the result to a .jl file alongside
+;; the original .ipynb.
 (define (convert-notebook)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -41,12 +40,9 @@
      (set-status! "Error: Not a .ipynb file")]
 
     [else
-     ;; Use detailed validation with error message
      (define validation-error (notebook-validate path))
      (if (not (equal? validation-error ""))
-         ;; Show detailed error
          (set-status! (string-append "Invalid notebook: " validation-error))
-         ;; Valid, proceed with conversion
          (begin
            (set-status! "Converting...")
            (spawn-native-thread
@@ -58,22 +54,22 @@
                    (if (string-starts-with? result "ERROR:")
                        (set-status! result)
                        (begin
-                         ;; Generate output path: notebook.ipynb -> notebook.jl
                          (define output-path
                            (string-append
-                             (substring path 0 (- (string-length path) 6))  ; Remove ".ipynb"
+                             (substring path 0 (- (string-length path) 6))
                              ".jl"))
-                          ;; Write converted content to .jl file
-                          (define write-err (write-string-to-file output-path result))
-                          (when (not (equal? write-err ""))
-                            (set-status! write-err))
-                         (set-status! (string-append "Converted to " output-path ": "
-                                                    (number->string cell-count)
-                                                    " cells. Run :open " output-path))))))))))]))
+                         (define write-err (write-string-to-file output-path result))
+                         (when (not (equal? write-err ""))
+                           (set-status! write-err))
+                         (set-status!
+                           (string-append "Converted to " output-path ": "
+                                          (number->string cell-count)
+                                          " cells. Run :open " output-path))))))))))]))
 
 ;;@doc
-;; Sync changes from .jl file back to .ipynb file
-;; Updates cell sources in the original .ipynb from the edited .jl file
+;; Sync changes from the .jl file back to the original .ipynb.
+;; Reads the @cell markers and code from the .jl, then updates the
+;; corresponding cells in the .ipynb JSON.
 (define (sync-to-ipynb)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -91,4 +87,4 @@
      (define result (convert-to-ipynb path))
      (if (string-starts-with? result "ERROR:")
          (set-status! result)
-         (set-status! "✓ Synced changes back to .ipynb"))]))
+         (set-status! "Synced changes back to .ipynb"))]))

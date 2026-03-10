@@ -1,13 +1,17 @@
 ;;; kernel.scm - Kernel lifecycle management
+;;;
+;;; Manages Julia kernel processes.  Each notebook gets at most one kernel,
+;;; tracked in the `*kernels*` hash keyed by notebook path.  The Rust FFI
+;;; handles the actual process spawning and IPC via kernel-start-macro /
+;;; kernel-stop / kernel-stop-all-processes.
 
 (require "string-utils.scm")
 (require "helix/editor.scm")
-(require "helix/misc.scm")  ; For set-status!
+(require "helix/misc.scm")
 
 ;; FFI imports for kernel functions
 (#%require-dylib "libnothelix"
                  (only-in nothelix
-                          find-julia-executable
                           kernel-start-macro
                           kernel-stop
                           kernel-stop-all-processes
@@ -22,74 +26,89 @@
          *kernels*
          *executing-kernel-dir*)
 
+;; Hash of notebook-path -> kernel-state for all running kernels.
 (define *kernels* (hash))
 
-;; Track currently executing kernel dir for cancellation
-(define *executing-kernel-dir* #f)
+;; The kernel directory of the currently executing cell, or #false.
+;; Used by `cancel-cell` to know which process to SIGINT.
+(define *executing-kernel-dir* #false)
 
+;;@doc
+;; Start a new kernel for the given language and notebook path.
+;; Returns a kernel-state hash on success, or #false on failure (with a
+;; status message shown to the user).
 (define (kernel-start lang notebook-path)
-  ;; Use fixed kernel directory (kernel-1) to avoid orphaned processes
-  ;; The Rust side will kill any existing process before starting a new one
+  ;; Fixed directory avoids orphaned processes across restarts.
+  ;; The Rust side SIGTERMs any existing process before spawning.
   (define kernel-dir "/tmp/helix-kernel-1")
   (set-status! (string-append "Starting kernel in " kernel-dir "..."))
 
-  ;; Start kernel using Rust FFI (uses kernel/runner.jl)
   (define result-json (kernel-start-macro kernel-dir))
 
-  ;; Check for error in the JSON result (look for "status":"error" pattern)
-  ;; Don't just check for "error" substring as it appears in stack traces too
-  (when (string-contains? result-json "\"status\":\"error\"")
-    (define error-msg (sanitise-error-message result-json))
-    (set-status! (string-append "✗ Kernel failed: " error-msg))
-    ;; Return #f instead of throwing - caller should check for this
-    #f)
+  ;; Each check returns #false on failure; success falls through to the end.
+  (cond
+    [(string-contains? result-json "julia not found")
+     (set-status! "Julia not found. Install Julia (https://julialang.org) and make sure it is on your PATH.")
+     #false]
 
-  ;; File paths match new runner.jl format
-  (define input-file (string-append kernel-dir "/input.json"))
-  (define output-file (string-append kernel-dir "/output.json"))
-  (define pid-file (string-append kernel-dir "/pid"))
-  (define ready-file (string-append kernel-dir "/ready"))
+    [(string-contains? result-json "\"status\":\"error\"")
+     (set-status! (string-append "Kernel failed to start: " (sanitise-error-message result-json)))
+     #false]
 
-  ;; Wait for kernel to be ready (runner.jl creates ready file)
-  (sleep-ms 500)
+    [else
+     ;; Poll for the ready file instead of a fixed sleep.  Julia startup
+     ;; time varies widely (500 ms to several seconds on first load), so a
+     ;; single sleep is unreliable.  We check every 200 ms for up to 30 s.
+     (define (wait-for-ready attempts)
+       (cond
+         [(equal? (path-exists (string-append kernel-dir "/ready")) "yes")
+          ;; Kernel is up.
+          (define kernel-state
+            (hash 'lang lang
+                  'kernel-dir kernel-dir
+                  'input-file (string-append kernel-dir "/input.json")
+                  'output-file (string-append kernel-dir "/output.json")
+                  'pid-file (string-append kernel-dir "/pid")
+                  'ready #true))
 
-  ;; Check if kernel directory was actually created
-  (define dir-exists (path-exists kernel-dir))
+          (set! *kernels* (hash-insert *kernels* notebook-path kernel-state))
+          (set-status! (string-append "Started " lang " kernel in " kernel-dir))
+          kernel-state]
 
-  (when (equal? dir-exists "no")
-    (set-status! (string-append "✗ Kernel dir not created: " kernel-dir))
-    #f)
+         [(<= attempts 0)
+          ;; Timed out — show whatever the kernel log says.
+          (define log-tail (read-file-tail (string-append kernel-dir "/kernel.log") 3))
+          (define msg (sanitise-error-message log-tail))
+          (if (> (string-length msg) 0)
+              (set-status! (string-append "Kernel not ready after 30 s. Julia output: " msg))
+              (set-status! "Kernel not ready after 30 s. Check kernel.log in /tmp/helix-kernel-1/ for details."))
+          #false]
 
-  (define ready-check (path-exists ready-file))
+         [else
+          (sleep-ms 200)
+          (wait-for-ready (- attempts 1))]))
 
-  (when (equal? ready-check "no")
-    (define log-contents
-      (read-file-tail (string-append kernel-dir "/kernel.log") 3))
-    (set-status! (string-append "✗ Kernel not ready: " (sanitise-error-message log-contents)))
-    #f)
+     (cond
+       [(equal? (path-exists kernel-dir) "no")
+        (set-status! (string-append "Kernel directory was not created at " kernel-dir ". Check file permissions."))
+        #false]
 
-  (define kernel-state
-    (hash 'lang lang
-          'kernel-dir kernel-dir
-          'input-file input-file
-          'output-file output-file
-          'pid-file pid-file
-          'ready #t))
+       [else
+        ;; 150 attempts * 200 ms = 30 s max wait
+        (wait-for-ready 150)])]))
 
-  (set! *kernels* (hash-insert *kernels* notebook-path kernel-state))
-  (set-status! (string-append "✓ Started " lang " kernel in " kernel-dir))
-  kernel-state)
-
-;; Get or start a kernel for a notebook
-;; Returns kernel-state hash on success, #f on failure
+;;@doc
+;; Get or start a kernel for a notebook.
+;; Returns the existing kernel-state if one is already running, otherwise
+;; starts a new one.  Returns #false if the kernel fails to start.
 (define (kernel-get-for-notebook notebook-path lang)
   (define existing (hash-try-get *kernels* notebook-path))
-  (if existing 
-      existing 
+  (if existing
+      existing
       (kernel-start lang notebook-path)))
 
 ;;@doc
-;; Stop kernel for a specific notebook
+;; Stop the kernel for a specific notebook path.
 (define (stop-kernel notebook-path)
   (define kernel-state (hash-try-get *kernels* notebook-path))
   (if (not kernel-state)
@@ -99,16 +118,13 @@
         (if (equal? result "ok")
             (begin
               (set! *kernels* (hash-remove *kernels* notebook-path))
-              (set-status! "✓ Kernel stopped"))
+              (set-status! "Kernel stopped"))
             (set-status! result)))))
 
 ;;@doc
-;; Stop all running kernels (cleanup)
-;; This does TWO things:
-;; 1. Stop tracked kernels in *kernels* hash
-;; 2. Kill ALL orphaned kernel processes (in case of crashes)
+;; Stop all running kernels.
+;; First stops every tracked kernel, then kills any orphaned runner.jl processes.
 (define (stop-all-kernels)
-  ;; First, stop all tracked kernels
   (define keys (hash-keys->list *kernels*))
   (for-each
     (lambda (notebook-path)
@@ -117,7 +133,5 @@
       (kernel-stop kernel-dir))
     keys)
   (set! *kernels* (hash))
-
-  ;; Second, aggressively kill any orphaned processes
   (define result (kernel-stop-all-processes))
-  (set-status! (string-append "✓ " result)))
+  (set-status! "All kernels stopped"))

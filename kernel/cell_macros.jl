@@ -104,6 +104,7 @@ function execute_cell(cell_idx::Int, code::String)
     cell.stdout = captured.stdout
     cell.stderr = captured.stderr
     cell.images = captured.images  # Store captured images (format, base64_data)
+    cell.plot_data = captured.plot_data  # Store raw plot data for interactive charts
     cell.error = captured.error
     cell.status = captured.error === nothing ? :done : :error
 
@@ -151,6 +152,11 @@ function get_cell_result_json(cell_idx::Int)
             Dict("format" => fmt, "data" => data)
             for (fmt, data) in cell.images
         ]
+    end
+
+    # Include raw plot data for interactive braille charts
+    if cell.plot_data !== nothing && !isempty(cell.plot_data)
+        result["plot_data"] = cell.plot_data
     end
 
     result

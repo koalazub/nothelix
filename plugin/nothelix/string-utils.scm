@@ -1,14 +1,16 @@
 ;;; string-utils.scm - String manipulation and JSON parsing utilities
+;;;
+;;; These are pure-Scheme implementations used at module load time (before
+;;; the FFI dylib is available) and in places where calling into Rust would
+;;; be overkill.  For heavy JSON work the Rust FFI functions `json-get`,
+;;; `json-get-bool`, and `json-get-first-image` should be preferred.
 
-(provide string-find
-         string-trim-left
-         string-trim
+(provide string-trim
          string-starts-with?
          string-suffix?
          string-contains?
          string-join
          string-split
-         string->bytes
          string->number
          string-replace-all
          char->number
@@ -96,11 +98,6 @@
               (reverse (cons s result))
               (loop (substring s (+ pos (string-length delim)) (string-length s))
                     (cons (substring s 0 pos) result)))))))
-
-(define (string->bytes str)
-  (if (not (string? str))
-      (list->vector '())
-      (list->vector (map char->integer (string->list str)))))
 
 (define (char->number c)
   (cond

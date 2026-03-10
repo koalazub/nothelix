@@ -1,20 +1,23 @@
 ;;; picker.scm - Interactive cell picker component
+;;;
+;;; Provides a popup UI that lists all cells in the current notebook.
+;;; Navigate with j/k, press Enter or a digit to jump to that cell.
 
+(require "common.scm")
 (require "string-utils.scm")
 (require "helix/editor.scm")
-(require "helix/misc.scm")  ; For push-component!
-(require-builtin helix/components)  ; Import all component functions globally
+(require "helix/misc.scm")
+(require-builtin helix/components)
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
-(provide cell-picker
-         get-all-cells
-         get-cell-preview
-         CellPickerState
-         make-cell-picker-component)
+(provide cell-picker)
 
 (struct CellPickerState (cells selected) #:mutable)
 
+;;@doc
+;; Scan the document for all @cell and @markdown markers.
+;; Returns a list of (line-number type header-text) triples.
 (define (get-all-cells)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -39,6 +42,9 @@
 
   (find-cells 0 '()))
 
+;;@doc
+;; Get a preview of the cell content starting at `line-num`.
+;; Returns up to `max-lines` lines of code (stops at next marker or output).
 (define (get-cell-preview line-num max-lines)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -136,7 +142,7 @@
        event-result/close]
       [else
        (let ([num (char->number (or char #\null))])
-         (if (and (not (eqv? num #false)) (>= num 1) (<= num (length cells)))
+         (if (and num (>= num 1) (<= num (length cells)))
              (begin
                (let* ([cell (list-ref cells (- num 1))]
                       [line-num (list-ref cell 0)])

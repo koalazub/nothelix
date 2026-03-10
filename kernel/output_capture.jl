@@ -3,7 +3,7 @@ module OutputCapture
 using Base64
 using Dates
 
-export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, set_log_file
+export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, extract_plot_data, set_log_file
 
 # Log to kernel directory if available (set by runner.jl)
 const CAPTURE_LOG_FILE = Ref{Union{String, Nothing}}(nothing)
@@ -27,11 +27,12 @@ mutable struct CapturedOutput
     stdout::String
     stderr::String
     images::Vector{Tuple{String, String}}  # (format, base64_data)
+    plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
 end
 
-CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing)
+CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing, nothing)
 
 function capture_execution(f)
     result = CapturedOutput()
@@ -115,6 +116,7 @@ function capture_execution(f)
         if img_b64 !== nothing
             push!(result.images, ("png", img_b64))
         end
+        result.plot_data = extract_plot_data(result.return_value)
     end
 
     result
@@ -202,6 +204,118 @@ function capture_plot_png(p)
     end
 
     capture_log("All methods failed for type: $(typeof(p))")
+    nothing
+end
+
+# Extract raw (x, y, label) data from a plot object for interactive braille charts.
+# Returns a Vector of Dicts, one per series, or nothing if extraction fails.
+function extract_plot_data(p)
+    capture_log("extract_plot_data called with type: $(typeof(p))")
+
+    # ── Plots.jl ──────────────────────────────────────────────────────────
+    if isdefined(Main, :Plots)
+        try
+            type_str = string(typeof(p))
+            if occursin("Plot", type_str) && hasproperty(p, :series_list)
+                series_data = Dict{String,Any}[]
+                for (i, series) in enumerate(p.series_list)
+                    try
+                        x_raw = Base.invokelatest(getindex, series, :x)
+                        y_raw = Base.invokelatest(getindex, series, :y)
+                        label_raw = Base.invokelatest(getindex, series, :label)
+
+                        x = Float64.(collect(x_raw))
+                        y = Float64.(collect(y_raw))
+                        label = string(label_raw)
+
+                        entry = Dict{String,Any}(
+                            "x" => x,
+                            "y" => y,
+                            "label" => label,
+                            "series_index" => i
+                        )
+
+                        try
+                            st = Base.invokelatest(getindex, series, :seriestype)
+                            entry["series_type"] = string(st)
+                        catch; end
+
+                        push!(series_data, entry)
+                    catch e
+                        capture_log("Failed to extract series $i: $e")
+                    end
+                end
+
+                if !isempty(series_data)
+                    capture_log("Extracted $(length(series_data)) series from Plots.jl")
+                    return series_data
+                end
+            end
+        catch e
+            capture_log("Plots.jl extraction failed: $e")
+        end
+    end
+
+    # ── Makie / CairoMakie ────────────────────────────────────────────────
+    makie_mod = if isdefined(Main, :CairoMakie)
+        Main.CairoMakie
+    elseif isdefined(Main, :GLMakie)
+        Main.GLMakie
+    elseif isdefined(Main, :Makie)
+        Main.Makie
+    else
+        nothing
+    end
+
+    if makie_mod !== nothing
+        try
+            type_str = string(typeof(p))
+            if occursin("Figure", type_str) || occursin("FigureAxis", type_str)
+                series_data = Dict{String,Any}[]
+                fig = occursin("FigureAxis", type_str) ? p[1] : p
+                contents = Base.invokelatest(getproperty, fig, :content)
+                series_idx = 0
+                for block in contents
+                    if hasproperty(block, :scene)
+                        scene = Base.invokelatest(getproperty, block, :scene)
+                        plots = Base.invokelatest(getproperty, scene, :plots)
+                        for plot_obj in plots
+                            try
+                                converted = Base.invokelatest(getindex, plot_obj, 1)
+                                points = converted[]
+                                if !isempty(points)
+                                    x = Float64[pt[1] for pt in points]
+                                    y = Float64[pt[2] for pt in points]
+                                    series_idx += 1
+                                    label = ""
+                                    try
+                                        attrs = Base.invokelatest(getproperty, plot_obj, :attributes)
+                                        if haskey(attrs, :label)
+                                            label = string(attrs.label[])
+                                        end
+                                    catch; end
+                                    push!(series_data, Dict{String,Any}(
+                                        "x" => x, "y" => y,
+                                        "label" => label,
+                                        "series_index" => series_idx,
+                                        "series_type" => string(typeof(plot_obj).name.name)
+                                    ))
+                                end
+                            catch; end
+                        end
+                    end
+                end
+                if !isempty(series_data)
+                    capture_log("Extracted $(length(series_data)) series from Makie")
+                    return series_data
+                end
+            end
+        catch e
+            capture_log("Makie extraction failed: $e")
+        end
+    end
+
+    capture_log("No plot data extracted for type: $(typeof(p))")
     nothing
 end
 
@@ -314,6 +428,7 @@ function capture_toplevel(mod::Module, code::String)
         if img_b64 !== nothing
             push!(result.images, ("png", img_b64))
         end
+        result.plot_data = extract_plot_data(result.return_value)
     end
 
     result

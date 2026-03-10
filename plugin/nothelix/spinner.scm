@@ -1,36 +1,37 @@
 ;;; spinner.scm - Loading spinner animations for cell execution
+;;;
+;;; Displays a rotating Braille-pattern helix during async cell execution.
+;;; Each frame is a different rotation angle of the double-helix shape.
 
-(provide spinner-frames
-         spinner-next-frame
-         spinner-reset
-         *spinner-frame*)
+(provide spinner-next-frame
+         spinner-reset)
 
-;; Helix structure spinner - represents a rotating double helix/spring
-;; Each frame shows the helix at a different rotation angle
-;; Uses Braille patterns to create a visual helix structure
+;; 12 frames of a rotating double helix using Braille patterns.
 (define spinner-frames
-  (vector "⠿⠶⠿⠶⠿"  ;; Helix rotation 0°   - top strand forward, bottom back
-          "⠾⠷⠾⠷⠾"  ;; Helix rotation 30°  - strands rotating
-          "⠼⠧⠼⠧⠼"  ;; Helix rotation 60°  - strands crossing
-          "⠸⠏⠸⠏⠸"  ;; Helix rotation 90°  - top strand back, bottom forward
-          "⠴⠋⠴⠋⠴"  ;; Helix rotation 120° - strands rotating back
-          "⠦⠙⠦⠙⠦"  ;; Helix rotation 150° - strands crossing back
-          "⠧⠹⠧⠹⠧"  ;; Helix rotation 180° - opposite of 0°
-          "⠇⠸⠇⠸⠇"  ;; Helix rotation 210° - continuing rotation
-          "⠏⠼⠏⠼⠏"  ;; Helix rotation 240° - strands crossing
-          "⠋⠴⠋⠴⠋"  ;; Helix rotation 270° - perpendicular view
-          "⠙⠦⠙⠦⠙"  ;; Helix rotation 300° - approaching start
-          "⠹⠧⠹⠧⠹")) ;; Helix rotation 330° - almost back to start
+  (vector "⠿⠶⠿⠶⠿"
+          "⠾⠷⠾⠷⠾"
+          "⠼⠧⠼⠧⠼"
+          "⠸⠏⠸⠏⠸"
+          "⠴⠋⠴⠋⠴"
+          "⠦⠙⠦⠙⠦"
+          "⠧⠹⠧⠹⠧"
+          "⠇⠸⠇⠸⠇"
+          "⠏⠼⠏⠼⠏"
+          "⠋⠴⠋⠴⠋"
+          "⠙⠦⠙⠦⠙"
+          "⠹⠧⠹⠧⠹"))
 
-;; Current spinner frame index
+;; Current frame index.
 (define *spinner-frame* 0)
 
-;; Get the next spinner frame and advance the counter
+;;@doc
+;; Return the next spinner frame string and advance the counter.
 (define (spinner-next-frame)
   (define frame (vector-ref spinner-frames *spinner-frame*))
   (set! *spinner-frame* (modulo (+ *spinner-frame* 1) (vector-length spinner-frames)))
   frame)
 
-;; Reset spinner to first frame
+;;@doc
+;; Reset the spinner to the first frame.
 (define (spinner-reset)
   (set! *spinner-frame* 0))

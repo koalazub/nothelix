@@ -23,8 +23,9 @@
                  (only-in nothelix
                           resolve-symlink-dir))
 
-;; Nothelix modules
+;; Nothelix modules (order matters: common first, then leaf modules)
 (require "nothelix/string-utils.scm")
+(require "nothelix/common.scm")
 (require "nothelix/graphics.scm")
 (require "nothelix/kernel.scm")
 (require "nothelix/conversion.scm")
@@ -32,20 +33,17 @@
 (require "nothelix/execution.scm")
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
+(require "nothelix/chart-viewer.scm")
 
-;; NOTE: Test modules are NOT required here - they're loaded dynamically
-;; when test commands are run, AFTER FFI is initialized
+;; Test modules are loaded dynamically (see test commands below).
 
-(provide convert-notebook sync-to-ipynb execute-cell execute-all-cells execute-cells-above
-         cancel-cell  ;; Interrupt running execution
+(provide convert-notebook sync-to-ipynb
+         execute-cell execute-all-cells execute-cells-above cancel-cell
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
-         render-image render-cell-image
-         ;; Kernel lifecycle
+         view-chart
          kernel-shutdown kernel-shutdown-all
-         ;; Protocol API
          graphics-protocol graphics-check nothelix-status
-         ;; Test commands
          run-all-tests run-cell-tests run-kernel-tests run-execution-tests)
 
 ;;; ============================================================================
@@ -106,10 +104,17 @@
     "write-quit" "force-write-quit" "write-quit-all" "force-write-quit-all"
     "cquit" "force-cquit"))
 
-;; Hook to cleanup kernels on editor exit
+;; Hook for kernel cleanup on exit and image rendering on file open
 (define (nothelix-post-command-hook command-name)
-  (when (member command-name *quit-commands*)
-    (stop-all-kernels)))
+  (cond
+    [(member command-name *quit-commands*)
+     (stop-all-kernels)]
+    [(member command-name '("open" "buffer-next" "buffer-previous"))
+     ;; Re-render cached images when switching to a .jl file.
+     ;; Uses enqueue-thread-local-callback-with-delay so the document is
+     ;; fully loaded before we scan it.
+     (enqueue-thread-local-callback-with-delay 50
+       (lambda () (render-cached-images)))]))
 
 ;; Register the post-command hook
 (register-hook! "post-command" nothelix-post-command-hook)
@@ -118,7 +123,7 @@
 ;;; TEST COMMANDS
 ;;; ============================================================================
 
-(define *nothelix-plugin-dir* #f)
+(define *nothelix-plugin-dir* #false)
 
 (define (get-nothelix-plugin-dir)
   (when (not *nothelix-plugin-dir*)

@@ -1,35 +1,32 @@
 ;;; selection.scm - Cell and output selection text objects
+;;;
+;;; Provides text-object-style selections for cells: select the whole cell,
+;;; just the code portion, or just the output section.
 
-(require "string-utils.scm")
+(require "common.scm")
 (require "execution.scm")
 (require "helix/editor.scm")
-(require "helix/misc.scm")  ; For cursor-position, set-status!
+(require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in helix. "helix/commands.scm"))
 
-;; Helper: Get current line number (0-indexed)
-(define (current-line-number)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define rope (editor->text doc-id))
-  (define pos (cursor-position))
-  (text.rope-char->line rope pos))
-
 (provide select-cell
          select-cell-code
-         select-output
-         find-full-cell-end
-         select-line-range)
+         select-output)
 
-;; Helper: Find the full cell end (including output if present)
+;;@doc
+;; Find the full cell end including any output section.
+;; If an output section follows the code, returns the line after its footer;
+;; otherwise returns `code-end`.
 (define (find-full-cell-end get-line total-lines code-end)
-  (define output-start (find-output-start get-line total-lines code-end (+ code-end 3)))
+  (define output-start (find-output-start get-line total-lines code-end))
   (if output-start
       (find-output-end-line get-line total-lines (+ output-start 1))
       code-end))
 
-;; Helper: Select line range (1-indexed lines, end exclusive)
+;;@doc
+;; Select a range of lines in the document (0-indexed, end exclusive).
 (define (select-line-range start-line end-line)
   (helix.goto (number->string (+ start-line 1)))
   (helix.static.goto_line_start)
@@ -42,7 +39,7 @@
           (loop (+ i 1)))))))
 
 ;;@doc
-;; Select the entire current cell (header + code + output)
+;; Select the entire current cell (header + code + output).
 (define (select-cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -62,7 +59,7 @@
                               (number->string cell-end))))
 
 ;;@doc
-;; Select just the code portion of the current cell (excluding header and output)
+;; Select just the code portion of the current cell (excluding header and output).
 (define (select-cell-code)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -73,7 +70,7 @@
 
   (define cell-start (find-cell-start-line get-line current-line))
   (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
-  (define code-start (+ cell-start 1))  ;; Skip the header line
+  (define code-start (+ cell-start 1))
 
   (if (< code-start cell-code-end)
       (begin
@@ -85,7 +82,7 @@
       (set-status! "Cell has no code")))
 
 ;;@doc
-;; Select the output section of the current cell
+;; Select the output section of the current cell.
 (define (select-output)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -96,7 +93,7 @@
 
   (define cell-start (find-cell-start-line get-line current-line))
   (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
-  (define output-start (find-output-start get-line total-lines cell-code-end (+ cell-code-end 5)))
+  (define output-start (find-output-start get-line total-lines cell-code-end))
 
   (if output-start
       (let ([output-end (find-output-end-line get-line total-lines (+ output-start 1))])

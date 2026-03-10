@@ -10,7 +10,11 @@
   };
 
   outputs =
-    { self, nixpkgs, rust-overlay }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -78,88 +82,33 @@
               mainProgram = "bv";
             };
           };
-
-          nothelix-build = pkgs.writeShellScriptBin "nothelix-build" ''
-            cargo build --release -p libnothelix
-          '';
-
-          nothelix-install = pkgs.writeShellScriptBin "nothelix-install" ''
-            echo "=== Installing Nothelix ==="
-
-            cargo build --release -p libnothelix
-
-            mkdir -p ~/.steel/native
-            mkdir -p ~/.config/helix/plugins
-
-            PROJECT_DIR="$(pwd)"
-
-            if [[ -f target/release/libnothelix.dylib ]]; then
-              ln -sf "$PROJECT_DIR/target/release/libnothelix.dylib" ~/.steel/native/libnothelix.dylib
-              ln -sf "$PROJECT_DIR/target/release/libnothelix.dylib" ~/.config/helix/plugins/libnothelix.dylib
-            elif [[ -f target/release/libnothelix.so ]]; then
-              ln -sf "$PROJECT_DIR/target/release/libnothelix.so" ~/.steel/native/libnothelix.so
-              ln -sf "$PROJECT_DIR/target/release/libnothelix.so" ~/.config/helix/plugins/libnothelix.so
-            else
-              echo "Error: Could not find built library"
-              echo "Expected: target/release/libnothelix.dylib or .so"
-              ls -la target/release/lib* 2>/dev/null || echo "No lib* files found"
-              exit 1
-            fi
-
-            ln -sf "$PROJECT_DIR/plugin/nothelix.scm" ~/.config/helix/plugins/nothelix.scm
-            ln -sf "$PROJECT_DIR/plugin/nothelix" ~/.config/helix/plugins/nothelix
-
-            echo ""
-            echo "=== Installed (symlinked) ==="
-            echo "Library: ~/.steel/native/libnothelix.dylib -> $PROJECT_DIR/target/release/libnothelix.dylib"
-            echo "Plugin:  ~/.config/helix/plugins/nothelix.scm -> $PROJECT_DIR/plugin/nothelix.scm"
-            echo "Modules: ~/.config/helix/plugins/nothelix -> $PROJECT_DIR/plugin/nothelix"
-            echo ""
-            echo "Add to ~/.config/helix/init.scm:"
-            echo '  (require "nothelix.scm")'
-          '';
-
-          nothelix-uninstall = pkgs.writeShellScriptBin "nothelix-uninstall" ''
-            rm -f ~/.steel/native/libnothelix.dylib
-            rm -f ~/.steel/native/libnothelix.so
-            rm -f ~/.config/helix/plugins/nothelix.scm
-            echo "Uninstalled nothelix"
-          '';
-
         in
         {
           default = pkgs.mkShell {
             buildInputs = [
-              # Rust nightly toolchain (rustc, cargo, clippy, rustfmt, rust-analyzer)
               rustToolchain
-
-              # Core project tools
               pkgs.bun
               pkgs.tree-sitter
               pkgs.git
               pkgs.bacon
-
-              # Julia runtime (languages.julia.enable)
               pkgs.julia-bin
-
-              # Nix language tooling (languages.nix.enable)
               pkgs.nixfmt-rfc-style
               pkgs.nil
-
-              # Shell (exec nu in enterShell)
               pkgs.nushell
-
-              # Custom Go tools
+              pkgs.just
               beads
               beads-viewer
-
-              # Project scripts
-              nothelix-build
-              nothelix-install
-              nothelix-uninstall
             ];
 
             shellHook = ''
+              echo ""
+              echo "nothelix dev shell"
+              echo ""
+              echo "  just install       build, install, and codesign the dylib"
+              echo "  just install debug  same but with debug profile"
+              echo "  just test          run libnothelix tests"
+              echo "  just uninstall     remove the installed dylib"
+              echo ""
               exec nu
             '';
           };

@@ -68,43 +68,47 @@ Make sure this is set whenever you run `hx`.
 ```
 git clone https://github.com/koalazub/nothelix.git
 cd nothelix
+```
+
+**With the Nix dev shell (recommended):**
+
+```
+nix develop
+just install
+```
+
+This builds the dylib, copies it to `~/.steel/native/`, and codesigns it on macOS. See the Development section below for more.
+
+**Without Nix:**
+
+```
 cargo build --release -p libnothelix
 ```
 
-### 4. Install the dylib and plugin files
-
-The library goes into Steel's native directory. The plugin files go into your Helix config.
-
-**Option A: Symlinks (recommended for development)**
-
-Symlinks let you rebuild without re-copying. This is what `nothelix-install` does in the Nix dev shell.
+Then install manually:
 
 ```
 mkdir -p ~/.steel/native
+
+# macOS
+cp target/release/libnothelix.dylib ~/.steel/native/
+codesign --force --sign - ~/.steel/native/libnothelix.dylib
+
+# Linux
+cp target/release/libnothelix.so ~/.steel/native/
+```
+
+> **macOS note:** the dylib must be codesigned after every rebuild. macOS invalidates the code signature when the file changes and will SIGKILL the process when it tries to load the stale binary. Don't symlink the dylib — codesign stamps the real file, so after a rebuild the symlink target's signature won't match. Always copy then sign. `just install` handles this automatically.
+
+### 4. Install the plugin files
+
+The plugin files go into your Helix config directory. Symlinks work fine here (only the dylib needs copying).
+
+```
 mkdir -p ~/.config/helix
 
-# Dylib
-ln -sf "$(pwd)/target/release/libnothelix.dylib" ~/.steel/native/   # macOS
-ln -sf "$(pwd)/target/release/libnothelix.so" ~/.steel/native/      # Linux
-
-# Plugin files
 ln -sf "$(pwd)/plugin/nothelix.scm" ~/.config/helix/nothelix.scm
 ln -sf "$(pwd)/plugin/nothelix" ~/.config/helix/nothelix
-```
-
-**Option B: Copy**
-
-```
-mkdir -p ~/.steel/native
-mkdir -p ~/.config/helix
-
-# Dylib
-cp target/release/libnothelix.dylib ~/.steel/native/   # macOS
-cp target/release/libnothelix.so ~/.steel/native/       # Linux
-
-# Plugin files
-cp plugin/nothelix.scm ~/.config/helix/
-cp -r plugin/nothelix ~/.config/helix/nothelix
 ```
 
 ### 5. Load the plugin
@@ -232,10 +236,19 @@ The kernel IPC protocol is file-based: Rust writes `input.json` with the cell co
 
 ```
 nix develop
-nothelix-build      # build the library
-nothelix-install    # build, symlink to ~/.steel and ~/.config/helix
-nothelix-uninstall  # remove installed files
 ```
+
+This drops you into a shell with all dependencies (Rust nightly, Julia, tree-sitter, etc.) and prints the available recipes. Project tasks are managed with a justfile:
+
+| Recipe | Description |
+|--------|-------------|
+| `just install` | Build, install, and codesign the dylib |
+| `just install debug` | Same with the debug profile |
+| `just build` | Build without installing |
+| `just test` | Run libnothelix tests |
+| `just uninstall` | Remove the installed dylib |
+
+After any Rust change, run `just install` and restart Helix.
 
 ### Without Nix
 
@@ -243,9 +256,15 @@ nothelix-uninstall  # remove installed files
 cargo build --release -p libnothelix
 ```
 
-Then follow the manual install steps from the Getting Started section above.
+Then follow the manual install steps from the Getting Started section above. Remember to codesign on macOS after every rebuild.
 
 ### Running tests
+
+Rust tests:
+
+```
+just test
+```
 
 From within Helix, you can run the plugin's Steel tests:
 

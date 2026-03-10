@@ -34,11 +34,7 @@ pub enum CellKind {
 pub struct JlCell {
     pub index: isize,
     pub kind: CellKind,
-    #[allow(dead_code)]
-    pub lang: String,
-    /// Cell code, with output sections stripped.
     pub code: String,
-    /// 0-indexed line of the `@cell` / `@markdown` marker.
     pub start_line: usize,
 }
 
@@ -86,11 +82,9 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         if let Some(rest) = line.strip_prefix("@cell ") {
             let mut parts = rest.splitn(2, ' ');
             let idx: isize = parts.next().unwrap_or("0").parse().unwrap_or(0);
-            let lang = parts.next().unwrap_or("julia").trim().to_string();
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Code,
-                lang,
                 code: String::new(),
                 start_line: i,
             });
@@ -99,7 +93,6 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Markdown,
-                lang: String::new(),
                 code: String::new(),
                 start_line: i,
             });
@@ -228,20 +221,6 @@ pub fn notebook_convert_sync(path: String) -> String {
     out
 }
 
-pub fn get_notebook_source_path(jl_path: String) -> String {
-    if let Ok(content) = fs::read_to_string(&jl_path) {
-        for line in content.lines() {
-            if let Some(rest) = line.strip_prefix("# ═══ Nothelix Notebook: ") {
-                let src = rest.trim_end_matches(" ═══").trim();
-                if !src.is_empty() {
-                    return src.to_string();
-                }
-            }
-        }
-    }
-    jl_path.replace(".jl", ".ipynb")
-}
-
 pub fn get_cell_at_line(path: String, line: isize) -> String {
     let line = line as usize;
     match parse_jl_file(&path) {
@@ -324,12 +303,13 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
             let orig = orig_cells.get(cell.index as usize).cloned();
 
             let make_source_lines = |text: &str| -> Value {
+                let line_count = text.lines().count();
                 let lines: Vec<Value> = text
                     .lines()
                     .enumerate()
                     .map(|(i, l)| {
                         let mut s = l.to_string();
-                        if i < text.lines().count().saturating_sub(1) {
+                        if i < line_count.saturating_sub(1) {
                             s.push('\n');
                         }
                         Value::String(s)
@@ -500,8 +480,15 @@ mod tests {
     }
 
     #[test]
-    fn get_cell_at_line_markdown() {
+    fn get_cell_at_line_second_cell() {
         let result = get_cell_at_line(fixture_path("simple.jl"), 11);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["cell_index"].as_str().unwrap(), "1");
+    }
+
+    #[test]
+    fn get_cell_at_line_markdown() {
+        let result = get_cell_at_line(fixture_path("simple.jl"), 30);
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["cell_index"].as_str().unwrap(), "2");
     }
@@ -554,12 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn notebook_cell_image_data_no_images() {
-        let result = notebook_cell_image_data(fixture_path("simple.ipynb"), 0);
-        assert_eq!(result, ""); // simple.ipynb has no image outputs
-    }
-
-    #[test]
     fn convert_to_ipynb_roundtrip() {
         // Write the .jl to a temp file, convert back, verify structure
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -587,43 +568,4 @@ mod tests {
         assert_eq!(nb["cells"][0]["cell_type"], "code");
         assert_eq!(nb["cells"][2]["cell_type"], "markdown");
     }
-}
-
-pub fn notebook_cell_image_data(path: String, cell_index: isize) -> String {
-    let nb = match read_notebook(&path) {
-        Err(e) => return format!("ERROR: {e}"),
-        Ok(v) => v,
-    };
-
-    let cells = match nb["cells"].as_array() {
-        None => return String::new(),
-        Some(c) => c,
-    };
-
-    let cell = match cells.get(cell_index as usize) {
-        None => return String::new(),
-        Some(c) => c,
-    };
-
-    for output in cell["outputs"].as_array().into_iter().flatten() {
-        if let Some(data) = output.get("data") {
-            for key in &["image/png", "image/jpeg", "image/gif"] {
-                if let Some(img) = data.get(*key) {
-                    if let Some(s) = img.as_str() {
-                        if !s.is_empty() {
-                            return s.to_string();
-                        }
-                    }
-                    if let Some(lines) = img.as_array() {
-                        let joined: String = lines.iter().filter_map(|v| v.as_str()).collect();
-                        if !joined.is_empty() {
-                            return joined;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    String::new()
 }
