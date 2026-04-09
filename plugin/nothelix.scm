@@ -21,7 +21,23 @@
 ;; FFI import for shell-free utilities
 (#%require-dylib "libnothelix"
                  (only-in nothelix
-                          resolve-symlink-dir))
+                          resolve-symlink-dir
+                          ensure-lsp-environment
+                          lsp-environment-ready
+                          lsp-project-dir
+                          lsp-depot-dir))
+
+;;; ============================================================================
+;;; LSP ENVIRONMENT SETUP
+;;; ============================================================================
+;;; On first load, spawn Julia in the background to set up the minimal LSP
+;;; environment (LanguageServer only, isolated depot). The editor is never
+;;; blocked — Julia runs concurrently and the LSP becomes available once
+;;; the environment is ready.
+
+(define lsp-setup-result (ensure-lsp-environment))
+(when (not (string=? lsp-setup-result ""))
+  (displayln (string-append "nothelix: LSP setup failed: " lsp-setup-result)))
 
 ;; Nothelix modules (order matters: common first, then leaf modules)
 (require "nothelix/string-utils.scm")
@@ -34,6 +50,8 @@
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
 (require "nothelix/chart-viewer.scm")
+(require "nothelix/backslash.scm")
+(require "nothelix/conceal.scm")
 
 ;; Test modules are loaded dynamically (see test commands below).
 
@@ -44,7 +62,28 @@
          view-chart
          kernel-shutdown kernel-shutdown-all
          graphics-protocol graphics-check nothelix-status
+         julia-tab-complete
+         conceal-math clear-conceal
          run-all-tests run-cell-tests run-kernel-tests run-execution-tests)
+
+;;; ============================================================================
+;;; CONCEAL (overlay calls live here — misc.scm is already loaded)
+;;; ============================================================================
+
+;;@doc
+;; Apply LaTeX math concealment to the current buffer.
+(define (conceal-math)
+  (set-status! "nothelix: computing overlays...")
+  (define overlays (compute-conceal-overlays))
+  (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays"))
+  (if (null? overlays)
+      (clear-conceal)
+      (set-overlays! overlays)))
+
+;;@doc
+;; Remove all conceal overlays.
+(define (clear-conceal)
+  (clear-overlays!))
 
 ;;; ============================================================================
 ;;; KERNEL LIFECYCLE
@@ -89,10 +128,46 @@
   "ipynb"
   (merge-keybindings (get-keybindings) notebook-bindings))
 
-;; Register for .jl files (converted notebooks)
-(helix.keymaps.#%add-extension-or-labeled-keymap
-  "jl"
-  (merge-keybindings (get-keybindings) notebook-bindings))
+;; Tab completion bindings for .jl files (insert mode only)
+(define jl-tab-bindings
+  (keymap
+    (insert
+      ("tab" ":julia-tab-complete"))))
+
+;; Register for .jl files (converted notebooks) — notebook keys + Tab completion
+(let ((km (deep-copy-global-keybindings)))
+  (merge-keybindings km notebook-bindings)
+  (merge-keybindings km jl-tab-bindings)
+  (helix.keymaps.#%add-extension-or-labeled-keymap "jl" km))
+
+;;; ============================================================================
+;;; AUTO-CONCEAL
+;;; ============================================================================
+
+;; File extensions that should get LaTeX math concealment
+(define *conceal-extensions* '("md" "markdown" "tex" "jl" "qmd" "rmd"))
+
+(define (ends-with? str suffix)
+  (define slen (string-length suffix))
+  (define tlen (string-length str))
+  (and (>= tlen slen)
+       (string=? (substring str (- tlen slen) tlen) suffix)))
+
+(define (file-has-conceal-extension? path)
+  (and path
+       (let loop ((exts *conceal-extensions*))
+         (if (null? exts) #f
+             (or (ends-with? path (string-append "." (car exts)))
+                 (loop (cdr exts)))))))
+
+;;@doc
+;; Apply conceal if the current buffer is a markdown/tex/jl file.
+(define (maybe-conceal-current-buffer)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (when (file-has-conceal-extension? path)
+    (conceal-math)))
 
 ;;; ============================================================================
 ;;; EXIT CLEANUP HOOK
@@ -104,20 +179,34 @@
     "write-quit" "force-write-quit" "write-quit-all" "force-write-quit-all"
     "cquit" "force-cquit"))
 
-;; Hook for kernel cleanup on exit and image rendering on file open
+;; Debounce counter: each new trigger increments the generation.
+;; Callbacks check their captured generation against the current one;
+;; if stale, they skip execution.
+(define *conceal-generation* 0)
+
+;; Hook for kernel cleanup on exit and image rendering on buffer switch
 (define (nothelix-post-command-hook command-name)
   (cond
     [(member command-name *quit-commands*)
      (stop-all-kernels)]
-    [(member command-name '("open" "buffer-next" "buffer-previous"))
-     ;; Re-render cached images when switching to a .jl file.
-     ;; Uses enqueue-thread-local-callback-with-delay so the document is
-     ;; fully loaded before we scan it.
-     (enqueue-thread-local-callback-with-delay 50
-       (lambda () (render-cached-images)))]))
+    [(member command-name '("buffer-next" "buffer-previous"))
+     (set! *conceal-generation* (+ *conceal-generation* 1))
+     (define my-gen *conceal-generation*)
+     (enqueue-thread-local-callback-with-delay 150
+       (lambda ()
+         (when (= my-gen *conceal-generation*)
+           (render-cached-images)
+           (maybe-conceal-current-buffer))))]))
 
-;; Register the post-command hook
 (register-hook! "post-command" nothelix-post-command-hook)
+(register-hook! "document-opened"
+  (lambda (_doc-id)
+    (set! *conceal-generation* (+ *conceal-generation* 1))
+    (define my-gen *conceal-generation*)
+    (enqueue-thread-local-callback-with-delay 200
+      (lambda ()
+        (when (= my-gen *conceal-generation*)
+          (maybe-conceal-current-buffer))))))
 
 ;;; ============================================================================
 ;;; TEST COMMANDS
