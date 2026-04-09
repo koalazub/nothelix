@@ -7,7 +7,9 @@ mod chart;
 mod graphics;
 mod json_utils;
 mod kernel;
+mod lsp;
 mod notebook;
+mod unicode;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
@@ -70,6 +72,28 @@ fn build_module() -> FFIModule {
 
     // ── Braille chart rendering ───────────────────────────────────────────
     m.register_fn("render-braille-chart", chart::render_braille_chart);
+
+    // ── Unicode / backslash completion ────────────────────────────────────
+    m.register_fn("unicode-lookup", unicode::unicode_lookup);
+    m.register_fn(
+        "unicode-completions-for-prefix",
+        unicode::unicode_completions_for_prefix,
+    );
+    m.register_fn("latex-overlays", unicode::latex_overlays);
+    m.register_fn(
+        "compute-conceal-overlays-ffi",
+        unicode::compute_conceal_overlays,
+    );
+    m.register_fn(
+        "compute-conceal-overlays-for-comments",
+        unicode::compute_conceal_overlays_for_comments,
+    );
+
+    // ── LSP environment ───────────────────────────────────────────────
+    m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
+    m.register_fn("lsp-environment-ready", lsp::lsp_environment_ready);
+    m.register_fn("lsp-project-dir", lsp::lsp_project_dir);
+    m.register_fn("lsp-depot-dir", lsp::lsp_depot_dir);
 
     m
 }
