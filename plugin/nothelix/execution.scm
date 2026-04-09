@@ -44,8 +44,7 @@
                           ;; Image cache persistence
                           save-image-to-cache
                           load-image-from-cache
-                          ;; Shell-free utilities
-                          sleep-ms))
+))
 
 (provide execute-cell
          execute-all-cells

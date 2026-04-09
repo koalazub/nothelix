@@ -152,25 +152,7 @@
     (if (and path (ends-with-jl? path))
         (compute-conceal-overlays-for-comments text)
         (compute-conceal-overlays-ffi text)))
-
-  (if (string=? json-str "[]")
-      '()
-      (let parse-loop ([pos 0] [result '()])
-        (cond
-          [(>= pos (string-length json-str)) (reverse result)]
-          [(char=? (string-ref json-str pos) #\{)
-           (let* ([colon1-pos (find-char json-str #\: (+ pos 1))]
-                  [offset-start (skip-whitespace json-str (+ colon1-pos 1))]
-                  [offset-end (find-non-digit json-str offset-start)]
-                  [offset-val (string->number (substring json-str offset-start offset-end))]
-                  [colon2-pos (find-char json-str #\: offset-end)]
-                  [quote1-pos (find-char json-str #\" (+ colon2-pos 1))]
-                  [replacement-str (extract-json-string json-str (+ quote1-pos 1))]
-                  [after-str (+ quote1-pos 1 (json-string-raw-length json-str (+ quote1-pos 1)) 1)]
-                  [close-pos (find-char json-str #\} after-str)])
-             (parse-loop (+ close-pos 1)
-                         (cons (cons offset-val replacement-str) result)))]
-          [else (parse-loop (+ pos 1) result)]))))
+  (parse-overlay-json json-str))
 
 ;;; Parse the JSON overlay string into a list of (offset . replacement) pairs.
 ;;; This is pure computation — safe to run on any thread.
@@ -217,13 +199,16 @@
       (define overlays (parse-overlay-json json-str))
 
       ;; Deliver results to the main thread.
+      ;; Guard: only apply if the user hasn't switched buffers.
       (hx.with-context
         (lambda ()
-          (if (null? overlays)
-              (clear-overlays!)
-              (begin
-                (set-overlays! overlays)
-                (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays")))))))))
+          (define current-doc-id (editor->doc-id (editor-focus)))
+          (when (equal? current-doc-id doc-id)
+            (if (null? overlays)
+                (clear-overlays!)
+                (begin
+                  (set-overlays! overlays)
+                  (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays"))))))))))
 
 (define (ends-with-jl? path)
   (define len (string-length path))

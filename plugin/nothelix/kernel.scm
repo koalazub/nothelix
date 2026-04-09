@@ -16,7 +16,6 @@
                           kernel-start-macro
                           kernel-stop
                           kernel-stop-all-processes
-                          sleep-ms
                           path-exists
                           read-file-tail))
 
