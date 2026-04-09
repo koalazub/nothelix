@@ -679,7 +679,7 @@
 
 ;;@doc
 ;; Scan the current buffer for `# @image <path>` markers and re-render
-;; the cached images via RawContent. Runs file I/O on a background thread.
+;; the cached images via RawContent.  Called on file open for .jl files.
 (define (render-cached-images)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -689,46 +689,29 @@
     (define rope (editor->text doc-id))
     (define total-lines (text.rope-len-lines rope))
 
-    ;; Collect image markers and their line info on the main thread (fast).
-    (define markers
-      (let loop ([line-idx 0] [acc '()])
-        (if (>= line-idx total-lines) (reverse acc)
-            (let ([line (doc-get-line rope total-lines line-idx)])
-              (if (string-starts-with? line "# @image ")
-                  (let ([rel-path (string-trim (substring line 9 (string-length line)))])
-                    (loop (+ line-idx 1) (cons (list line-idx rel-path) acc)))
-                  (loop (+ line-idx 1) acc))))))
+    (let loop ([line-idx 0] [rendered 0])
+      (when (< line-idx total-lines)
+        (define line (doc-get-line rope total-lines line-idx))
+        (if (string-starts-with? line "# @image ")
+            (let ()
+              (define rel-path (string-trim (substring line 9 (string-length line))))
+              (define image-b64 (load-image-from-cache path rel-path))
 
-    (when (not (null? markers))
-      ;; Load images on a background thread.
-      (spawn-native-thread
-        (lambda ()
-          ;; Load all images from disk (file I/O, no editor access needed).
-          (define loaded
-            (map (lambda (marker)
-                   (define line-idx (car marker))
-                   (define rel-path (car (cdr marker)))
-                   (define image-b64 (load-image-from-cache path rel-path))
-                   (list line-idx rel-path image-b64))
-                 markers))
-
-          ;; Deliver to main thread for rendering.
-          (hx.with-context
-            (lambda ()
-              (define current-rope (editor->text doc-id))
-              (for-each
-                (lambda (entry)
-                  (define line-idx (car entry))
-                  (define image-b64 (car (cdr (cdr entry))))
-                  (when (> (string-length image-b64) 0)
+              (if (> (string-length image-b64) 0)
+                  (let ()
                     (define image-id *image-id-counter*)
                     (set! *image-id-counter* (+ *image-id-counter* 1))
                     (when (> *image-id-counter* 16777200)
                       (set! *image-id-counter* 1))
                     (define image-rows 12)
                     (define escape-seq (kitty-display-image-bytes image-b64 image-id image-rows))
+
                     (when (not (string-starts-with? escape-seq "ERROR:"))
-                      (define char-pos (text.rope-line->char current-rope line-idx))
-                      (helix.static.add-raw-content! escape-seq image-id image-rows char-pos))))
-                loaded))))))))
+                      (define char-pos (text.rope-line->char rope line-idx))
+                      (helix.static.add-raw-content! escape-seq image-id image-rows char-pos))
+
+                    (loop (+ line-idx 1) (+ rendered 1)))
+                  ;; Cache file missing — skip silently.
+                  (loop (+ line-idx 1) rendered)))
+            (loop (+ line-idx 1) rendered))))))
 
