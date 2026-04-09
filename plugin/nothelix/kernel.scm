@@ -8,6 +8,7 @@
 (require "string-utils.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
+(require (prefix-in helix. "helix/commands.scm"))
 
 ;; FFI imports for kernel functions
 (#%require-dylib "libnothelix"
@@ -21,6 +22,7 @@
 
 (provide kernel-start
          kernel-get-for-notebook
+         poll-kernel-ready
          stop-kernel
          stop-all-kernels
          *kernels*
@@ -35,17 +37,17 @@
 
 ;;@doc
 ;; Start a new kernel for the given language and notebook path.
-;; Returns a kernel-state hash on success, or #false on failure (with a
-;; status message shown to the user).
-(define (kernel-start lang notebook-path)
-  ;; Fixed directory avoids orphaned processes across restarts.
-  ;; The Rust side SIGTERMs any existing process before spawning.
+;; Non-blocking: spawns the kernel process, then polls for readiness
+;; via delayed callbacks. Calls `on-ready` with the kernel-state hash
+;; on success, or shows an error in the status bar on failure.
+;; Returns #true if the spawn succeeded (polling has started), #false
+;; if it failed immediately.
+(define (kernel-start lang notebook-path on-ready)
   (define kernel-dir "/tmp/helix-kernel-1")
   (set-status! (string-append "Starting kernel in " kernel-dir "..."))
 
   (define result-json (kernel-start-macro kernel-dir))
 
-  ;; Each check returns #false on failure; success falls through to the end.
   (cond
     [(string-contains? result-json "julia not found")
      (set-status! "Julia not found. Install Julia (https://julialang.org) and make sure it is on your PATH.")
@@ -55,57 +57,56 @@
      (set-status! (string-append "Kernel failed to start: " (sanitise-error-message result-json)))
      #false]
 
+    [(equal? (path-exists kernel-dir) "no")
+     (set-status! (string-append "Kernel directory was not created at " kernel-dir ". Check file permissions."))
+     #false]
+
     [else
-     ;; Poll for the ready file instead of a fixed sleep.  Julia startup
-     ;; time varies widely (500 ms to several seconds on first load), so a
-     ;; single sleep is unreliable.  We check every 200 ms for up to 30 s.
-     (define (wait-for-ready attempts)
-       (cond
-         [(equal? (path-exists (string-append kernel-dir "/ready")) "yes")
-          ;; Kernel is up.
-          (define kernel-state
-            (hash 'lang lang
-                  'kernel-dir kernel-dir
-                  'input-file (string-append kernel-dir "/input.json")
-                  'output-file (string-append kernel-dir "/output.json")
-                  'pid-file (string-append kernel-dir "/pid")
-                  'ready #true))
+     ;; Begin async polling for the ready file.
+     ;; 150 attempts * 200 ms = 30 s max wait.
+     (poll-kernel-ready kernel-dir lang notebook-path on-ready 150)
+     #true]))
 
-          (set! *kernels* (hash-insert *kernels* notebook-path kernel-state))
-          (set-status! (string-append "Started " lang " kernel in " kernel-dir))
-          kernel-state]
+;; Internal: async poll loop for kernel readiness.
+(define (poll-kernel-ready kernel-dir lang notebook-path on-ready attempts)
+  (cond
+    [(equal? (path-exists (string-append kernel-dir "/ready")) "yes")
+     ;; Kernel is up.
+     (define kernel-state
+       (hash 'lang lang
+             'kernel-dir kernel-dir
+             'input-file (string-append kernel-dir "/input.json")
+             'output-file (string-append kernel-dir "/output.json")
+             'pid-file (string-append kernel-dir "/pid")
+             'ready #true))
 
-         [(<= attempts 0)
-          ;; Timed out — show whatever the kernel log says.
-          (define log-tail (read-file-tail (string-append kernel-dir "/kernel.log") 3))
-          (define msg (sanitise-error-message log-tail))
-          (if (> (string-length msg) 0)
-              (set-status! (string-append "Kernel not ready after 30 s. Julia output: " msg))
-              (set-status! "Kernel not ready after 30 s. Check kernel.log in /tmp/helix-kernel-1/ for details."))
-          #false]
+     (set! *kernels* (hash-insert *kernels* notebook-path kernel-state))
+     (set-status! (string-append "Started " lang " kernel in " kernel-dir))
+     (on-ready kernel-state)]
 
-         [else
-          (sleep-ms 200)
-          (wait-for-ready (- attempts 1))]))
+    [(<= attempts 0)
+     ;; Timed out.
+     (define log-tail (read-file-tail (string-append kernel-dir "/kernel.log") 3))
+     (define msg (sanitise-error-message log-tail))
+     (if (> (string-length msg) 0)
+         (set-status! (string-append "Kernel not ready after 30 s. Julia output: " msg))
+         (set-status! "Kernel not ready after 30 s. Check kernel.log in /tmp/helix-kernel-1/ for details."))
+     (helix.redraw)]
 
-     (cond
-       [(equal? (path-exists kernel-dir) "no")
-        (set-status! (string-append "Kernel directory was not created at " kernel-dir ". Check file permissions."))
-        #false]
-
-       [else
-        ;; 150 attempts * 200 ms = 30 s max wait
-        (wait-for-ready 150)])]))
+    [else
+     (enqueue-thread-local-callback-with-delay 200
+       (lambda () (poll-kernel-ready kernel-dir lang notebook-path on-ready (- attempts 1))))]))
 
 ;;@doc
 ;; Get or start a kernel for a notebook.
-;; Returns the existing kernel-state if one is already running, otherwise
-;; starts a new one.  Returns #false if the kernel fails to start.
-(define (kernel-get-for-notebook notebook-path lang)
+;; If a kernel is already running, calls (on-ready kernel-state) immediately.
+;; Otherwise starts a new one asynchronously and calls on-ready when ready.
+;; Returns #false if the kernel fails to start.
+(define (kernel-get-for-notebook notebook-path lang on-ready)
   (define existing (hash-try-get *kernels* notebook-path))
   (if existing
-      existing
-      (kernel-start lang notebook-path)))
+      (on-ready existing)
+      (kernel-start lang notebook-path on-ready)))
 
 ;;@doc
 ;; Stop the kernel for a specific notebook path.

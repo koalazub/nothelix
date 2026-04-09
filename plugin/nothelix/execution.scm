@@ -342,63 +342,50 @@
   (helix.goto (number->string (+ insert-at-line 1)))
   (helix.static.goto_line_end)
 
-  ;; Get kernel for this notebook
+  ;; Get kernel for this notebook (async — may need to start one)
   (define notebook-path (editor-document->path doc-id))
-  (define kernel-state (kernel-get-for-notebook notebook-path lang))
 
-  (when (not kernel-state)
-    ;; kernel-start already showed an error via set-status!
-    (helix.redraw)
-    (error "Kernel failed to start"))
+  (kernel-get-for-notebook notebook-path lang
+    (lambda (kernel-state)
+      (define kernel-dir (hash-get kernel-state 'kernel-dir))
 
-  (define kernel-dir (hash-get kernel-state 'kernel-dir))
+      ;; Get cell index for dependency tracking
+      (define cell-info-json (get-cell-at-line path current-line))
+      (define cell-index-str (json-get cell-info-json "cell_index"))
+      (define cell-index (if (> (string-length cell-index-str) 0)
+                              (string->number cell-index-str)
+                              0))
 
-  ;; Get cell index for dependency tracking
-  (define cell-info-json (get-cell-at-line path current-line))
-  (define cell-index-str (json-get cell-info-json "cell_index"))
-  (define cell-index (if (> (string-length cell-index-str) 0)
-                          (string->number cell-index-str)
-                          0))
+      ;; Insert output header with spinner
+      (spinner-reset)
+      (define spinner-frame (spinner-next-frame))
+      (helix.static.insert_string (string-append "\n\n# ─── Output ───\n# " spinner-frame " Executing...\n"))
+      (helix.static.commit-changes-to-history)
+      (set-status! (string-append spinner-frame " Executing cell..."))
+      (helix.redraw)
 
-  ;; Insert output header with spinner
-  (spinner-reset)  ;; Start from first frame
-  (define spinner-frame (spinner-next-frame))
-  (helix.static.insert_string (string-append "\n\n# ─── Output ───\n# " spinner-frame " Executing...\n"))
-  ;; CRITICAL: Commit changes to history immediately
-  (helix.static.commit-changes-to-history)
-  (set-status! (string-append spinner-frame " Executing cell..."))
-  (helix.redraw)
+      ;; Track executing kernel for cancellation
+      (set! *executing-kernel-dir* kernel-dir)
 
-  ;; Track executing kernel for cancellation
-  (set! *executing-kernel-dir* kernel-dir)
+      ;; Start execution (non-blocking Rust FFI call)
+      (define start-result (kernel-execute-cell-start kernel-dir cell-index code))
+      (define start-status (json-get start-result "status"))
 
-  ;; Start execution (non-blocking Rust FFI call)
-  (define start-result (kernel-execute-cell-start kernel-dir cell-index code))
-  (define start-status (json-get start-result "status"))
-
-  (cond
-    [(equal? start-status "started")
-     ;; Execution started - begin polling for result
-     ;; Uses enqueue-thread-local-callback-with-delay for non-blocking polling
-      (enqueue-thread-local-callback-with-delay 100
-        (lambda () (poll-for-result kernel-dir path cell-index)))]
-    [else
-     ;; Error starting execution
-     (define err (let ([e (json-get start-result "error")]) (if (> (string-length e) 0) e "Unknown error")))
-
-     ;; If kernel directory doesn't exist or PID missing, remove from hash
-     ;; so next execution will create a fresh kernel
-     (when (or (string-contains? err "does not exist")
-               (string-contains? err "PID file missing"))
-       (set! *kernels* (hash-remove *kernels* notebook-path)))
-
-     (helix.static.insert_string (string-append "# ERROR: " err "\n"))
-     (helix.static.insert_string "# ─────────────\n")
-     (set-status! (string-append "✗ " err))
-     ;; CRITICAL: Commit changes to history immediately
-     (helix.static.commit-changes-to-history)
-      (set! *executing-kernel-dir* #false)
-      (helix.redraw)]))
+      (cond
+        [(equal? start-status "started")
+          (enqueue-thread-local-callback-with-delay 100
+            (lambda () (poll-for-result kernel-dir path cell-index)))]
+        [else
+         (define err (let ([e (json-get start-result "error")]) (if (> (string-length e) 0) e "Unknown error")))
+         (when (or (string-contains? err "does not exist")
+                   (string-contains? err "PID file missing"))
+           (set! *kernels* (hash-remove *kernels* notebook-path)))
+         (helix.static.insert_string (string-append "# ERROR: " err "\n"))
+         (helix.static.insert_string "# ─────────────\n")
+         (set-status! (string-append "✗ " err))
+         (helix.static.commit-changes-to-history)
+         (set! *executing-kernel-dir* #false)
+         (helix.redraw)]))))
 
 ;;@doc
 ;; Cancel/interrupt any running cell execution
@@ -471,17 +458,12 @@
   (define notebook-path path)
   (define lang "julia")
 
-  ;; Start kernel
-  (define kernel-state (kernel-get-for-notebook notebook-path lang))
-
-  (when (not kernel-state)
-    (helix.redraw)
-    (error "Kernel failed to start"))
-
-  (define kernel-dir (hash-get kernel-state 'kernel-dir))
-
-  (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
-  (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))
+  ;; Start kernel (async)
+  (kernel-get-for-notebook notebook-path lang
+    (lambda (kernel-state)
+      (define kernel-dir (hash-get kernel-state 'kernel-dir))
+      (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
+      (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))))
 
 ;;@doc
 ;; Helper: Execute a list of cells sequentially with async execution and animated spinner.
@@ -632,52 +614,47 @@
 
   ;; IMPORTANT: Save file first so Rust can read the latest content
   (helix.write)
-  ;; Small delay to ensure file is flushed to disk
-  (sleep-ms 100)
 
-  ;; Only works on converted files
-  (when (string-suffix? path ".ipynb")
-    (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
-    (error "Not a converted file"))
+  (enqueue-thread-local-callback-with-delay 100
+    (lambda ()
+      ;; Only works on converted files
+      (when (string-suffix? path ".ipynb")
+        (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
+        (error "Not a converted file"))
 
-  ;; Get current cell info from Rust
-  (define cell-info-json (get-cell-at-line path current-line))
-  (define err (json-get cell-info-json "error"))
-  (when (> (string-length err) 0)
-    (set-status! "Error: Not in a notebook file")
-    (error "Not in a notebook file"))
+      ;; Get current cell info from Rust
+      (define cell-info-json (get-cell-at-line path current-line))
+      (define err (json-get cell-info-json "error"))
+      (when (> (string-length err) 0)
+        (set-status! "Error: Not in a notebook file")
+        (error "Not in a notebook file"))
 
-  (define notebook-path (json-get cell-info-json "source_path"))
-  (define current-cell-idx (string->number (json-get cell-info-json "cell_index")))
-  (define lang "julia")  ; TODO: detect from notebook metadata
+      (define notebook-path (json-get cell-info-json "source_path"))
+      (define current-cell-idx (string->number (json-get cell-info-json "cell_index")))
+      (define lang "julia")  ; TODO: detect from notebook metadata
 
-  ;; Get list of code cell indices from Rust parser (up to current cell)
-  (define cells-json (list-jl-code-cells path current-cell-idx))
-  (define cells-err (json-get cells-json "error"))
-  (when (> (string-length cells-err) 0)
-    (define safe-err (sanitise-error-message cells-err))
-    (set-status! (string-append "✗ " safe-err))
-    (error safe-err))
+      ;; Get list of code cell indices from Rust parser (up to current cell)
+      (define cells-json (list-jl-code-cells path current-cell-idx))
+      (define cells-err (json-get cells-json "error"))
+      (when (> (string-length cells-err) 0)
+        (define safe-err (sanitise-error-message cells-err))
+        (set-status! (string-append "✗ " safe-err))
+        (error safe-err))
 
-  (define indices-str (json-get cells-json "indices"))
-  (define cell-indices (parse-indices-string indices-str))
-  (define cell-count (length cell-indices))
+      (define indices-str (json-get cells-json "indices"))
+      (define cell-indices (parse-indices-string indices-str))
+      (define cell-count (length cell-indices))
 
-  (when (equal? cell-count 0)
-    (set-status! "No code cells to execute")
-    (error "No code cells"))
+      (when (equal? cell-count 0)
+        (set-status! "No code cells to execute")
+        (error "No code cells"))
 
-  ;; Start kernel
-  (define kernel-state (kernel-get-for-notebook notebook-path lang))
-
-  (when (not kernel-state)
-    (helix.redraw)
-    (error "Kernel failed to start"))
-
-  (define kernel-dir (hash-get kernel-state 'kernel-dir))
-
-  (set-status! (string-append "Executing cells: " indices-str))
-  (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))
+      ;; Start kernel (async)
+      (kernel-get-for-notebook notebook-path lang
+        (lambda (kernel-state)
+          (define kernel-dir (hash-get kernel-state 'kernel-dir))
+          (set-status! (string-append "Executing cells: " indices-str))
+          (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Image cache rendering (for file re-open)
