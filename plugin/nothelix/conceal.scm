@@ -10,6 +10,8 @@
 
 (require "helix/editor.scm")
 (require-builtin helix/core/text as text.)
+(require "helix/ext.scm")
+(require "helix/misc.scm")
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -17,7 +19,8 @@
                           compute-conceal-overlays-for-comments
                           latex-overlays))
 
-(provide compute-conceal-overlays find-math-regions build-overlays-for-region)
+(provide compute-conceal-overlays compute-and-apply-conceal-async
+         find-math-regions build-overlays-for-region parse-overlay-json)
 
 ;;; ─── Math region scanner (kept for external use) ─────────────────────────────
 
@@ -168,6 +171,59 @@
              (parse-loop (+ close-pos 1)
                          (cons (cons offset-val replacement-str) result)))]
           [else (parse-loop (+ pos 1) result)]))))
+
+;;; Parse the JSON overlay string into a list of (offset . replacement) pairs.
+;;; This is pure computation — safe to run on any thread.
+(define (parse-overlay-json json-str)
+  (if (string=? json-str "[]")
+      '()
+      (let parse-loop ([pos 0] [result '()])
+        (cond
+          [(>= pos (string-length json-str)) (reverse result)]
+          [(char=? (string-ref json-str pos) #\{)
+           (let* ([colon1-pos (find-char json-str #\: (+ pos 1))]
+                  [offset-start (skip-whitespace json-str (+ colon1-pos 1))]
+                  [offset-end (find-non-digit json-str offset-start)]
+                  [offset-val (string->number (substring json-str offset-start offset-end))]
+                  [colon2-pos (find-char json-str #\: offset-end)]
+                  [quote1-pos (find-char json-str #\" (+ colon2-pos 1))]
+                  [replacement-str (extract-json-string json-str (+ quote1-pos 1))]
+                  [after-str (+ quote1-pos 1 (json-string-raw-length json-str (+ quote1-pos 1)) 1)]
+                  [close-pos (find-char json-str #\} after-str)])
+             (parse-loop (+ close-pos 1)
+                         (cons (cons offset-val replacement-str) result)))]
+          [else (parse-loop (+ pos 1) result)]))))
+
+;;;@doc
+;;; Compute conceal overlays on a background thread and apply them
+;;; when ready. The editor remains responsive during computation.
+(define (compute-and-apply-conceal-async)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define rope (editor->text doc-id))
+  (define text (text.rope->string rope))
+  (define path (editor-document->path doc-id))
+  (define is-jl (and path (ends-with-jl? path)))
+
+  ;; Spawn background thread for the heavy FFI work.
+  (spawn-native-thread
+    (lambda ()
+      (define json-str
+        (if is-jl
+            (compute-conceal-overlays-for-comments text)
+            (compute-conceal-overlays-ffi text)))
+
+      ;; Parse overlays on the background thread too (no editor access needed).
+      (define overlays (parse-overlay-json json-str))
+
+      ;; Deliver results to the main thread.
+      (hx.with-context
+        (lambda ()
+          (if (null? overlays)
+              (clear-overlays!)
+              (begin
+                (set-overlays! overlays)
+                (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays")))))))))
 
 (define (ends-with-jl? path)
   (define len (string-length path))

@@ -72,13 +72,10 @@
 
 ;;@doc
 ;; Apply LaTeX math concealment to the current buffer.
+;; Runs computation on a background thread to avoid blocking the editor.
 (define (conceal-math)
   (set-status! "nothelix: computing overlays...")
-  (define overlays (compute-conceal-overlays))
-  (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays"))
-  (if (null? overlays)
-      (clear-conceal)
-      (set-overlays! overlays)))
+  (compute-and-apply-conceal-async))
 
 ;;@doc
 ;; Remove all conceal overlays.
