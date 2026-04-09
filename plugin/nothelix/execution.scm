@@ -20,6 +20,9 @@
 ;; Global counter for unique Kitty image IDs (wraps at 16M to stay in range).
 (define *image-id-counter* 1)
 
+;; Cached line number of the "Executing..." spinner, or #false if unknown.
+(define *spinner-line-cache* #false)
+
 ;; FFI imports for execution functions
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -144,6 +147,7 @@
 ;; Handles stdout, stderr, images (via Kitty graphics), and errors.
 ;; `jl-path` and `cell-index` are used to persist images to the cache directory.
 (define (update-cell-output result-json jl-path cell-index)
+  (set! *spinner-line-cache* #false)
   (set! *executing-kernel-dir* #false)
 
   ;; Stash raw plot data for the interactive chart viewer (:view-plot).
@@ -253,48 +257,56 @@
 
 ;;@doc
 ;; Advance the spinner animation in the "Executing..." line.
-;; Re-reads document state each tick to find the current spinner position.
+;; Uses a cached line position; falls back to a linear scan only when
+;; the cached position is stale or unset.
 (define (update-spinner-frame)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define (find-spinner-line line-idx)
-    (cond
-      [(>= line-idx total-lines) #false]
-      [(string-contains? (doc-get-line rope total-lines line-idx) "Executing...") line-idx]
-      [else (find-spinner-line (+ line-idx 1))]))
+  ;; Check cached position first; re-scan only if stale.
+  (define spinner-line
+    (if (and *spinner-line-cache*
+             (< *spinner-line-cache* total-lines)
+             (string-contains? (doc-get-line rope total-lines *spinner-line-cache*) "Executing..."))
+        *spinner-line-cache*
+        ;; Cache miss — scan from the end (spinner is usually near the bottom).
+        (let scan ([idx (- total-lines 1)])
+          (cond
+            [(< idx 0) #false]
+            [(string-contains? (doc-get-line rope total-lines idx) "Executing...") idx]
+            [else (scan (- idx 1))]))))
 
-  (define spinner-line (find-spinner-line 0))
+  (set! *spinner-line-cache* spinner-line)
 
   (when spinner-line
-    ;; Get next spinner frame
     (define new-frame (spinner-next-frame))
-    ;; Replace the line with updated spinner
     (helix.goto (number->string (+ spinner-line 1)))
     (helix.static.goto_line_start)
     (helix.static.extend_to_line_bounds)
     (helix.static.delete_selection)
     (helix.static.insert_string (string-append "# " new-frame " Executing...\n"))
-    ;; Stay at current position
     (helix.static.collapse_selection)
-    ;; CRITICAL: Commit changes to history immediately to prevent async callback crashes
     (helix.static.commit-changes-to-history)
-    ;; Update status line too
     (set-status! (string-append new-frame " Executing cell..."))
     (helix.redraw)))
 
-;; Helper: Poll for execution result (called repeatedly via delayed callback)
+;; Helper: Poll for execution result with exponential backoff.
+;; Starts at 100ms, grows to 500ms max.
 (define (poll-for-result kernel-dir jl-path cell-index)
+  (poll-for-result-with-delay kernel-dir jl-path cell-index 100))
+
+(define (poll-for-result-with-delay kernel-dir jl-path cell-index delay-ms)
   (define result-json (kernel-poll-result kernel-dir))
   (define status (json-get result-json "status"))
 
   (cond
     [(equal? status "pending")
      (update-spinner-frame)
-     (enqueue-thread-local-callback-with-delay 100
-       (lambda () (poll-for-result kernel-dir jl-path cell-index)))]
+     (define next-delay (min 500 (+ delay-ms 50)))
+     (enqueue-thread-local-callback-with-delay next-delay
+       (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
      (update-cell-output result-json jl-path cell-index)]))
 
@@ -358,6 +370,7 @@
 
       ;; Insert output header with spinner
       (spinner-reset)
+      (set! *spinner-line-cache* #false)
       (define spinner-frame (spinner-next-frame))
       (helix.static.insert_string (string-append "\n\n# ─── Output ───\n# " spinner-frame " Executing...\n"))
       (helix.static.commit-changes-to-history)
@@ -581,14 +594,18 @@
   (helix.redraw))
 
 (define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)
+  (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line 100))
+
+(define (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line delay-ms)
   (define result-json (kernel-poll-result kernel-dir))
   (define status (json-get result-json "status"))
 
   (cond
     [(equal? status "pending")
      (update-spinner-frame)
-     (enqueue-thread-local-callback-with-delay 100
-       (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)))]
+     (define next-delay (min 500 (+ delay-ms 50)))
+     (enqueue-thread-local-callback-with-delay next-delay
+       (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
      (update-cell-output result-json jl-path cell-idx)
      (enqueue-thread-local-callback-with-delay 10
