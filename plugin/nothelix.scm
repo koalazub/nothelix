@@ -41,6 +41,7 @@
 
 ;; Nothelix modules (order matters: common first, then leaf modules)
 (require "nothelix/string-utils.scm")
+(require "nothelix/debug.scm")
 (require "nothelix/common.scm")
 (require "nothelix/graphics.scm")
 (require "nothelix/kernel.scm")
@@ -51,6 +52,7 @@
 (require "nothelix/picker.scm")
 (require "nothelix/chart-viewer.scm")
 (require "nothelix/backslash.scm")
+(require "nothelix/conceal-state.scm")
 (require "nothelix/conceal.scm")
 
 ;; Test modules are loaded dynamically (see test commands below).
@@ -64,28 +66,31 @@
          graphics-protocol graphics-check nothelix-status
          julia-tab-complete
          conceal-math clear-conceal
+         nothelix-debug-on nothelix-debug-off nothelix-debug-toggle
          run-all-tests run-cell-tests run-kernel-tests run-execution-tests)
 
 ;;; ============================================================================
-;;; CONCEAL (overlay calls live here — misc.scm is already loaded)
+;;; CONCEAL — thin shim for backwards-compatible provided names
 ;;; ============================================================================
+;;;
+;;; All conceal logic lives in nothelix/conceal.scm. These aliases keep the
+;;; top-level provide list stable so users of the plugin don't need to
+;;; re-import anything.
 
-;;@doc
-;; Apply LaTeX math concealment to the current buffer.
-;; Runs synchronously but is fast: .jl files only scan comment lines,
-;; and the debounce guard prevents redundant calls.
-(define (conceal-math)
-  (define overlays (compute-conceal-overlays))
-  (if (null? overlays)
-      (clear-conceal)
-      (begin
-        (set-overlays! overlays)
-        (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays")))))
+(define (conceal-math) (conceal-math!))
+(define (clear-conceal) (clear-conceal!))
 
-;;@doc
-;; Remove all conceal overlays.
-(define (clear-conceal)
-  (clear-overlays!))
+;;; ============================================================================
+;;; DEBUG MODE — thin command shims for the `nothelix/debug.scm` module
+;;; ============================================================================
+;;;
+;;; When toggled on, modules across the plugin start emitting
+;;; `nothelix: …` lines via `debug-log`, which are routed to the
+;;; helix log at info level. Off by default.
+
+(define (nothelix-debug-on) (nothelix-debug-enable!))
+(define (nothelix-debug-off) (nothelix-debug-disable!))
+(define (nothelix-debug-toggle) (nothelix-debug-toggle!))
 
 ;;; ============================================================================
 ;;; KERNEL LIFECYCLE
@@ -145,22 +150,9 @@
 ;;; ============================================================================
 ;;; AUTO-CONCEAL
 ;;; ============================================================================
-
-;; File extensions that should get LaTeX math concealment
-(define *conceal-extensions* '("md" "markdown" "tex" "jl" "qmd" "rmd"))
-
-(define (ends-with? str suffix)
-  (define slen (string-length suffix))
-  (define tlen (string-length str))
-  (and (>= tlen slen)
-       (string=? (substring str (- tlen slen) tlen) suffix)))
-
-(define (file-has-conceal-extension? path)
-  (and path
-       (let loop ((exts *conceal-extensions*))
-         (if (null? exts) #f
-             (or (ends-with? path (string-append "." (car exts)))
-                 (loop (cdr exts)))))))
+;;;
+;;; file-has-conceal-extension? and the conceal orchestration live in
+;;; nothelix/conceal.scm. This file only wires the hooks.
 
 ;;@doc
 ;; Apply conceal if the current buffer is a markdown/tex/jl file.
@@ -169,7 +161,7 @@
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
   (when (file-has-conceal-extension? path)
-    (conceal-math)))
+    (conceal-math!)))
 
 ;;; ============================================================================
 ;;; EXIT CLEANUP HOOK
@@ -186,7 +178,24 @@
 ;; if stale, they skip execution.
 (define *conceal-generation* 0)
 
-;; Hook for kernel cleanup on exit and image rendering on buffer switch
+;; Commands that mutate the buffer and therefore invalidate the conceal
+;; cache when they run. post-command fires after the command returns, so
+;; we schedule a reconceal to rebuild the cache against the new document
+;; state. execute-cell lives in a different class — its output lands
+;; asynchronously inside update-cell-output, which calls schedule-reconceal
+;; directly at the end of that callback.
+(define *mutating-commands*
+  '("convert-notebook" "sync-to-ipynb"))
+
+;; Hook for kernel cleanup, conceal refresh on buffer switch, and conceal
+;; invalidation after mutating commands.
+;;
+;; Buffer switches used to also trigger `render-cached-images`, but that
+;; accumulated duplicate RawContent entries on stock Helix (see
+;; execution.scm for the full explanation). Images now register exactly
+;; once per doc via `document-opened` and persist on the document for
+;; the lifetime of the view, so this hook only needs to refresh
+;; concealment on buffer switch.
 (define (nothelix-post-command-hook command-name)
   (cond
     [(member command-name *quit-commands*)
@@ -197,8 +206,11 @@
      (enqueue-thread-local-callback-with-delay 150
        (lambda ()
          (when (= my-gen *conceal-generation*)
-           (render-cached-images)
-           (maybe-conceal-current-buffer))))]))
+           (maybe-conceal-current-buffer))))]
+    [(member command-name *mutating-commands*)
+     ;; Cache is stale from the moment the command started running.
+     ;; apply-conceal-for-cursor will fail closed until reconceal completes.
+     (schedule-reconceal 50)]))
 
 (register-hook! "post-command" nothelix-post-command-hook)
 (register-hook! "document-opened"
@@ -208,7 +220,33 @@
     (enqueue-thread-local-callback-with-delay 200
       (lambda ()
         (when (= my-gen *conceal-generation*)
+          (render-cached-images)
           (maybe-conceal-current-buffer))))))
+
+;; Cursor-aware conceal: when the cursor moves to a different line, re-filter
+;; cached overlays to exclude that line so the user sees raw LaTeX while
+;; editing. apply-conceal-for-cursor! validates the cache fingerprint and
+;; fails closed if stale.
+(define *conceal-cursor-line* -1)
+(register-hook! "selection-did-change"
+  (lambda (_doc-id)
+    (when (not (conceal-cache-empty?))
+      (define focus (editor-focus))
+      (define doc-id (editor->doc-id focus))
+      (define rope (editor->text doc-id))
+      (define cursor-pos (cursor-position))
+      (define cursor-line (text.rope-char->line rope cursor-pos))
+      (when (not (= cursor-line *conceal-cursor-line*))
+        (set! *conceal-cursor-line* cursor-line)
+        (apply-conceal-for-cursor!)))))
+
+;; Insert-driven reconceal. A short debounce lets rapid typing settle before
+;; we pay for the FFI call.
+(register-hook! "post-insert-char"
+  (lambda (_char)
+    (when (file-has-conceal-extension? (editor-document->path
+            (editor->doc-id (editor-focus))))
+      (schedule-reconceal 400))))
 
 ;;; ============================================================================
 ;;; TEST COMMANDS

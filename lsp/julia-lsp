@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+NOXDIR="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
+export JULIA_DEPOT_PATH="$NOXDIR/depot"
+export HOME="$NOXDIR"
+
+# Startup script configures LanguageServer.jl for notebook-converted files:
+#
+# 1. Defines the `@cell` and `@markdown` marker macros as no-ops that
+#    return `nothing`. Previously `esc(last(args))` caused
+#    `@cell 13 julia` to expand to the bare identifier `julia`, producing
+#    "Missing reference: julia" on every cell header. Returning `nothing`
+#    emits no AST nodes for StaticLint to chase.
+#
+# 2. Disables StaticLint's missing-reference warnings (`lint_missingrefs =
+#    :none`). These are false positives for notebook-style code because
+#    the LSP analyses one file at a time with no awareness of runtime
+#    state from prior cells. The actual compile errors come from the
+#    Julia kernel during execution, which is the source of truth here.
+#
+# 3. Monkey-patches `LanguageServer.request_julia_config` to a no-op.
+#    That function normally pulls `julia.lint.missingrefs` from the
+#    LSP client config and RESETS `server.lint_missingrefs` to whatever
+#    the client returned (defaulting to `:all` if unset). Helix doesn't
+#    expose a way to pass this key, so the post-init config refresh
+#    silently undoes our `:none` setting. Overriding it as a no-op
+#    keeps our initial configuration sticky.
+exec julia \
+  --startup-file=no \
+  --history-file=no \
+  --quiet \
+  "--project=$NOXDIR" \
+  -e 'macro cell(args...) nothing end
+      macro markdown(args...) nothing end
+      using LanguageServer
+      @eval LanguageServer begin
+          function request_julia_config(server::LanguageServerInstance, conn)
+              nothing
+          end
+      end
+      let env_path = LanguageServer.choose_env()
+          server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
+          server.lint_missingrefs = :none
+          run(server)
+      end'

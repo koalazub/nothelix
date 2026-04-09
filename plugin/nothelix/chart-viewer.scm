@@ -6,6 +6,7 @@
 ;;; manages the viewport state and draws the result using `frame-set-string!`.
 
 (require "string-utils.scm")
+(require "json-utils.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/components)
@@ -157,8 +158,9 @@
 
 ;;@doc
 ;; Parse a comma-separated list of JSON strings into a list of decoded strings.
-;; Input: "\"abc\",\"def\",\"ghi\""
-;; Output: ("abc" "def" "ghi")
+;; Input: `"\"abc\",\"def\",\"ghi\""`  →  output: `("abc" "def" "ghi")`
+;;
+;; Uses `json-find-string-end` from json-utils for the closing-quote scan.
 (define (parse-json-string-array s)
   (if (or (not s) (equal? s ""))
       '()
@@ -171,20 +173,12 @@
            (loop (+ pos 1) acc)]
           ;; Found a quoted string.
           [(eqv? (string-ref s pos) #\")
-           (define end-pos (find-json-str-end s (+ pos 1)))
+           (define end-pos (json-find-string-end s (+ pos 1)))
            (if end-pos
                (let ([str-content (substring s (+ pos 1) end-pos)])
                  (loop (+ end-pos 1) (cons str-content acc)))
                (reverse acc))]
           [else (loop (+ pos 1) acc)]))))
-
-;; Find the closing quote of a JSON string, handling escapes.
-(define (find-json-str-end s pos)
-  (cond
-    [(>= pos (string-length s)) #false]
-    [(eqv? (string-ref s pos) #\\) (find-json-str-end s (+ pos 2))]
-    [(eqv? (string-ref s pos) #\") pos]
-    [else (find-json-str-end s (+ pos 1))]))
 
 ;; ─── Event handling ───────────────────────────────────────────────────────────
 

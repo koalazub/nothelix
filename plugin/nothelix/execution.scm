@@ -6,11 +6,13 @@
 ;;; (text, errors, inline images) back into the buffer.
 
 (require "common.scm")
+(require "debug.scm")
 (require "string-utils.scm")
 (require "kernel.scm")
 (require "graphics.scm")
 (require "spinner.scm")
 (require "chart-viewer.scm")
+(require "conceal.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -18,11 +20,23 @@
 (require (prefix-in helix. "helix/commands.scm"))
 (require "helix/ext.scm")
 
-;; Global counter for unique Kitty image IDs (wraps at 16M to stay in range).
-(define *image-id-counter* 1)
 
-;; Cached line number of the "Executing..." spinner, or #false if unknown.
-(define *spinner-line-cache* #false)
+;; Set of document ids we've already re-registered cached images for.
+;; Stock Helix's `add-raw-content!` unconditionally appends to a per-view
+;; `Vec<RawContent>` — it has no dedup and no `clear-raw-content!` binding
+;; to flush stale entries. Running `render-cached-images` more than once
+;; per document therefore accumulates duplicate registrations at drifting
+;; char positions, which the terminal renderer draws as stacked images
+;; (the "smeared Matrix C" artefact). We guard against that by tracking
+;; which doc-ids we've already rendered and refusing to rerun for the
+;; same doc. The fork's `add_or_replace_raw_content` would make this
+;; guard unnecessary, but the guard is harmless on the fork and correct
+;; on stock Helix, so we always use it.
+;;
+;; Represented as a hashmap → boolean because Steel's core collections
+;; API documents `hash`, `hash-insert`, `hash-contains?` but no
+;; first-class hashset primitive.
+(define *rendered-image-docs* (hash))
 
 ;; FFI imports for execution functions
 (#%require-dylib "libnothelix"
@@ -39,8 +53,15 @@
                           json-get-bool
                           json-get-first-image
                           json-get-plot-data
-                          ;; Kitty graphics - returns raw escape sequence bytes
-                          kitty-display-image-bytes
+                          ;; Kitty Unicode placeholder protocol (virtual placement):
+                          ;; transmit the image once under a stable id, then write
+                          ;; a grid of placeholder cells into the text buffer. The
+                          ;; old direct-placement path (`kitty-display-image-bytes`)
+                          ;; pins pixels to absolute terminal cells and smears on
+                          ;; scroll — placeholders move with the buffer instead.
+                          kitty-placeholder-payload
+                          kitty-placeholder-rows
+                          kitty-placeholder-max-dim
                           ;; Image cache persistence
                           save-image-to-cache
                           load-image-from-cache
@@ -117,37 +138,125 @@
 
 ;;@doc
 ;; Delete lines from `start-line` to `end-line` (start inclusive, end exclusive).
-;; Deletes one line at a time to avoid confusing Helix's position tracking,
-;; then commits the transaction so async callbacks see a consistent state.
+;;
+;; Uses a single range-based selection and a single delete_selection call,
+;; so the Helix command count is O(1) regardless of the number of lines.
+;; Previous implementation did `goto + extend + delete` per line, which
+;; dominated the cost of re-executing a cell with a large output section.
 (define (delete-line-range start-line end-line)
-  ;; Instead of extending selection in a loop, delete lines one by one from the top
-  ;; This avoids creating huge selections that confuse Helix's position tracking
-  (let loop ([current-line start-line]
-             [remaining (- end-line start-line)])
-    (when (> remaining 0)
-      ;; Always delete the line at start-line position (lines shift up after each delete)
-      (helix.goto (number->string (+ start-line 1)))
-      (helix.static.goto_line_start)
-      (helix.static.extend_to_line_bounds)
+  (when (> end-line start-line)
+    (define focus (editor-focus))
+    (define doc-id (editor->doc-id focus))
+    (define rope (editor->text doc-id))
+    (define total-lines (text.rope-len-lines rope))
+    (define doc-char-len (text.rope-len-chars rope))
+
+    ;; Clamp to valid bounds so we never ask for a line past EOF.
+    (define clamped-start (max 0 (min start-line total-lines)))
+    (define clamped-end (max clamped-start (min end-line total-lines)))
+
+    ;; Convert line numbers to char offsets. Leading position is start of
+    ;; `start-line`; trailing position is start of `end-line` (which is the
+    ;; char after the last newline of line `end-line - 1`). If `end-line`
+    ;; is past EOF, snap to the end of the rope.
+    (define start-char (text.rope-line->char rope clamped-start))
+    (define end-char
+      (cond
+        [(< clamped-end total-lines) (text.rope-line->char rope clamped-end)]
+        [else doc-char-len]))
+
+    (when (< start-char end-char)
+      (define r (helix.static.range start-char end-char))
+      (define sel (helix.static.range->selection r))
+      (helix.static.set-current-selection-object! sel)
       (helix.static.delete_selection)
-      ;; Immediately collapse to avoid tracking the deleted range
       (helix.static.collapse_selection)
-      (loop start-line (- remaining 1))))
-  ;; Delete trailing newline if needed
-  (when (> start-line 0)
-    (helix.goto (number->string (+ start-line 1)))
-    (helix.static.delete_char_backward))
-  ;; Collapse selection to avoid stale position tracking issues
-  (helix.static.collapse_selection)
-  ;; CRITICAL: Commit changes to history immediately to prevent async callback crashes
-  (helix.static.commit-changes-to-history))
+      (helix.static.commit-changes-to-history))))
 
 ;;@doc
-;; Insert execution results into the buffer, replacing the "Executing..." spinner.
-;; Handles stdout, stderr, images (via Kitty graphics), and errors.
-;; `jl-path` and `cell-index` are used to persist images to the cache directory.
+;; Derive a stable kitty image id from a cell index. Offset by 1000 so we
+;; don't collide with whatever low-id range the terminal reserves. Two
+;; invocations with the same `cell-index` produce the same id, which lets
+;; the idempotent `add-raw-content!` in the Helix fork replace-in-place
+;; rather than accumulate duplicates across re-execution and buffer switches.
+(define (cell-index->image-id cell-index)
+  (+ 1000 cell-index))
+
+;;@doc
+;; Best-effort `clear-raw-content!` wrapper.
+;;
+;; The underlying Helix fork binding was added recently; stock or older
+;; Helix builds don't register `helix.static.clear-raw-content!`, and
+;; naming it directly from Scheme would produce a `FreeIdentifier`
+;; error at parse time. We defer the reference through a quoted
+;; expression passed to `eval`, so the symbol is only resolved at
+;; call time, and wrap the whole thing in `with-handler` so a missing
+;; binding becomes a silent no-op. When the fork is present this
+;; degenerates into a direct call; when it isn't, image dedup still
+;; works because every entry uses a stable id (see
+;; `cell-index->image-id`). This mirrors the pattern helix/keymaps.scm
+;; uses for its optional function-pointer lookups.
+(define (maybe-clear-raw-content!)
+  (with-handler
+    (lambda (_) #f)
+    (eval '(helix.static.clear-raw-content!))))
+
+;; Extract the integer N from a `.nothelix/images/cell-N.png` path.
+;; Returns `#false` if the path doesn't match the expected format.
+(define (extract-cell-index-from-path rel-path)
+  (define marker "cell-")
+  (define marker-len (string-length marker))
+  (let scan ([i 0])
+    (cond
+      [(> (+ i marker-len) (string-length rel-path)) #false]
+      [(string=? (substring rel-path i (+ i marker-len)) marker)
+       (define num-start (+ i marker-len))
+       (let num-scan ([j num-start])
+         (cond
+           [(>= j (string-length rel-path))
+            (if (> j num-start)
+                (string->number (substring rel-path num-start j))
+                #false)]
+           [(and (char>=? (string-ref rel-path j) #\0)
+                 (char<=? (string-ref rel-path j) #\9))
+            (num-scan (+ j 1))]
+           [else
+            (if (> j num-start)
+                (string->number (substring rel-path num-start j))
+                #false)]))]
+      [else (scan (+ i 1))])))
+
+;;@doc
+;; Locate the "# ─── Output ───" header line for a specific cell.
+;; Scans forward from the cell's `@cell N` marker and returns the
+;; 0-indexed line index of the header, or `#false` if not found
+;; before the next cell boundary / EOF. Robust across documents with
+;; many cells because the search is bounded by the cell's span.
+(define (find-output-header-for-cell rope total-lines cell-index)
+  (define cell-line (find-cell-marker-by-index rope total-lines cell-index))
+  (cond
+    [(not cell-line) #false]
+    [else
+     (let scan ([idx (+ cell-line 1)])
+       (cond
+         [(>= idx total-lines) #false]
+         [(cell-marker-line? rope total-lines idx) #false]
+         [(string-contains? (doc-get-line rope total-lines idx) "─── Output ───") idx]
+         [else (scan (+ idx 1))]))]))
+
+;;@doc
+;; Insert execution results into the buffer under the cell's output
+;; header. Handles stdout, stderr, images (via Kitty placeholder
+;; protocol), and errors. `jl-path` and `cell-index` are used to
+;; persist images to the cache directory.
+;;
+;; Important: the spinner no longer appears anywhere in the buffer.
+;; Execution status animates in the status line only, so Helix's undo
+;; history doesn't accumulate spinner-frame commits and the buffer
+;; stays clean between "start execution" and "result available".
+;; This function locates the cell's `# ─── Output ───` header and
+;; inserts the result content right below it.
 (define (update-cell-output result-json jl-path cell-index)
-  (set! *spinner-line-cache* #false)
   (set! *executing-kernel-dir* #false)
 
   ;; Stash raw plot data for the interactive chart viewer (:view-plot).
@@ -161,25 +270,16 @@
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define (get-line idx)
-    (if (< idx total-lines)
-        (text.rope->string (text.rope->line rope idx))
-        ""))
-
-  (define (find-running-marker line-idx)
-    (cond
-      [(>= line-idx total-lines) #false]
-      [(string-contains? (get-line line-idx) "Executing...") line-idx]
-      [else (find-running-marker (+ line-idx 1))]))
-
-  (define running-line (find-running-marker 0))
-
-  (when running-line
-    ;; Delete the "Executing..." line
-    (helix.goto (number->string (+ running-line 1)))
-    (helix.static.goto_line_start)
-    (helix.static.extend_to_line_bounds)
-    (helix.static.delete_selection))
+  ;; Navigate to the line immediately after this cell's output header,
+  ;; which is where all the inserted content below will land. If we
+  ;; can't find a header (e.g. the user deleted it manually between
+  ;; execute-cell and the result arriving), fall through silently —
+  ;; the inserts will still land at whatever the cursor's current
+  ;; position is, which is the best we can do.
+  (define header-line (find-output-header-for-cell rope total-lines cell-index))
+  (when header-line
+    (helix.goto (number->string (+ header-line 2)))
+    (helix.static.goto_line_start))
 
   ;; Rust kernel_poll_result flattens the response:
   ;; {"status": "ok", "stdout": "...", "output_repr": "...", ...}
@@ -204,93 +304,145 @@
        (when (not (string-suffix? stdout-text "\n"))
          (helix.static.insert_string "\n")))
 
-     ;; Check for images — if we render one, skip the text output_repr.
+     ;; Prepare the image payload BEFORE any text insertion so we know
+     ;; up front whether we'll render inline or fall through to a text
+     ;; `output_repr`. The actual `add-raw-content-with-placeholders!`
+     ;; call is deferred to the very end of this function, after all
+     ;; text has been inserted — registering earlier lets Helix's
+     ;; `apply_impl` remap the raw_content through each subsequent
+     ;; insert transaction (Assoc::After), which accumulates drift and
+     ;; pushes the image line past the footer and beyond. Deferring
+     ;; keeps the anchor at exactly the line we want.
      (define image-b64 (json-get-first-image result-json))
-     (define image-rendered #false)
+     (define image-ready #false)
+     (define image-error-msg "")
+     (define image-id 0)
+     (define image-rows 12)
+     (define image-cols 40)
+     (define image-payload "")
+     (define image-placeholder-rows "")
 
      (when (> (string-length image-b64) 0)
-       (define image-id *image-id-counter*)
-       (set! *image-id-counter* (+ *image-id-counter* 1))
-       (when (> *image-id-counter* 16777200)
-         (set! *image-id-counter* 1))
-       (define image-rows 12)
-       (define escape-seq (kitty-display-image-bytes image-b64 image-id image-rows))
+       (set! image-id (cell-index->image-id cell-index))
+       (set! image-payload (kitty-placeholder-payload image-b64 image-id))
+       (set! image-placeholder-rows
+             (kitty-placeholder-rows image-id image-cols image-rows))
+       (cond
+         [(string-starts-with? image-payload "ERROR:")
+          (set! image-error-msg
+                (string-append "# [Plot: "
+                               (number->string (quotient (string-length image-b64) 1024))
+                               "KB - render failed]\n"))]
+         [(= (string-length image-placeholder-rows) 0)
+          (set! image-error-msg
+                (string-append "# [Plot: "
+                               (number->string (quotient (string-length image-b64) 1024))
+                               "KB - grid too large for placeholder protocol]\n"))]
+         [else
+          (set! image-ready #true)]))
 
-       (if (not (string-starts-with? escape-seq "ERROR:"))
-           (begin
-             ;; Persist the image to the cache directory so it survives close/reopen.
-             (define cache-path (save-image-to-cache jl-path cell-index image-b64))
+     ;; If the image will render, emit its cache marker now so the
+     ;; marker line exists in the buffer. The marker comes before the
+     ;; footer so the visual order is: [marker] [footer] [plot grid].
+     (when image-ready
+       (define cache-path (save-image-to-cache jl-path cell-index image-b64))
+       (if (string-starts-with? cache-path "ERROR:")
+           (helix.static.insert_string "# @image [render only]\n")
+           (helix.static.insert_string (string-append "# @image " cache-path "\n"))))
 
-             ;; Insert a marker line that references the cached file.
-             (if (string-starts-with? cache-path "ERROR:")
-                 (helix.static.insert_string (string-append "# @image [render only]\n"))
-                 (helix.static.insert_string (string-append "# @image " cache-path "\n")))
-
-             ;; Render the image inline via RawContent.
-             (define char-idx (cursor-position))
-             (helix.static.add-raw-content! escape-seq image-id image-rows char-idx)
-             (set! image-rendered #true))
-           (helix.static.insert_string
-             (string-append "# [Plot: " (number->string (quotient (string-length image-b64) 1024)) "KB - render failed]\n"))))
+     ;; If the payload was malformed, surface the error text in place
+     ;; of the image.
+     (when (> (string-length image-error-msg) 0)
+       (helix.static.insert_string image-error-msg))
 
      ;; Insert output representation only if no image was rendered
-     (when (and (not image-rendered) (> (string-length output-repr) 0))
+     (when (and (not image-ready) (> (string-length output-repr) 0))
        (helix.static.insert_string (string-append output-repr "\n")))
 
      ;; Insert stderr if present
      (when (> (string-length stderr-text) 0)
        (helix.static.insert_string (string-append "# stderr: " stderr-text "\n")))
 
-     ;; Insert footer
+     ;; Insert footer — the cursor lands on the line AFTER the footer
+     ;; (because insert_string just appended a newline), which is the
+     ;; stable anchor point we want for the placeholder grid.
      (helix.static.insert_string "# ─────────────\n")
+
+     ;; Register the raw_content LAST, after every text insert is done,
+     ;; so no further transaction reshuffles its char_idx. The cursor
+     ;; sits on the line immediately after the footer, so that line's
+     ;; char position is exactly where we want the placeholder grid's
+     ;; row 0 to start drawing.
+     (when image-ready
+       (define focus (editor-focus))
+       (define doc-id (editor->doc-id focus))
+       (define rope (editor->text doc-id))
+       (define total-lines (text.rope-len-lines rope))
+       ;; `current-line-number` reads the cursor's line after the
+       ;; footer insert. If that's beyond the rope's last line (can
+       ;; happen if the cell is the last thing in the file and there's
+       ;; no trailing newline), clamp to the last valid line so
+       ;; `text.rope-line->char` doesn't panic.
+       (define anchor-line (current-line-number))
+       (define safe-line
+         (cond
+           [(< anchor-line 0) 0]
+           [(>= anchor-line total-lines) (- total-lines 1)]
+           [else anchor-line]))
+       (define char-idx (text.rope-line->char rope safe-line))
+       (debug-log
+         (string-append "execution.update-cell-output: register image cell="
+                        (number->string cell-index)
+                        " id=" (number->string image-id)
+                        " anchor-line=" (number->string safe-line)
+                        " char-idx=" (number->string char-idx)
+                        " total-lines=" (number->string total-lines)
+                        " payload-bytes=" (number->string (string-length image-payload))
+                        " rows-bytes=" (number->string (string-length image-placeholder-rows))))
+       (helix.static.add-raw-content-with-placeholders!
+         image-payload image-rows image-cols image-placeholder-rows char-idx))
 
      (helix.static.collapse_selection)
      (helix.static.commit-changes-to-history)
 
      (if has-error
          (set-status! "Cell executed with errors")
-         (if image-rendered
+         (if image-ready
              (set-status! "✓ Cell executed (with plot)")
              (set-status! "✓ Cell executed")))])
 
-  (helix.redraw))
+  (helix.redraw)
+
+  ;; NOTE: we deliberately do NOT call `render-cached-images` here. The
+  ;; fresh image was already registered via the inline `add-raw-content!`
+  ;; above; calling `render-cached-images` would walk every other marker
+  ;; in the buffer and re-register all of them, which (on stock Helix,
+  ;; where `add-raw-content!` has no dedup) causes stacked duplicates of
+  ;; every previously-rendered image. `render-cached-images` is gated on
+  ;; a per-doc guard and runs once at `document-opened`; that's enough.
+
+  ;; Rebuild concealment. The output injection above shifted char offsets
+  ;; for every byte after the output insertion point, so any cached overlays
+  ;; are now lies. Scheduling (rather than calling directly) lets the
+  ;; debounce collapse rapid-fire per-cell completions when executing many
+  ;; cells back-to-back.
+  (schedule-reconceal 50))
 
 ;;@doc
-;; Advance the spinner animation in the "Executing..." line.
-;; Uses a cached line position; falls back to a linear scan only when
-;; the cached position is stale or unset.
+;; Advance the spinner animation.
+;;
+;; The spinner only ever touches the status line — `set-status!`
+;; redraws without producing a buffer transaction, so the undo chain
+;; stays clean. An earlier implementation rewrote a `# Executing…`
+;; line in the buffer on every polling tick, which invalidated the
+;; conceal overlay cache, cluttered undo history, and turned every
+;; tick into an O(line) goto + extend + delete + insert. The buffer
+;; no longer carries any spinner text at all — `execute-cell` inserts
+;; the `# ─── Output ───` header and nothing else until the result
+;; arrives.
 (define (update-spinner-frame)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define rope (editor->text doc-id))
-  (define total-lines (text.rope-len-lines rope))
-
-  ;; Check cached position first; re-scan only if stale.
-  (define spinner-line
-    (if (and *spinner-line-cache*
-             (< *spinner-line-cache* total-lines)
-             (string-contains? (doc-get-line rope total-lines *spinner-line-cache*) "Executing..."))
-        *spinner-line-cache*
-        ;; Cache miss — scan from the end (spinner is usually near the bottom).
-        (let scan ([idx (- total-lines 1)])
-          (cond
-            [(< idx 0) #false]
-            [(string-contains? (doc-get-line rope total-lines idx) "Executing...") idx]
-            [else (scan (- idx 1))]))))
-
-  (set! *spinner-line-cache* spinner-line)
-
-  (when spinner-line
-    (define new-frame (spinner-next-frame))
-    (helix.goto (number->string (+ spinner-line 1)))
-    (helix.static.goto_line_start)
-    (helix.static.extend_to_line_bounds)
-    (helix.static.delete_selection)
-    (helix.static.insert_string (string-append "# " new-frame " Executing...\n"))
-    (helix.static.collapse_selection)
-    (helix.static.commit-changes-to-history)
-    (set-status! (string-append new-frame " Executing cell..."))
-    (helix.redraw)))
+  (define new-frame (spinner-next-frame))
+  (set-status! (string-append new-frame " Executing cell...")))
 
 ;; Helper: Poll for execution result with exponential backoff.
 ;; Starts at 100ms, grows to 500ms max.
@@ -368,11 +520,15 @@
                               (string->number cell-index-str)
                               0))
 
-      ;; Insert output header with spinner
+      ;; Insert *only* the output header into the buffer. The
+      ;; spinner animates in the status line — nothing goes into the
+      ;; buffer (and therefore the undo history) until the actual
+      ;; result arrives in `update-cell-output`. This keeps the undo
+      ;; chain free of spinner-frame noise and avoids stranding
+      ;; "Executing…" text if execution is interrupted.
       (spinner-reset)
-      (set! *spinner-line-cache* #false)
       (define spinner-frame (spinner-next-frame))
-      (helix.static.insert_string (string-append "\n\n# ─── Output ───\n# " spinner-frame " Executing...\n"))
+      (helix.static.insert_string "\n\n# ─── Output ───\n")
       (helix.static.commit-changes-to-history)
       (set-status! (string-append spinner-frame " Executing cell..."))
       (helix.redraw)
@@ -535,13 +691,16 @@
           (define output-end (find-output-end-line get-line updated-total-lines (+ output-start 1)))
           (delete-line-range output-start output-end))
 
-        ;; Position cursor and insert spinner
+        ;; Position cursor and insert the output header only. The
+        ;; spinner lives in the status line so we don't churn the
+        ;; undo history with transient spinner-frame text (see
+        ;; execute-cell for the same reasoning).
         (helix.goto (number->string cell-code-end))
         (helix.static.goto_line_end)
         (spinner-reset)
         (define spinner-frame (spinner-next-frame))
         (define executed-count (- total-count (length remaining-indices)))
-        (helix.static.insert_string (string-append "\n\n# ─── Output ───\n# " spinner-frame " Executing...\n"))
+        (helix.static.insert_string "\n\n# ─── Output ───\n")
         ;; CRITICAL: Commit changes to history immediately
         (helix.static.commit-changes-to-history)
         (set-status! (string-append spinner-frame " Executing cell " (number->string executed-count) "/" (number->string total-count) "..."))
@@ -562,34 +721,33 @@
               (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line))))))
 
 ;;@doc
-;; Handle execution error - delete spinner and show error
+;; Handle an execution error by writing the error line and footer
+;; under the cell's output header. With the spinner no longer in the
+;; buffer, there's nothing to find-and-delete first — we just
+;; position ourselves after the header and append.
 (define (handle-execution-error cell-code-end err)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define post-rope (editor->text doc-id))
   (define post-lines (text.rope-len-lines post-rope))
 
-  (define (get-post-line idx)
-    (if (< idx post-lines)
-        (text.rope->string (text.rope->line post-rope idx))
-        ""))
-
-  (define (find-spin idx lim)
-    (cond [(>= idx lim) #f]
-          [(string-contains? (get-post-line idx) "Executing...") idx]
-          [else (find-spin (+ idx 1) lim)]))
-
-  (define spin-line (find-spin cell-code-end (+ cell-code-end 20)))
-  (when spin-line
-    (helix.goto (number->string (+ spin-line 1)))
-    (helix.static.goto_line_start)
-    (helix.static.extend_to_line_bounds)
-    (helix.static.delete_selection))
+  ;; `cell-code-end` is the line index where the cell's code ended
+  ;; before we inserted the output header. The header sits one or
+  ;; two lines below that, so scan forward a bounded window to find
+  ;; it. Falling through silently (no goto) is safe: the error
+  ;; message will still land wherever the cursor is.
+  (let scan ([idx cell-code-end] [lim (+ cell-code-end 20)])
+    (cond
+      [(or (>= idx lim) (>= idx post-lines)) #false]
+      [(string-contains?
+         (text.rope->string (text.rope->line post-rope idx))
+         "─── Output ───")
+       (helix.goto (number->string (+ idx 2)))
+       (helix.static.goto_line_start)]
+      [else (scan (+ idx 1) lim)]))
 
   (helix.static.insert_string (string-append "# ERROR: " err "\n# ─────────────\n"))
-  ;; Stay at current position so output remains visible
   (helix.static.collapse_selection)
-  ;; CRITICAL: Commit changes to history immediately
   (helix.static.commit-changes-to-history)
   (helix.redraw))
 
@@ -678,40 +836,106 @@
 ;;; ---------------------------------------------------------------------------
 
 ;;@doc
-;; Scan the current buffer for `# @image <path>` markers and re-render
-;; the cached images via RawContent.  Called on file open for .jl files.
+;; Scan the current buffer for `# @image <path>` markers and re-register
+;; the cached images as Helix RawContent entries.
+;;
+;; Called exactly once per document via the `document-opened` hook. A
+;; `*rendered-image-docs*` guard short-circuits subsequent invocations
+;; for the same doc-id so we never double-register — which would cause
+;; the "stacked Matrix C" smearing on stock Helix, where the underlying
+;; `add_raw_content` has no built-in dedup.
+;;
+;; Images registered here persist on the document (keyed by ViewId) for
+;; the lifetime of the document, so buffer switches do not need to
+;; re-run this — Helix retains the entries across view focus changes.
 (define (render-cached-images)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
 
-  (when (and path (string-suffix? path ".jl"))
+  (debug-log
+    (string-append "execution.render-cached-images: entry path="
+                   (if path path "<nil>")
+                   " already-rendered="
+                   (if (and path (hash-contains? *rendered-image-docs* doc-id)) "yes" "no")))
+
+  (when (and path
+             (string-suffix? path ".jl")
+             (not (hash-contains? *rendered-image-docs* doc-id)))
+    ;; Mark the doc as rendered BEFORE we register anything, so that if
+    ;; a reentrant call reaches this point it takes the early-return.
+    (set! *rendered-image-docs* (hash-insert *rendered-image-docs* doc-id #t))
+
+    ;; Best-effort flush on Helix fork builds that expose the binding.
+    ;; On stock Helix this is a no-op; the guard above is what actually
+    ;; prevents accumulation.
+    (maybe-clear-raw-content!)
+
     (define rope (editor->text doc-id))
     (define total-lines (text.rope-len-lines rope))
+    (define registered-count 0)
 
-    (let loop ([line-idx 0] [rendered 0])
+    (let loop ([line-idx 0])
       (when (< line-idx total-lines)
         (define line (doc-get-line rope total-lines line-idx))
-        (if (string-starts-with? line "# @image ")
-            (let ()
-              (define rel-path (string-trim (substring line 9 (string-length line))))
-              (define image-b64 (load-image-from-cache path rel-path))
+        (cond
+          [(string-starts-with? line "# @image ")
+           (define rel-path (string-trim
+                             (substring line 9 (string-length line))))
+           (define cell-index (extract-cell-index-from-path rel-path))
+           (define image-b64 (load-image-from-cache path rel-path))
+           (cond
+             [(and cell-index (> (string-length image-b64) 0))
+              (define image-id (cell-index->image-id cell-index))
+              (define image-rows 12)
+              (define image-cols 40)
+              (define payload (kitty-placeholder-payload image-b64 image-id))
+              (define placeholder-rows (kitty-placeholder-rows image-id image-cols image-rows))
+              ;; Anchor to the line AFTER the marker, not the marker
+              ;; line itself — matches the live-execution anchoring in
+              ;; update-cell-output. `line-idx + 1` resolved via the
+              ;; rope gives us the char position where the placeholder
+              ;; grid should start drawing.
+              (define target-line
+                (if (< (+ line-idx 1) total-lines)
+                    (+ line-idx 1)
+                    line-idx))
+              (define char-pos (text.rope-line->char rope target-line))
+              (cond
+                [(string-starts-with? payload "ERROR:")
+                 (debug-log
+                   (string-append "execution.render-cached-images: SKIP cell="
+                                  (number->string cell-index)
+                                  " reason=payload-error path=" rel-path))]
+                [(= (string-length placeholder-rows) 0)
+                 (debug-log
+                   (string-append "execution.render-cached-images: SKIP cell="
+                                  (number->string cell-index)
+                                  " reason=grid-too-large"))]
+                [else
+                 (debug-log
+                   (string-append "execution.render-cached-images: REGISTER cell="
+                                  (number->string cell-index)
+                                  " id=" (number->string image-id)
+                                  " marker-line=" (number->string line-idx)
+                                  " target-line=" (number->string target-line)
+                                  " char-pos=" (number->string char-pos)
+                                  " payload-bytes=" (number->string (string-length payload))
+                                  " rows-bytes=" (number->string (string-length placeholder-rows))))
+                 (helix.static.add-raw-content-with-placeholders!
+                   payload image-rows image-cols placeholder-rows char-pos)
+                 (set! registered-count (+ registered-count 1))])
+              (loop (+ line-idx 1))]
+             [else
+              (debug-log
+                (string-append "execution.render-cached-images: SKIP marker-line="
+                               (number->string line-idx)
+                               " reason=" (if cell-index "cache-empty" "no-cell-index")
+                               " rel-path=" rel-path))
+              (loop (+ line-idx 1))])]
+          [else (loop (+ line-idx 1))])))
 
-              (if (> (string-length image-b64) 0)
-                  (let ()
-                    (define image-id *image-id-counter*)
-                    (set! *image-id-counter* (+ *image-id-counter* 1))
-                    (when (> *image-id-counter* 16777200)
-                      (set! *image-id-counter* 1))
-                    (define image-rows 12)
-                    (define escape-seq (kitty-display-image-bytes image-b64 image-id image-rows))
-
-                    (when (not (string-starts-with? escape-seq "ERROR:"))
-                      (define char-pos (text.rope-line->char rope line-idx))
-                      (helix.static.add-raw-content! escape-seq image-id image-rows char-pos))
-
-                    (loop (+ line-idx 1) (+ rendered 1)))
-                  ;; Cache file missing — skip silently.
-                  (loop (+ line-idx 1) rendered)))
-            (loop (+ line-idx 1) rendered))))))
+    (debug-log
+      (string-append "execution.render-cached-images: done path=" path
+                     " registered=" (number->string registered-count)))))
 

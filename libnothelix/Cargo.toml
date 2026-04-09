@@ -8,6 +8,7 @@ name = "nothelix"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"
 which = "6.0"
@@ -17,7 +18,7 @@ nix = { version = "0.29", features = ["signal", "process"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 # Steel FFI bindings
-steel-core = { git = "https://github.com/mattwparas/steel.git", features = ["dylibs", "sync"] }
+steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "605d490c07ae6937d532d5a994920b4dab3016ad", features = ["dylibs", "sync"] }
 abi_stable = "0.11"
 
 [dev-dependencies]

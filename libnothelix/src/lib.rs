@@ -7,6 +7,7 @@ mod chart;
 mod graphics;
 mod json_utils;
 mod kernel;
+mod kitty_placeholder;
 mod lsp;
 mod notebook;
 mod unicode;
@@ -57,6 +58,26 @@ fn build_module() -> FFIModule {
     m.register_fn(
         "kitty-display-image-bytes",
         graphics::kitty_display_image_bytes,
+    );
+
+    // ── Kitty Unicode placeholder protocol (virtual placement) ───────────────
+    // Direct placement (`a=T` in graphics.rs) pins images to absolute terminal
+    // cells, which breaks as soon as the buffer scrolls. Virtual placement
+    // transmits the image once under a stable id (`U=1`), then the plugin
+    // writes a rectangular grid of placeholder cells into the text buffer;
+    // Kitty substitutes the image tiles wherever those cells are drawn, so
+    // scrolling and edits move the image naturally without smear artefacts.
+    m.register_fn(
+        "kitty-placeholder-payload",
+        kitty_placeholder::kitty_placeholder_payload,
+    );
+    m.register_fn(
+        "kitty-placeholder-rows",
+        kitty_placeholder::kitty_placeholder_rows,
+    );
+    m.register_fn(
+        "kitty-placeholder-max-dim",
+        kitty_placeholder::kitty_placeholder_max_dim,
     );
 
     // ── File I/O & utilities ─────────────────────────────────────────────────

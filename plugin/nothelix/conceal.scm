@@ -12,129 +12,22 @@
 (require-builtin helix/core/text as text.)
 (require "helix/ext.scm")
 (require "helix/misc.scm")
+(require "string-utils.scm")
+(require "conceal-state.scm")
+(require "json-utils.scm")
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           compute-conceal-overlays-ffi
-                          compute-conceal-overlays-for-comments
-                          latex-overlays))
+                          compute-conceal-overlays-for-comments))
 
 (provide compute-conceal-overlays compute-and-apply-conceal-async
-         find-math-regions build-overlays-for-region parse-overlay-json)
-
-;;; ─── Math region scanner (kept for external use) ─────────────────────────────
-
-;;;@doc
-;;; Scan text for $...$ and $$...$$ regions.
-;;; Returns a list of (start . end) pairs for the CONTENTS
-;;; (not including the delimiters themselves).
-(define (find-math-regions text)
-  (define len (string-length text))
-  (let loop ([i 0] [regions '()])
-    (cond
-      [(>= i len) (reverse regions)]
-      [(and (char=? (string-ref text i) #\$)
-            (< (+ i 1) len)
-            (char=? (string-ref text (+ i 1)) #\$))
-       (let inner ([j (+ i 2)])
-         (cond
-           [(>= j (- len 1)) (reverse regions)]
-           [(and (char=? (string-ref text j) #\$)
-                 (char=? (string-ref text (+ j 1)) #\$))
-            (loop (+ j 2) (cons (cons (+ i 2) j) regions))]
-           [else (inner (+ j 1))]))]
-      [(char=? (string-ref text i) #\$)
-       (let inner ([j (+ i 1)])
-         (cond
-           [(>= j len) (reverse regions)]
-           [(char=? (string-ref text j) #\$)
-            (loop (+ j 1) (cons (cons (+ i 1) j) regions))]
-           [else (inner (+ j 1))]))]
-      [(and (char=? (string-ref text i) #\\)
-            (< (+ i 1) len)
-            (char=? (string-ref text (+ i 1)) #\())
-       (let inner ([j (+ i 2)])
-         (cond
-           [(>= j (- len 1)) (reverse regions)]
-           [(and (char=? (string-ref text j) #\\)
-                 (char=? (string-ref text (+ j 1)) #\)))
-            (loop (+ j 2) (cons (cons (+ i 2) j) regions))]
-           [else (inner (+ j 1))]))]
-      [else (loop (+ i 1) regions)])))
-
-;;; ─── Overlay builder (kept for external use) ────────────────────────────────
-
-;;;@doc
-;;; Parse JSON overlay data from the Rust FFI and convert to Helix overlay pairs.
-;;; region-start is the char offset of the math region within the document.
-(define (build-overlays-for-region full-text region-start region-end)
-  (define math-text (substring full-text region-start region-end))
-  (define json-str (latex-overlays math-text))
-
-  (let parse-loop ([pos 0] [result '()])
-    (cond
-      [(>= pos (string-length json-str)) (reverse result)]
-      [(char=? (string-ref json-str pos) #\{)
-       (let* ([offset-key-pos (+ pos 1)]
-              [colon1-pos (find-char json-str #\: offset-key-pos)]
-              [offset-start (skip-whitespace json-str (+ colon1-pos 1))]
-              [offset-end (find-non-digit json-str offset-start)]
-              [offset-val (string->number (substring json-str offset-start offset-end))]
-              [colon2-pos (find-char json-str #\: offset-end)]
-              [quote1-pos (find-char json-str #\" (+ colon2-pos 1))]
-              [replacement-str (extract-json-string json-str (+ quote1-pos 1))]
-              [after-str (+ quote1-pos 1 (json-string-raw-length json-str (+ quote1-pos 1)) 1)]
-              [close-pos (find-char json-str #\} after-str)])
-         (parse-loop (+ close-pos 1)
-                     (cons (cons (+ region-start offset-val) replacement-str)
-                           result)))]
-      [else (parse-loop (+ pos 1) result)])))
-
-;;; ─── Minimal JSON helpers (kept for build-overlays-for-region) ──────────────
-
-(define (find-char str ch start)
-  (let loop ([i start])
-    (cond
-      [(>= i (string-length str)) i]
-      [(char=? (string-ref str i) ch) i]
-      [else (loop (+ i 1))])))
-
-(define (skip-whitespace str start)
-  (let loop ([i start])
-    (cond
-      [(>= i (string-length str)) i]
-      [(or (char=? (string-ref str i) #\space)
-           (char=? (string-ref str i) #\tab)) (loop (+ i 1))]
-      [else i])))
-
-(define (find-non-digit str start)
-  (let loop ([i start])
-    (cond
-      [(>= i (string-length str)) i]
-      [(and (char>=? (string-ref str i) #\0)
-            (char<=? (string-ref str i) #\9)) (loop (+ i 1))]
-      [(char=? (string-ref str i) #\-) (loop (+ i 1))]
-      [else i])))
-
-(define (extract-json-string str start)
-  (let loop ([i start] [chars '()])
-    (cond
-      [(>= i (string-length str)) (list->string (reverse chars))]
-      [(and (char=? (string-ref str i) #\\)
-            (< (+ i 1) (string-length str)))
-       (loop (+ i 2) (cons (string-ref str (+ i 1)) chars))]
-      [(char=? (string-ref str i) #\") (list->string (reverse chars))]
-      [else (loop (+ i 1) (cons (string-ref str i) chars))])))
-
-(define (json-string-raw-length str start)
-  (let loop ([i start] [len 0])
-    (cond
-      [(>= i (string-length str)) len]
-      [(and (char=? (string-ref str i) #\\)
-            (< (+ i 1) (string-length str)))
-       (loop (+ i 2) (+ len 2))]
-      [(char=? (string-ref str i) #\") len]
-      [else (loop (+ i 1) (+ len 1))])))
+         parse-overlay-json
+         file-has-conceal-extension?
+         conceal-math!
+         clear-conceal!
+         apply-conceal-for-cursor!
+         schedule-reconceal)
 
 ;;; ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -148,14 +41,44 @@
   (define rope (editor->text doc-id))
   (define text (text.rope->string rope))
   (define path (editor-document->path doc-id))
-  (define json-str
-    (if (and path (ends-with-jl? path))
-        (compute-conceal-overlays-for-comments text)
-        (compute-conceal-overlays-ffi text)))
-  (parse-overlay-json json-str))
+  (if (and path (ends-with-jl? path))
+      ;; .jl: per-line comment scanning, returns tab-separated format
+      (parse-tsv-overlays (compute-conceal-overlays-for-comments text))
+      ;; Other files: full-document scan, returns JSON
+      (parse-overlay-json (compute-conceal-overlays-ffi text))))
+
+;;;@doc
+;;; Parse tab-separated overlay format: "offset\\treplacement\\n..."
+(define (parse-tsv-overlays tsv-str)
+  (if (equal? tsv-str "")
+      '()
+      (let loop ([lines (string-split tsv-str "\n")] [result '()])
+        (if (null? lines)
+            (reverse result)
+            (let ([line (car lines)])
+              (if (equal? line "")
+                  (loop (cdr lines) result)
+                  (let ([tab-pos (find-tab line)])
+                    (if (not tab-pos)
+                        (loop (cdr lines) result)
+                        (let ([offset (string->number (substring line 0 tab-pos))]
+                              [replacement (substring line (+ tab-pos 1) (string-length line))])
+                          (loop (cdr lines)
+                                (cons (cons offset replacement) result)))))))))))
+
+(define (find-tab str)
+  (let loop ([i 0])
+    (cond
+      [(>= i (string-length str)) #false]
+      [(char=? (string-ref str i) #\tab) i]
+      [else (loop (+ i 1))])))
 
 ;;; Parse the JSON overlay string into a list of (offset . replacement) pairs.
 ;;; This is pure computation — safe to run on any thread.
+;;;
+;;; Input format is the serde_json output of `Vec<Overlay>`, i.e.
+;;;   `[{"offset":N,"replacement":"X"},...]`. We walk the string with
+;;;   position indices and lean on json-utils for the shared primitives.
 (define (parse-overlay-json json-str)
   (if (string=? json-str "[]")
       '()
@@ -163,15 +86,15 @@
         (cond
           [(>= pos (string-length json-str)) (reverse result)]
           [(char=? (string-ref json-str pos) #\{)
-           (let* ([colon1-pos (find-char json-str #\: (+ pos 1))]
-                  [offset-start (skip-whitespace json-str (+ colon1-pos 1))]
-                  [offset-end (find-non-digit json-str offset-start)]
+           (let* ([colon1-pos (json-find-char json-str #\: (+ pos 1))]
+                  [offset-start (json-skip-whitespace json-str (+ colon1-pos 1))]
+                  [offset-end (json-find-non-digit json-str offset-start)]
                   [offset-val (string->number (substring json-str offset-start offset-end))]
-                  [colon2-pos (find-char json-str #\: offset-end)]
-                  [quote1-pos (find-char json-str #\" (+ colon2-pos 1))]
-                  [replacement-str (extract-json-string json-str (+ quote1-pos 1))]
+                  [colon2-pos (json-find-char json-str #\: offset-end)]
+                  [quote1-pos (json-find-char json-str #\" (+ colon2-pos 1))]
+                  [replacement-str (json-extract-string json-str (+ quote1-pos 1))]
                   [after-str (+ quote1-pos 1 (json-string-raw-length json-str (+ quote1-pos 1)) 1)]
-                  [close-pos (find-char json-str #\} after-str)])
+                  [close-pos (json-find-char json-str #\} after-str)])
              (parse-loop (+ close-pos 1)
                          (cons (cons offset-val replacement-str) result)))]
           [else (parse-loop (+ pos 1) result)]))))
@@ -214,3 +137,100 @@
   (define len (string-length path))
   (and (>= len 3)
        (string=? (substring path (- len 3) len) ".jl")))
+
+;;; ─── Conceal orchestration ───────────────────────────────────────────────────
+;;;
+;;; The orchestration layer owns the "when should conceal run" logic and
+;;; the interaction with the fingerprinted cache in conceal-state.scm.
+;;; Every public function here is a safe entry point for hooks and commands —
+;;; it validates the document fingerprint and fails closed rather than
+;;; apply stale char offsets.
+
+(define *conceal-extensions* '("md" "markdown" "tex" "jl" "qmd" "rmd"))
+
+(define (ends-with? str suffix)
+  (define slen (string-length suffix))
+  (define tlen (string-length str))
+  (and (>= tlen slen)
+       (string=? (substring str (- tlen slen) tlen) suffix)))
+
+;;@doc
+;; #true if the file extension is one that should get LaTeX concealment.
+(define (file-has-conceal-extension? path)
+  (and path
+       (let loop ((exts *conceal-extensions*))
+         (cond
+           [(null? exts) #false]
+           [(ends-with? path (string-append "." (car exts))) #true]
+           [else (loop (cdr exts))]))))
+
+;;@doc
+;; Compute and apply conceal overlays for the current buffer synchronously.
+;; Tags the cache with the current document fingerprint so later cursor
+;; moves can validate it.
+(define (conceal-math!)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define overlays (compute-conceal-overlays))
+  (conceal-cache-update! doc-id overlays)
+  (cond
+    [(null? overlays)
+     (clear-overlays!)]
+    [else
+     (apply-conceal-for-cursor!)]))
+
+;;@doc
+;; Drop both the cache and the view overlays.
+(define (clear-conceal!)
+  (conceal-cache-clear!)
+  (clear-overlays!))
+
+;;@doc
+;; Re-filter the cached overlays to exclude the cursor's current line.
+;; Fails closed: if the cache fingerprint no longer matches the current
+;; document, the view overlays are cleared and we wait for the next
+;; reconceal to rebuild them.
+(define (apply-conceal-for-cursor!)
+  (cond
+    [(conceal-cache-empty?) #f]
+    [else
+     (define fp (conceal-fingerprint-current))
+     (cond
+       [(not (conceal-fingerprint-matches? fp))
+        (clear-overlays!)]
+       [else
+        (define doc-id (car fp))
+        (define rope (editor->text doc-id))
+        (define cursor-pos (cursor-position))
+        (define cursor-line (text.rope-char->line rope cursor-pos))
+        (define line-start-char (text.rope-line->char rope cursor-line))
+        (define line-end-char
+          (if (< (+ cursor-line 1) (text.rope-len-lines rope))
+              (text.rope-line->char rope (+ cursor-line 1))
+              (text.rope-len-chars rope)))
+        (define cached (conceal-cache-overlays))
+        (define filtered
+          (filter (lambda (pair)
+                    (define off (car pair))
+                    (or (< off line-start-char)
+                        (>= off line-end-char)))
+                  cached))
+        (set-overlays! filtered)])]))
+
+;; Debounce generation counter. Every call to schedule-reconceal bumps it so
+;; only the most recent scheduled callback actually runs.
+(define *reconceal-generation* 0)
+
+;;@doc
+;; Schedule a reconceal after `delay-ms` milliseconds, collapsing rapid
+;; successive calls via a generation counter. Safe to call from hooks that
+;; fire many times in quick succession.
+(define (schedule-reconceal delay-ms)
+  (set! *reconceal-generation* (+ *reconceal-generation* 1))
+  (define my-gen *reconceal-generation*)
+  (enqueue-thread-local-callback-with-delay delay-ms
+    (lambda ()
+      (when (= my-gen *reconceal-generation*)
+        (define path (editor-document->path (editor->doc-id (editor-focus))))
+        (when (file-has-conceal-extension? path)
+          (conceal-math!))))))

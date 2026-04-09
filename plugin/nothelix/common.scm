@@ -41,7 +41,13 @@
 
 ;;@doc
 ;; Return #true if the line at `line-idx` in the rope is a cell marker.
-;; Convenience wrapper that fetches the line text first.
+;; Checks the prefix directly on the rope slice to avoid allocating a String
+;; per iteration — rope-starts-with? does the check without materialising the
+;; line contents.
 ;; (-> rope? integer? integer? boolean?)
 (define (cell-marker-line? rope total-lines line-idx)
-  (cell-marker? (doc-get-line rope total-lines line-idx)))
+  (if (< line-idx total-lines)
+      (let ([line (text.rope->line rope line-idx)])
+        (or (text.rope-starts-with? line "@cell ")
+            (text.rope-starts-with? line "@markdown ")))
+      #false))

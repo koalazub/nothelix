@@ -24,15 +24,10 @@
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define (get-line line-idx)
-    (if (< line-idx total-lines)
-        (text.rope->string (text.rope->line rope line-idx))
-        ""))
-
   (define (find-cells line-idx acc)
     (if (>= line-idx total-lines)
         (reverse acc)
-        (let ([line (get-line line-idx)])
+        (let ([line (doc-get-line rope total-lines line-idx)])
           (cond
             [(string-starts-with? line "@cell ")
              (find-cells (+ line-idx 1) (cons (list line-idx "Code" line) acc))]
@@ -51,15 +46,10 @@
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define (get-line line-idx)
-    (if (< line-idx total-lines)
-        (text.rope->string (text.rope->line rope line-idx))
-        ""))
-
   (let loop ([idx (+ line-num 1)] [collected 0] [lines '()])
     (if (or (>= idx total-lines) (>= collected max-lines))
         (reverse lines)
-        (let ([line (get-line idx)])
+        (let ([line (doc-get-line rope total-lines idx)])
           (if (or (string-starts-with? line "@cell ")
                   (string-starts-with? line "@markdown ")
                   (string-starts-with? line "# ═══")

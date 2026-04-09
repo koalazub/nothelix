@@ -6,7 +6,7 @@
 //! # ═══ Nothelix Notebook: /full/path/to/notebook.ipynb ═══
 //! # Cells: N
 //!
-//! @cell 0 julia
+//! @cell 0 :julia
 //! <code>
 //!
 //! @markdown 1
@@ -209,7 +209,7 @@ pub fn notebook_convert_sync(path: String) -> String {
                 out.push('\n');
             }
         } else {
-            out.push_str(&format!("@cell {idx} {lang}\n"));
+            out.push_str(&format!("@cell {idx} :{lang}\n"));
             out.push_str(&source);
             if !source.ends_with('\n') {
                 out.push('\n');
@@ -425,10 +425,10 @@ mod tests {
     fn convert_sync_produces_cell_markers() {
         let result = notebook_convert_sync(fixture_path("simple.ipynb"));
         assert!(!result.starts_with("ERROR"), "Conversion failed: {result}");
-        assert!(result.contains("@cell 0 julia"));
-        assert!(result.contains("@cell 1 julia"));
+        assert!(result.contains("@cell 0 :julia"));
+        assert!(result.contains("@cell 1 :julia"));
         assert!(result.contains("@markdown 2"));
-        assert!(result.contains("@cell 3 julia"));
+        assert!(result.contains("@cell 3 :julia"));
         assert!(result.contains("using Plots"));
         assert!(result.contains("plot(x, y)"));
     }
