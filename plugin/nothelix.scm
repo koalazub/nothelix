@@ -328,6 +328,13 @@
 ;; the lifetime of the view, so this hook only needs to refresh
 ;; concealment on buffer switch.
 (define (nothelix-post-command-hook command-name)
+  ;; Every non-quit command gets the image-marker sync check. It's
+  ;; cheap (one buffer scan + count compare) and only escalates to a
+  ;; full re-register when the `# @image` line count actually changed,
+  ;; so typing stays snappy and backspacing a marker line really does
+  ;; make the image disappear.
+  (when (not (member command-name *quit-commands*))
+    (sync-images-if-markers-changed!))
   (cond
     [(member command-name *quit-commands*)
      (stop-all-kernels)]
@@ -344,6 +351,8 @@
      ;; get swept up here so the file on disk stays tidy between
      ;; sessions. `:sync-to-ipynb` also drops into this branch
      ;; indirectly because `renumber-cells!` is idempotent.
+     ;; `renumber-cells!` itself now saves and restores the cursor
+     ;; so `:w` no longer flings the view to the top of the file.
      (renumber-cells!)]
     [(member command-name *mutating-commands*)
      ;; Cache is stale from the moment the command started running.
@@ -393,6 +402,10 @@
   (lambda (char)
     (define path (editor-document->path (editor->doc-id (editor-focus))))
     (maybe-expand-cell-marker! char)
+    ;; Marker-count sync on insert. The check is O(lines) and is
+    ;; a no-op when nothing about the `# @image` markers changed,
+    ;; so rapid typing doesn't pay the full re-register cost.
+    (sync-images-if-markers-changed!)
     (when (file-has-conceal-extension? path)
       (schedule-reconceal 400))))
 

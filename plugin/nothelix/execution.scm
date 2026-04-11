@@ -72,6 +72,8 @@
          execute-cells-above
          cancel-cell
          render-cached-images
+         sync-images-to-markers!
+         sync-images-if-markers-changed!
          find-cell-start-line
          find-cell-code-end
          find-output-start
@@ -224,6 +226,77 @@
   (with-handler
     (lambda (_) #f)
     (eval '(helix.static.clear-raw-content!))))
+
+;; Cache of `# @image …` marker-line counts, keyed by doc id. The
+;; `sync-images-if-markers-changed!` hook compares the buffer's
+;; current count against this cache on every mutation and only does
+;; the expensive re-register pass when the number actually changed.
+;; Typical typing leaves the count alone so the hook is O(lines) for
+;; the scan and O(1) for the comparison.
+(define *image-marker-counts* (hash))
+
+(define (count-image-markers rope total-lines)
+  (let loop ([line-idx 0] [count 0])
+    (if (>= line-idx total-lines)
+        count
+        (let ([line (doc-get-line rope total-lines line-idx)])
+          (loop (+ line-idx 1)
+                (if (string-starts-with? line "# @image ")
+                    (+ count 1)
+                    count))))))
+
+;;@doc
+;; Clear every RawContent entry on the focused view and then re-run
+;; `render-cached-images` so only images whose `# @image` marker
+;; lines still exist in the buffer end up registered. The two-step
+;; "clear then re-register" pattern is how we bind an image's
+;; lifetime to its marker line: a marker deleted by backspacing (or
+;; any other edit) simply doesn't make it back into the RawContent
+;; set on the next sync.
+;;
+;; We also clear the per-doc entry from `*rendered-image-docs*` so
+;; `render-cached-images` doesn't short-circuit on its "already
+;; rendered" guard — that guard exists to prevent duplicate
+;; registration on buffer focus changes, which is a different
+;; problem than a deliberate re-sync.
+(define (sync-images-to-markers!)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (when (and path (string-suffix? path ".jl"))
+    (maybe-clear-raw-content!)
+    (set! *rendered-image-docs* (hash-remove *rendered-image-docs* doc-id))
+    (render-cached-images)))
+
+;;@doc
+;; Cheap wrapper that only re-syncs when the `# @image` marker line
+;; count has changed since the last sync. Called from
+;; `post-insert-char` and `post-command` — when you're just typing a
+;; word mid-file the count check returns immediately and no image
+;; re-registration happens; when you delete an `# @image` line
+;; (via backspace, `xd`, `delete-selection`, etc.) the count drops
+;; and we run the full sync.
+(define (sync-images-if-markers-changed!)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (when (and path (string-suffix? path ".jl"))
+    (define rope (editor->text doc-id))
+    (define total-lines (text.rope-len-lines rope))
+    (define current-count (count-image-markers rope total-lines))
+    (define prev-count
+      (if (hash-contains? *image-marker-counts* doc-id)
+          (hash-get *image-marker-counts* doc-id)
+          -1))
+    (when (not (= current-count prev-count))
+      (set! *image-marker-counts*
+            (hash-insert *image-marker-counts* doc-id current-count))
+      (debug-log
+        (string-append "execution.sync: marker count "
+                       (number->string prev-count) " → "
+                       (number->string current-count)
+                       " — re-registering images"))
+      (sync-images-to-markers!))))
 
 ;; Extract the integer N from a `.nothelix/images/cell-N.png` path.
 ;; Returns `#false` if the path doesn't match the expected format.

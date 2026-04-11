@@ -328,7 +328,13 @@
 ;; friends) and `:sync-to-ipynb`, and also exposed as an explicit
 ;; `:renumber-cells` command.
 ;;
-;; Iterates markers in REVERSE line order so that each in-place line
+;; Saves and restores the cursor's (line, column) before/after the
+;; edit pass so `:write` / `:fmt` can't fling the cursor back to the
+;; top of the file. Also short-circuits when every marker is already
+;; at its correct index so repeated saves on an unchanged buffer
+;; don't churn any transactions at all.
+;;
+;; Iterates markers in REVERSE line order so each in-place line
 ;; replacement doesn't shift the positions of later markers.
 (define (renumber-cells!)
   (define focus (editor-focus))
@@ -337,6 +343,18 @@
   (when (notebook-file? path)
     (define rope (editor->text doc-id))
     (define total-lines (text.rope-len-lines rope))
+
+    ;; Snapshot the cursor (line + column) up front so we can put it
+    ;; back after the rewrites land. Without this the user's cursor
+    ;; ends up at the start of whichever marker line was rewritten
+    ;; last — typically near the top of the file for a save over a
+    ;; many-cell notebook, which feels like the editor randomly
+    ;; scrolling to top on every `:w`.
+    (define saved-char (cursor-position))
+    (define saved-line (text.rope-char->line rope saved-char))
+    (define saved-line-start (text.rope-line->char rope saved-line))
+    (define saved-col (- saved-char saved-line-start))
+
     ;; First pass: collect (line-idx, kind, rest-of-line) triples
     ;; in forward order so we can compute the final 0-indexed sequence.
     (define markers
@@ -362,6 +380,10 @@
                    [line-idx (car m)]
                    [kind (cadr m)]
                    [current (caddr m)]
+                   [current-trimmed
+                    (if (string-suffix? current "\n")
+                        (substring current 0 (- (string-length current) 1))
+                        current)]
                    [new-line
                     (case kind
                       [(code)
@@ -390,22 +412,51 @@
                        (string-append "@cell " (number->string i) rest-after-digits)]
                       [(md)
                        (string-append "@markdown " (number->string i))])])
-              (loop (cdr ms) (+ i 1) (cons (list line-idx new-line) acc))))))
-    ;; Apply in reverse order.
-    (for-each
-      (lambda (entry)
-        (define line-idx (car entry))
-        (define new-line (cadr entry))
-        (helix.goto (number->string (+ line-idx 1)))
-        (helix.static.goto_line_start)
-        (helix.static.extend_to_line_bounds)
-        (helix.static.delete_selection)
-        (helix.static.insert_string (string-append new-line "\n")))
-      (reverse indexed))
-    (helix.static.commit-changes-to-history)
-    (debug-log
-      (string-append "scaffold.renumber: total="
-                     (number->string (length indexed))))))
+              (loop (cdr ms) (+ i 1)
+                    ;; Only queue the line for rewrite if the new
+                    ;; content actually differs from what's there —
+                    ;; skip no-ops so repeated saves don't touch the
+                    ;; buffer.
+                    (if (string=? new-line current-trimmed)
+                        acc
+                        (cons (list line-idx new-line) acc)))))))
+
+    (cond
+      [(null? indexed)
+       ;; Nothing to do — every marker is already at its correct
+       ;; index. Don't touch the buffer, don't move the cursor.
+       (debug-log "scaffold.renumber: nothing to renumber")]
+      [else
+       ;; Apply the rewrites in reverse line order so earlier edits
+       ;; don't shift later line indices.
+       (for-each
+         (lambda (entry)
+           (define line-idx (car entry))
+           (define new-line (cadr entry))
+           (helix.goto (number->string (+ line-idx 1)))
+           (helix.static.goto_line_start)
+           (helix.static.extend_to_line_bounds)
+           (helix.static.delete_selection)
+           (helix.static.insert_string (string-append new-line "\n")))
+         (reverse indexed))
+       (helix.static.commit-changes-to-history)
+
+       ;; Restore the cursor to where it was before we started. The
+       ;; line number is still valid because we only rewrote marker
+       ;; lines in place (no line insertions or deletions), and
+       ;; columns within non-marker lines are untouched.
+       (helix.goto (number->string (+ saved-line 1)))
+       (helix.static.goto_line_start)
+       (let loop ([i 0])
+         (when (< i saved-col)
+           (helix.static.move_char_right)
+           (loop (+ i 1))))
+
+       (debug-log
+         (string-append "scaffold.renumber: rewrote="
+                        (number->string (length indexed))
+                        " restored-line=" (number->string saved-line)
+                        " restored-col=" (number->string saved-col)))])))
 
 ;; ─── New-notebook scaffold ────────────────────────────────────────────────────
 
