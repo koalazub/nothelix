@@ -251,17 +251,25 @@
          [x (ceiling (max 0 (- (ceiling (/ rect-width 2)) (floor (/ width 2)))))]
          [y (ceiling (max 0 (- (ceiling (/ rect-height 2)) (floor (/ height 2)))))]
          [list-area (area x y width height)]
-         [popup-style (style)]
-         [active-style (style)])
+         ;; Pull styles from the active Helix theme via the raw
+         ;; built-in `theme-scope` (takes the Context as its first
+         ;; arg). Using `(style)` — the empty style — would render
+         ;; as a black block regardless of the user's colourscheme,
+         ;; which is what made the `<space>nn` popup look
+         ;; permanently dark even in light themes.
+         [popup-style (theme-scope *helix.cx* "ui.popup")]
+         [text-style (theme-scope *helix.cx* "ui.text")]
+         [selected-style (theme-scope *helix.cx* "ui.menu.selected")])
     (buffer/clear buf list-area)
-    (block/render buf list-area (make-block popup-style (style) "all" "plain"))
-    (frame-set-string! buf (+ x 2) y "New cell" active-style)
+    (block/render buf list-area (make-block popup-style popup-style "all" "plain"))
+    (frame-set-string! buf (+ x 2) y "New cell" text-style)
     (let loop ([i 0])
       (when (< i (length items))
         (let* ([label (list-ref items i)]
                [marker (if (= i selected) "> " "  ")]
+               [row-style (if (= i selected) selected-style text-style)]
                [text (string-append marker label)])
-          (frame-set-string! buf (+ x 2) (+ y i 1) text active-style)
+          (frame-set-string! buf (+ x 2) (+ y i 1) text row-style)
           (loop (+ i 1)))))))
 
 (define (cell-type-picker-commit state)

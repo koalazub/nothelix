@@ -15,8 +15,14 @@
 (require "string-utils.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
+;; `require-builtin helix/components` pulls in the raw Rust-side
+;; names (area, buffer/clear, block/render, frame-set-string!,
+;; new-component!, push-component!, theme-scope, …). Those names
+;; take the Context as their first argument — calls to them have
+;; to pass `*helix.cx*` explicitly. We do NOT also require the
+;; `helix/components.scm` cog here because its wrapper for
+;; `theme-scope` has the same name and would collide in resolution.
 (require-builtin helix/components)
-(require "helix/components.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
@@ -118,21 +124,23 @@
               (reverse lines)
               (loop (+ idx 1) (+ collected 1) (cons line lines)))))))
 
-;; Pull styles from the active Helix theme. Three scopes used:
+;; Pull styles from the active Helix theme. Four scopes used:
 ;;
 ;;   ui.popup         — background of the floating popup
 ;;   ui.text          — normal foreground for list items and preview
+;;   ui.menu          — menu row fill (fallback when ui.popup is empty)
 ;;   ui.menu.selected — highlighted (currently-focused) list row
 ;;
-;; `theme-scope` comes from `helix/components.scm` (the cog
-;; wrapper), which injects `*helix.cx*` for us. Each call returns a
-;; `Style` with whatever the user's colourscheme has defined and
-;; falls back gracefully on themes that don't define those scopes.
+;; `theme-scope` is the raw built-in from `require-builtin
+;; helix/components`, which takes the Context as its first arg.
+;; Each call returns a `Style` with whatever the user's
+;; colourscheme has defined for that scope and falls back
+;; gracefully on themes that don't define it.
 (define (picker-theme-styles)
   (list
-    (theme-scope "ui.popup")
-    (theme-scope "ui.text")
-    (theme-scope "ui.menu.selected")))
+    (theme-scope *helix.cx* "ui.popup")
+    (theme-scope *helix.cx* "ui.text")
+    (theme-scope *helix.cx* "ui.menu.selected")))
 
 (define (render-cell-picker state rect buf)
   (let* ([cells (CellPickerState-cells state)]

@@ -356,6 +356,63 @@
          "\n")
        "\n")]))
 
+;; ─── Cursor preservation around cell execution ───────────────────────────────
+;;
+;; `:execute-cell` and `:execute-all-cells` need to mutate the
+;; buffer (insert the output header, the result body, the footer,
+;; and possibly 12 blank lines for an inline image) but the user's
+;; cursor should end up right back where it was when they pressed
+;; the keybinding, not wherever the last insert happened to leave
+;; it. The old code left the cursor parked after the footer, which
+;; felt like the editor teleporting you away from your work.
+;;
+;; We stash `(line, col)` pairs keyed by doc-id so concurrent
+;; executions on different documents don't clobber each other. The
+;; save happens *before* any buffer mutation so the position we're
+;; capturing is the user's true cursor, not a mid-insert intermediate.
+;; The restore walks back to that exact spot after `update-cell-output`
+;; has finished all its inserts.
+(define *pending-cursor-restore* (hash))
+
+(define (save-cursor-for-restore! doc-id)
+  (define rope (editor->text doc-id))
+  (define pos (cursor-position))
+  (define line (text.rope-char->line rope pos))
+  (define line-start (text.rope-line->char rope line))
+  (define col (- pos line-start))
+  (set! *pending-cursor-restore*
+        (hash-insert *pending-cursor-restore* doc-id (cons line col))))
+
+(define (restore-cursor-for! doc-id)
+  (when (hash-contains? *pending-cursor-restore* doc-id)
+    (define entry (hash-get *pending-cursor-restore* doc-id))
+    (define target-line (car entry))
+    (define target-col (cdr entry))
+    (define rope (editor->text doc-id))
+    (define total-lines (text.rope-len-lines rope))
+    (define safe-line
+      (cond
+        [(< target-line 0) 0]
+        [(>= target-line total-lines) (- total-lines 1)]
+        [else target-line]))
+    ;; `helix.goto` is 1-indexed.
+    (helix.goto (number->string (+ safe-line 1)))
+    (helix.static.goto_line_start)
+    (let loop ([i 0])
+      (when (< i target-col)
+        (helix.static.move_char_right)
+        (loop (+ i 1))))))
+
+;; Explicit clear, used by `execute-cell-list` after the whole run
+;; finishes. `restore-cursor-for!` deliberately doesn't clear the
+;; entry so successive cells in `execute-all-cells` each pull back
+;; to the same saved position — the entry only gets discarded
+;; once everything is done, or overwritten by the next execute.
+(define (clear-cursor-restore! doc-id)
+  (when (hash-contains? *pending-cursor-restore* doc-id)
+    (set! *pending-cursor-restore*
+          (hash-remove *pending-cursor-restore* doc-id))))
+
 ;;@doc
 ;; Locate the "# ─── Output ───" header line for a specific cell.
 ;; Scans forward from the cell's `@cell N` marker and returns the
@@ -567,6 +624,15 @@
              (set-status! "✓ Cell executed (with plot)")
              (set-status! "✓ Cell executed")))])
 
+  ;; Restore the cursor to wherever it was when the user pressed
+  ;; :execute-cell. Every insert above shifted the cursor along with
+  ;; the text it was typing into; now that we're done, the user
+  ;; shouldn't be parked at the bottom of the output block — they
+  ;; should be right back on the cell code they just ran. `save-cursor-
+  ;; for-restore!` is called at the top of execute-cell (and
+  ;; execute-cell-list's start) so the snapshot exists for us here.
+  (restore-cursor-for! doc-id)
+
   (helix.redraw)
 
   ;; NOTE: we deliberately do NOT call `render-cached-images` here. The
@@ -628,6 +694,13 @@
   (define total-lines (text.rope-len-lines rope))
 
   (define (get-line idx) (doc-get-line rope total-lines idx))
+
+  ;; Save the cursor BEFORE any buffer mutation so `update-cell-output`
+  ;; can restore it once all the output inserts have finished. Without
+  ;; this, running a cell leaves the cursor parked at the bottom of
+  ;; the output block, which reads as "editor randomly teleported
+  ;; me away from my work".
+  (save-cursor-for-restore! doc-id)
 
   ;; Find cell boundaries
   (define cell-start (find-cell-start-line get-line current-line))
@@ -754,6 +827,12 @@
     (set-status! "Error: No file path")
     (error "No file path"))
 
+  ;; Save the cursor before any execution kicks off. Every
+  ;; subsequent `update-cell-output` callback pulls this back via
+  ;; `restore-cursor-for!`, so running a whole notebook doesn't end
+  ;; with the cursor parked wherever the last cell's footer landed.
+  (save-cursor-for-restore! doc-id)
+
   ;; Only works on .jl files (converted notebooks)
   (when (string-suffix? path ".ipynb")
     (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
@@ -798,7 +877,13 @@
 (define (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)
   (if (null? remaining-indices)
       (begin
-        (helix.goto (number->string (+ original-line 1)))
+        ;; Final restore to the user's saved position and clear the
+        ;; pending entry. Each `update-cell-output` in between
+        ;; already pulled back there, but pulling once more is
+        ;; idempotent and makes the final state deterministic even
+        ;; if the last cell didn't emit any output.
+        (restore-cursor-for! doc-id)
+        (clear-cursor-restore! doc-id)
         (helix.static.collapse_selection)
         (set-status! (string-append "✓ Executed " (number->string total-count) " cells")))
       (let ([current-idx (car remaining-indices)]
