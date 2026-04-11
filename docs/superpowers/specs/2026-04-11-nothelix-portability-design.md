@@ -14,11 +14,11 @@ compile the dylib, run `just install`, set up nix-darwin / home-manager."
 That's fine for the author. It's a wall for the target audience.
 
 The target audience is **research peers**: people who already use Helix or
-Vim, run Kitty-protocol terminals (Kitty / Ghostty / WezTerm), work on
-macOS arm64 / x86_64 or Linux x86_64 / arm64, and know Julia — but don't
-want to install a Rust toolchain, set up codesigning, bump a nix flake,
-or understand how `~/.steel` differs from `~/.config/helix`. Their
-tolerance for "dev-environment busywork" is low.
+Vim, run Kitty-protocol terminals (Kitty / Ghostty / WezTerm), work mostly
+on Apple Silicon MacBooks or x86_64 Linux workstations, and know Julia —
+but don't want to install a Rust toolchain, set up codesigning, bump a
+nix flake, or understand how `~/.steel` differs from `~/.config/helix`.
+Their tolerance for "dev-environment busywork" is low.
 
 The goal of this design is to give that audience a **single curl-pipe-sh
 install command** that puts a working nothelix on their machine, opens a
@@ -30,9 +30,14 @@ and uninstalls cleanly with no lingering artefacts.
 1. **One command to install.** The peer types one line, everything is
    placed and ready. No Rust, no cargo, no manual grammar builds, no
    codesign dance.
-2. **Cross-platform.** macOS arm64 + x86_64 + Linux arm64 + x86_64. No
-   Windows (deliberate scope exclusion — terminal graphics protocols on
-   Windows are a separate rabbit hole).
+2. **Cross-platform, initial scope.** macOS arm64 and Linux x86_64 —
+   the two configurations that cover the target research audience
+   (Apple Silicon MacBooks and x86_64 Linux workstations). Intel Macs
+   and Linux arm64 are deliberately deferred: the CI matrix is
+   designed so additional targets plug in without changing any other
+   part of this design, but we don't pay the CI cost until there's a
+   peer asking for them. No Windows (deliberate scope exclusion —
+   terminal graphics protocols on Windows are a separate rabbit hole).
 3. **Delightful first run.** `nothelix` with no arguments opens a demo
    notebook that renders an inline plot in under 90 seconds on a cold
    machine and confirms the whole stack works.
@@ -62,8 +67,10 @@ and uninstalls cleanly with no lingering artefacts.
 Three moving parts:
 
 1. **A release pipeline** (GitHub Actions) that produces pre-built
-   tarballs for four target triples every time a git tag is pushed, and
-   also auto-bumps the helix-fork SHA pin on a schedule.
+   tarballs for two target triples on every git tag — darwin-arm64
+   and linux-x86_64 — and auto-bumps the helix-fork SHA pin on a
+   schedule. Additional targets can be added by appending rows to
+   the matrix.
 2. **An install script** (`install.sh` hosted on `main` in the nothelix
    repo, fetched via curl) that detects OS/arch, downloads the right
    tarball, verifies its checksum, runs the in-tarball installer, and
@@ -71,7 +78,7 @@ Three moving parts:
 3. **A wrapper command** (`nothelix`) installed alongside the fork
    binary, which is the interface peers actually learn. It forwards
    unknown args to `hx-nothelix` and exposes subcommands for `upgrade`,
-   `uninstall`, `doctor`, and `version`.
+   `uninstall`, `doctor`, `config`, `reset`, and `version`.
 
 ## Section 1 — User-visible install flow
 
@@ -179,14 +186,17 @@ Uninstall is the symmetric inverse of install; see Section 7.
 ## Section 3 — CI / release pipeline
 
 Every git tag on nothelix (e.g. `v0.1.0`) triggers a GitHub Actions
-workflow with a five-job build matrix:
+workflow with a **three-job** build matrix. Initial scope is
+intentionally trimmed to the two platforms that cover the target
+research audience — Apple Silicon MacBooks and x86_64 Linux
+workstations. Additional targets (Intel Mac, Linux arm64) can be
+added by appending rows to this matrix without changing any other
+part of the design.
 
 | Runner             | Target triple                    | Artifact                                    |
 |--------------------|----------------------------------|---------------------------------------------|
 | `macos-14`         | `aarch64-apple-darwin`           | `nothelix-vX.Y.Z-darwin-arm64.tar.gz`       |
-| `macos-13`         | `x86_64-apple-darwin`            | `nothelix-vX.Y.Z-darwin-x86_64.tar.gz`      |
 | `ubuntu-24.04`     | `x86_64-unknown-linux-gnu`       | `nothelix-vX.Y.Z-linux-x86_64.tar.gz`       |
-| `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu`      | `nothelix-vX.Y.Z-linux-arm64.tar.gz`        |
 | any                | — (checksums + metadata)         | `SHA256SUMS`, `install.sh` archived copy    |
 
 Each platform job runs:
@@ -264,18 +274,101 @@ it's easy to debug and small enough to audit in one screenful.
 
 ### Subcommands
 
-| Command                        | Behaviour                                                           |
-|--------------------------------|---------------------------------------------------------------------|
-| `nothelix`                     | Opens `~/.local/share/nothelix/examples/demo.jl`                    |
-| `nothelix <file> [<file>...]`  | Forwards all args to `hx-nothelix`                                  |
-| `nothelix upgrade`             | Re-invokes `install.sh --upgrade`                                   |
-| `nothelix uninstall`           | Re-invokes `install.sh --uninstall`                                 |
-| `nothelix doctor [--fix]`      | Pre-flight checks (Section 5)                                       |
-| `nothelix version`             | Prints version metadata                                             |
-| `nothelix --help` / `-h`       | Usage                                                               |
+| Command                              | Behaviour                                                     |
+|--------------------------------------|---------------------------------------------------------------|
+| `nothelix`                           | Opens `~/.local/share/nothelix/examples/demo.jl`              |
+| `nothelix <file> [<file>...]`        | Forwards all args to `hx-nothelix`                            |
+| `nothelix upgrade`                   | Re-invokes `install.sh --upgrade`                             |
+| `nothelix uninstall [--purge]`       | Re-invokes `install.sh --uninstall` (see Section 7)           |
+| `nothelix doctor [--fix] [--smoke]`  | Pre-flight checks (Section 5)                                 |
+| `nothelix config [show\|edit\|path]` | Inspect or edit effective configuration (see below)           |
+| `nothelix reset [--lsp\|--kernel\|--all]` | Reset runtime state without uninstalling (see below)     |
+| `nothelix version`                   | Prints version metadata                                       |
+| `nothelix --help` / `-h`             | Usage                                                         |
 
 Unknown flags pass through verbatim so `nothelix -v foo.jl` and
 `nothelix +42 notes.md` behave exactly like `hx +42 notes.md`.
+
+### `nothelix config`
+
+Three sub-verbs, all read-only except `edit`:
+
+- **`nothelix config`** or **`nothelix config show`** prints the
+  effective configuration to stdout as a flat key=value list. Read
+  from the VERSION file + resolved env vars + actual paths on disk,
+  not from any separate config file of nothelix's own:
+
+  ```
+  $ nothelix config show
+  nothelix.version     = v0.2.1
+  nothelix.fork_sha    = 89734c72
+  nothelix.install_dir = /Users/researcher/.local/share/nothelix
+  steel.home           = /Users/researcher/.steel
+  steel.native         = /Users/researcher/.steel/native/libnothelix.dylib
+  steel.cogs           = /Users/researcher/.steel/cogs/nothelix
+  helix.runtime        = /Users/researcher/.local/share/nothelix/runtime
+  helix.init_scm       = /Users/researcher/.config/helix/init.scm
+  julia.path           = /opt/homebrew/bin/julia
+  julia.version        = 1.12.5
+  lsp.env              = /Users/researcher/.local/share/nothelix/lsp
+  lsp.depot            = /Users/researcher/.local/share/nothelix/lsp/depot
+  demo.notebook        = /Users/researcher/.local/share/nothelix/examples/demo.jl
+  ```
+
+  This is the copy-paste target for bug reports. Same information as
+  `nothelix doctor` but formatted for machine parsing (`|` pipes into
+  `grep`, `awk`, etc.) and without the check status.
+
+- **`nothelix config edit`** opens `~/.config/helix/config.toml` in
+  `hx-nothelix` for the user to tweak Helix settings. Creates the file
+  if absent with a minimal template (a single `theme = "default"`
+  line so the file parses). Nothelix itself has no config surface
+  outside Helix's config.toml and the init.scm require line, so
+  "edit" means "edit Helix's config" — which is the 99% case anyway.
+
+- **`nothelix config path`** prints the absolute path to
+  `~/.config/helix/config.toml` and nothing else. Useful for piping
+  into other tools: `$(nothelix config path)` returns a path the
+  caller can `cat`, `grep`, etc.
+
+### `nothelix reset`
+
+Three flags, additive. Zero-arg default is equivalent to
+`--managed-files` (the safest thing): re-copy the binaries, dylib,
+plugin cogs, runtime, and demo from the last-installed tarball. The
+tarball is cached at `~/.local/share/nothelix/.cache/current.tar.gz`
+on every install/upgrade so `reset` doesn't need network access. If
+the cache is missing (manual cleanup, older install), `reset` falls
+back to re-invoking `install.sh --upgrade`.
+
+| Flag                        | What gets reset                                                           |
+|-----------------------------|---------------------------------------------------------------------------|
+| `nothelix reset` (default)  | Binaries + dylib + plugin cogs + runtime + demo notebook. Leaves LSP      |
+|                             | depot, kernel scripts, init.scm, and all user data untouched. Useful when |
+|                             | a plugin file has been accidentally edited and you want the stock copy.   |
+| `nothelix reset --lsp`      | Additionally wipes `~/.local/share/nothelix/lsp/depot/` so the LSP        |
+|                             | bootstrap re-precompiles from scratch next time. Useful when the Julia    |
+|                             | LanguageServer cache gets stuck on a stale package version after a        |
+|                             | `Pkg.update()`.                                                           |
+| `nothelix reset --kernel`   | Additionally kills any running kernels and removes                        |
+|                             | `~/.local/share/nothelix/kernel/` so `libnothelix` re-extracts the        |
+|                             | embedded kernel scripts on next cell run. Useful when a kernel process    |
+|                             | is wedged and `cancel-cell` can't reach it.                               |
+| `nothelix reset --all`      | All three: managed files + LSP depot + kernel. The nuclear option that    |
+|                             | stops short of a full uninstall.                                          |
+
+Reset is strictly less destructive than uninstall:
+
+- init.scm is never touched.
+- `~/.julia/` is never touched.
+- User notebooks are never touched.
+- `$PATH` is never modified.
+- No confirmation prompt — reset is idempotent and recoverable by
+  re-running it.
+
+When in doubt, run `nothelix reset` (no flags) first, then escalate
+to `--lsp`, then `--kernel`, then `--all`, then `nothelix uninstall`
+only if none of that helps.
 
 ### Launch-time environment
 
@@ -317,6 +410,7 @@ $ nothelix doctor
 nothelix v0.2.1 environment check
   [✓] hx-nothelix binary at ~/.local/bin/hx-nothelix (89734c72)
   [✓] libnothelix at ~/.steel/native/libnothelix.dylib (codesigned, 2.6 MB)
+  [✓] steel engine matches fork (libnothelix=0.6.0 hx-nothelix=0.6.0)
   [✓] plugin cogs at ~/.steel/cogs/nothelix/ (14 files)
   [✓] HELIX_RUNTIME resolves to ~/.local/share/nothelix/runtime
   [✓] grammars: 284 built (~/.local/share/nothelix/runtime/grammars/)
@@ -324,10 +418,13 @@ nothelix v0.2.1 environment check
   [✓] ~/.local/bin on PATH
   [✓] julia 1.12.5 at /opt/homebrew/bin/julia
   [✓] LSP env instantiated (~/.local/share/nothelix/lsp/Manifest.toml, 9.5 KB)
-  [✓] terminal supports Kitty graphics protocol (detected Ghostty)
+  [✓] terminal speaks Kitty graphics protocol (APC response OK, width=8×rows)
   [✓] demo notebook at ~/.local/share/nothelix/examples/demo.jl
 
-11 checks passed. Ready to go.
+12 checks passed. Ready to go.
+
+  ↪ run `nothelix doctor --smoke` to additionally spin up a Julia kernel,
+    execute a trivial cell, and verify the full pipeline end to end.
 ```
 
 ### Individual checks
@@ -338,6 +435,13 @@ nothelix v0.2.1 environment check
 | `libnothelix`     | File exists at `~/.steel/native/libnothelix.{dylib,so}`. On macOS also runs        |
 |                   | `codesign --verify` — a broken signature manifests as a kernel `Killed: 9`         |
 |                   | on Steel's first `#%require-dylib`, which is otherwise opaque.                     |
+| `steel engine`    | Reads the Steel engine version from two places: the `STEEL_VERSION` constant       |
+|                   | compiled into `libnothelix` at build time (exposed via a new FFI getter), and      |
+|                   | the same constant baked into `hx-nothelix`. A mismatch means the dylib and the     |
+|                   | fork binary were built against different Steel releases — rare under curl-sh       |
+|                   | install because CI pins both, but catches the case where a user manually swapped   |
+|                   | one of the two files. Fails hard with `steel version drift detected, run           |
+|                   | nothelix upgrade`.                                                                 |
 | `plugin cogs`     | `~/.steel/cogs/nothelix.scm` exists, `~/.steel/cogs/nothelix/` has submodules.     |
 | `HELIX_RUNTIME`   | Resolves the assumed path; confirms `queries/`, `themes/`, `grammars/` exist.      |
 | `grammars`        | Counts `.so`/`.dylib` files under `runtime/grammars/`. Warns if zero.              |
@@ -346,10 +450,91 @@ nothelix v0.2.1 environment check
 | `julia`           | `julia --version` succeeds. Warns on < 1.9. Fails with juliaup hint if missing.    |
 | `LSP env`         | `~/.local/share/nothelix/lsp/Manifest.toml` exists and is non-empty. Warns         |
 |                   | (not fails) if missing — this is lazy and auto-populates on first notebook open.   |
-| `terminal`        | `$TERM_PROGRAM` matches a known Kitty-protocol terminal (Ghostty / WezTerm)        |
-|                   | or responds to the kitty graphics capability query. Warns on iTerm2 — iTerm2's    |
-|                   | own protocol still works, nothelix has a fallback path.                            |
+| `terminal`        | Emits the Kitty graphics capability query directly to the controlling TTY and     |
+|                   | reads the response with a 100ms timeout (see below). Authoritative — not a        |
+|                   | guess from `$TERM_PROGRAM`, which lies under tmux / screen / ssh passthrough.     |
+|                   | Warns (not fails) on negative response — nothelix falls back to the iTerm2        |
+|                   | protocol or a text placeholder, so the tool still runs.                            |
 | `demo notebook`   | `~/.local/share/nothelix/examples/demo.jl` exists. Warns (not fails) if missing.   |
+
+### The terminal graphics capability query (details)
+
+`nothelix doctor` writes the following APC sequence to `/dev/tty`:
+
+```
+\x1b_Gi=1,a=q,s=1,v=1,f=24,t=d,m=0;AAAA\x1b\\
+```
+
+- `a=q` — query mode (no image persists after the query)
+- `i=1` — client-assigned image id for tracking the response
+- `s=1,v=1,f=24` — a single 24-bit pixel, smallest valid payload
+- `t=d` — direct transmission (data in-band)
+- `m=0` — no continuation
+- Payload `AAAA` is the base64 of a single-pixel RGB image
+
+A Kitty-protocol terminal responds with another APC sequence starting
+`\x1b_Gi=1;OK`. A terminal that doesn't understand the protocol either
+responds with nothing (timeout, hit at 100ms) or echoes the APC back
+as literal text (iTerm2 prior to Kitty-mode support). The doctor check
+reads with a tiny `select` loop on the TTY fd and interprets the
+result as pass / warn / fail:
+
+- Response contains `;OK` → pass (green ✓). Report the terminal name
+  from `$TERM_PROGRAM` as a hint but don't rely on it for correctness.
+- No response within 100ms → warn (yellow ▲). Suggest installing
+  Ghostty / Kitty / WezTerm but don't block. Nothelix has a text
+  fallback path in `graphics.scm`.
+- Response contains literal `_Gi=1` text (i.e. the terminal echoed
+  the APC instead of parsing it) → warn. Same fallback applies.
+- Not running on a TTY (e.g. `nothelix doctor` piped into a log or run
+  under CI) → inconclusive, skip the check with a `[?]` mark, not a
+  failure.
+
+This is the specific query you asked for — no `$TERM_PROGRAM`
+heuristics, no hard-coded list of known-good terminal names.
+Whatever the peer is running, if it speaks the protocol, doctor
+sees it.
+
+### The kernel-start smoke test (`--smoke`)
+
+Opt-in because it takes ~5 seconds and spawns a real Julia process.
+The default `nothelix doctor` is static-only (file existence, version
+checks, TTY query) and finishes in under a second so peers can run it
+liberally. `nothelix doctor --smoke` additionally:
+
+1. Creates a temp kernel dir under `$TMPDIR/nothelix-doctor-<pid>/`.
+2. Extracts the embedded kernel scripts into it (same code path
+   `libnothelix::kernel::ensure_kernel_scripts` uses at runtime —
+   exposed via a new `nothelix-doctor-smoke` subcommand on the dylib
+   or a short Rust helper binary shipped in the tarball).
+3. Spawns `julia runner.jl <kernel-dir>`.
+4. Writes an `input.json` with a trivial cell: `{"command":
+   "execute_cell","cell_index":0,"code":"1 + 1"}`.
+5. Polls `output.json.done` for up to 10 seconds.
+6. Reads the response, verifies `status == "ok"` and the cell result
+   contains `output_repr == "2"`.
+7. Shuts down the kernel process and removes the temp dir.
+8. Reports pass / fail with timing: `[✓] kernel smoke test (cold
+   start 4.8s, execute 22ms)`.
+
+Failure modes the smoke test catches:
+
+- Julia not on PATH (already caught by the static `julia` check,
+  but smoke confirms end-to-end).
+- Julia version too old to run the kernel modules.
+- Missing packages in the user's env that the kernel needs.
+- Kernel script extraction failure (disk full, permissions, etc.).
+- `libnothelix`'s `include_str!` not matching what the running code
+  expects (catches the "dylib was built from different kernel source"
+  case across the CI / manual install boundary).
+- IPC protocol drift between the plugin's Steel code and the kernel's
+  Julia code — a trivial cell catches the JSON-shape mismatch class
+  of bug before the peer sees it on their first `<space>nr`.
+
+Smoke is separate from static doctor because the static checks
+should be safe to run inside an editor (some future
+`:nothelix-doctor` helix command could shell out to it), while
+spawning Julia should be opt-in and explicit.
 
 Each check produces one of three outcomes: **pass** (green ✓), **warn**
 (yellow ▲ with a remediation hint), or **fail** (red ✗ with a clear "run
@@ -568,17 +753,27 @@ install script in `--uninstall` mode.
 
 #### Flags
 
-| Flag                           | Effect                                                                 |
-|--------------------------------|------------------------------------------------------------------------|
-| `nothelix uninstall`           | Default. Remove everything listed above.                              |
-| `nothelix uninstall --keep-data` | Preserve `~/.local/share/nothelix/lsp/depot/` (the precompiled        |
-|                                   | LanguageServer cache) across a reinstall.                             |
-| `nothelix uninstall --dry-run`  | List files that would be removed; remove nothing.                     |
-| `nothelix uninstall --yes`      | Skip the confirmation prompt. Implicit when stdin is not a TTY.      |
+| Flag                              | Effect                                                                 |
+|-----------------------------------|------------------------------------------------------------------------|
+| `nothelix uninstall`              | Default. Remove everything listed above.                               |
+| `nothelix uninstall --keep-data`  | Preserve `~/.local/share/nothelix/lsp/depot/` (the precompiled         |
+|                                   | LanguageServer cache) across a reinstall.                              |
+| `nothelix uninstall --dry-run`    | List files that would be removed; remove nothing.                      |
+| `nothelix uninstall --yes`        | Skip the confirmation prompt. Implicit when stdin is not a TTY.       |
+| `nothelix uninstall --purge`      | Everything in the default uninstall PLUS scrub                         |
+|                                   | `~/.cache/helix/helix.log` (the shared Helix log file where nothelix's |
+|                                   | debug messages end up when `nothelix-debug-on` is set). Targets that   |
+|                                   | one file specifically rather than the whole `~/.cache/helix/` dir so   |
+|                                   | plain Helix's own cache state (if upstream Helix is also installed)    |
+|                                   | is untouched. `--purge` implies `--yes` when run non-interactively     |
+|                                   | and still prompts on a TTY unless `--yes` is also passed.              |
 
 #### The confirmation prompt
 
-Only appears when stdin is a real TTY:
+Only appears when stdin is a real TTY. The plan adapts to any flags
+passed — `--purge` adds the `helix.log` scrub line, `--keep-data`
+removes the lsp depot line and annotates the `~/.local/share/nothelix/`
+entry with `(except lsp/depot/)`, etc.
 
 ```
 $ nothelix uninstall
@@ -595,9 +790,17 @@ nothelix v0.2.1 uninstall plan:
 Leaving alone:
   ~/.julia/                               (your Julia packages)
   ~/.config/helix/*                       (except the init.scm line above)
+  ~/.cache/helix/helix.log                (shared with plain Helix)
   ~/.local/bin/hx                         (your plain Helix, if any)
 
 Proceed? (y/N)
+```
+
+With `--purge` the plan gains one extra line and the log-file entry
+moves from "leaving alone" to "remove":
+
+```
+  remove  ~/.cache/helix/helix.log        (purge: shared Helix log)
 ```
 
 Any `--yes` / non-TTY invocation skips the prompt.
