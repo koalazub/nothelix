@@ -91,9 +91,17 @@ EOF
         exit 0
         ;;
     doctor)
-        # Locate the doctor helper dir. Two possibilities:
-        #   - Installed: $NOTHELIX_SHARE/dist/doctor/
-        #   - Dev: the dist/doctor/ dir next to this script
+        shift
+        smoke=0
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --smoke) smoke=1 ;;
+                *) echo "nothelix doctor: unknown flag: $1" >&2; exit 2 ;;
+            esac
+            shift
+        done
+
+        # Locate the doctor helper dir (existing code)
         doctor_dir=""
         if [ -d "$NOTHELIX_SHARE/dist/doctor" ]; then
             doctor_dir="$NOTHELIX_SHARE/dist/doctor"
@@ -101,20 +109,18 @@ EOF
             doctor_dir="$(dirname "$0")/doctor"
         fi
         if [ -z "$doctor_dir" ]; then
-            echo "nothelix: doctor helpers not found (looked in $NOTHELIX_SHARE/dist/doctor and $(dirname "$0")/doctor)" >&2
+            echo "nothelix: doctor helpers not found" >&2
             exit 1
         fi
 
         # shellcheck disable=SC1091
         . "$doctor_dir/static.sh"
+        if [ $smoke -eq 1 ]; then
+            # shellcheck disable=SC1091
+            . "$doctor_dir/smoke.sh"
+        fi
 
-        # Additional env the static checks read
-        export NOTHELIX_BIN
-        export HX_NOTHELIX
-        export NOTHELIX_SHARE
-        export STEEL_HOME
-        export VERSION_FILE
-        export HELIX_RUNTIME
+        export NOTHELIX_BIN HX_NOTHELIX NOTHELIX_SHARE STEEL_HOME VERSION_FILE HELIX_RUNTIME
 
         version_tag="unknown"
         if [ -f "$VERSION_FILE" ]; then
@@ -122,6 +128,9 @@ EOF
         fi
         echo "nothelix doctor (${version_tag:-unknown})"
         run_static_doctor_checks
+        if [ $smoke -eq 1 ]; then
+            run_kernel_smoke_test
+        fi
         printf '%s' "$DOCTOR_CHECKS_OUTPUT"
         echo ""
         if [ "$DOCTOR_FAIL_COUNT" -eq 0 ]; then

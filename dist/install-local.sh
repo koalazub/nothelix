@@ -103,6 +103,13 @@ fi
 place_file "$TARBALL_DIR/share/nothelix/plugin/nothelix.scm" "$STEEL_COGS/nothelix.scm"
 place_dir "$TARBALL_DIR/share/nothelix/plugin/nothelix" "$STEEL_COGS/nothelix"
 
+# Kernel scripts (copy of what libnothelix ships via include_str!;
+# duplicated here so `nothelix doctor --smoke` can spawn a kernel
+# without loading the dylib).
+if [ -d "$TARBALL_DIR/share/nothelix/kernel-scripts" ]; then
+    place_dir "$TARBALL_DIR/share/nothelix/kernel-scripts" "$SHARE_DIR/kernel-scripts"
+fi
+
 # Runtime (Helix runtime with pre-built grammars)
 place_dir "$TARBALL_DIR/share/nothelix/runtime" "$SHARE_DIR/runtime"
 

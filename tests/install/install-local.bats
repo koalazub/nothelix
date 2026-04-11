@@ -14,6 +14,8 @@ setup() {
     mkdir -p "$TARBALL_DIR/share/nothelix/lsp"
     mkdir -p "$TARBALL_DIR/share/nothelix/dist/doctor"
     echo "# fake doctor helper" > "$TARBALL_DIR/share/nothelix/dist/doctor/static.sh"
+    mkdir -p "$TARBALL_DIR/share/nothelix/kernel-scripts"
+    echo "# fake kernel runner" > "$TARBALL_DIR/share/nothelix/kernel-scripts/runner.jl"
 
     # Stub files the installer will copy
     echo "#!/bin/bash" > "$TARBALL_DIR/bin/hx-nothelix"
@@ -94,6 +96,12 @@ teardown() {
     [ -d "$HOME/.local/share/nothelix/runtime/grammars" ]
     [ -f "$HOME/.local/share/nothelix/examples/demo.jl" ]
     [ -f "$HOME/.local/share/nothelix/VERSION" ]
+}
+
+@test "install-local places kernel-scripts when present in tarball" {
+    run "$TARBALL_DIR/install-local.sh" "$TARBALL_DIR"
+    [ "$status" -eq 0 ]
+    [ -f "$HOME/.local/share/nothelix/kernel-scripts/runner.jl" ]
 }
 
 @test "install-local appends require line to init.scm when absent" {
