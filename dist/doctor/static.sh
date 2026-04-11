@@ -176,6 +176,46 @@ doctor_check_demo() {
     fi
 }
 
+doctor_check_terminal_graphics() {
+    if [ "${NOTHELIX_SKIP_TTY_CHECK:-0}" = "1" ]; then
+        _doctor_pass "terminal graphics query skipped (NOTHELIX_SKIP_TTY_CHECK=1)"
+        return
+    fi
+
+    if [ ! -c /dev/tty ]; then
+        _doctor_warn "terminal graphics: not running on a TTY, skipping query"
+        return
+    fi
+
+    # Emit a Kitty graphics capability query and read the response with
+    # a 100ms timeout. The sequence:
+    #   \x1b_Ga=q,i=1,s=1,v=1,f=24,t=d,m=0;AAAA\x1b\\
+    # asks the terminal to acknowledge it supports the Kitty graphics
+    # protocol. A capable terminal responds with `\x1b_Gi=1;OK\x1b\\`.
+    local response
+    response=$({
+        # shellcheck disable=SC1003  # \\ inside single quotes is intentional APC string terminator (ESC \)
+        printf '\033_Ga=q,i=1,s=1,v=1,f=24,t=d,m=0;AAAA\033\\' > /dev/tty
+        # Read up to 256 bytes or 100ms, whichever comes first.
+        # bash's `read -t 0.1` handles the timeout; portable enough on
+        # bash 4+.
+        # shellcheck disable=SC2162
+        IFS= read -r -t 0.1 -n 256 resp < /dev/tty || true
+        printf '%s' "$resp"
+    } 2>/dev/null)
+
+    case "$response" in
+        *";OK"*)
+            _doctor_pass "terminal speaks Kitty graphics protocol" ;;
+        *"_Gi=1"*|*"AAAA"*)
+            _doctor_warn "terminal echoed APC literally — no Kitty graphics support (plots will fall back to text)" ;;
+        "")
+            _doctor_warn "terminal did not respond to Kitty graphics query within 100ms (plots will fall back to text)" ;;
+        *)
+            _doctor_warn "terminal response to Kitty graphics query is unexpected: $response" ;;
+    esac
+}
+
 run_static_doctor_checks() {
     doctor_check_hx_nothelix
     doctor_check_libnothelix
@@ -188,4 +228,5 @@ run_static_doctor_checks() {
     doctor_check_julia
     doctor_check_lsp_env
     doctor_check_demo
+    doctor_check_terminal_graphics
 }

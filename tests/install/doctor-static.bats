@@ -102,3 +102,11 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"grammar"* ]]
 }
+
+@test "doctor honours NOTHELIX_SKIP_TTY_CHECK=1" {
+    export NOTHELIX_SKIP_TTY_CHECK=1
+    run "$WRAPPER" doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"terminal graphics"* ]]
+    [[ "$output" == *"skipped"* ]]
+}
