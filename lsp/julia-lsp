@@ -2,8 +2,26 @@
 set -euo pipefail
 
 NOXDIR="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
-export JULIA_DEPOT_PATH="$NOXDIR/depot"
-export HOME="$NOXDIR"
+
+# Keep LanguageServer + its deps isolated in $NOXDIR/depot, but also
+# expose the user's real Julia depot ($HOME/.julia) so the LSP can
+# *read* the packages they've actually installed (LinearAlgebra,
+# Plots, Makie, whatever Pkg.add pulled in from their notebook cells).
+# Without the second entry, the LSP analyses against a depot that
+# only knows LanguageServer.jl, and every stdlib-backed name like
+# `norm` shows up as an undefined reference with no hover doc.
+#
+# NB: the bootstrap depot comes FIRST so its precompile artifacts
+# win over anything in the shared depot, and we never write into
+# $HOME/.julia from the LSP.
+export JULIA_DEPOT_PATH="$NOXDIR/depot:$HOME/.julia"
+
+# Don't override HOME. The previous version of this script set
+# HOME=$NOXDIR as a belt-and-braces isolation measure, but that
+# also hid the user's real `~/.julia/environments/v1.x` from
+# `homedir()` — which is exactly the env the LSP needs to analyse.
+# `--startup-file=no` below already skips `~/.julia/config/startup.jl`
+# so there's no need to fake HOME to avoid it.
 
 # Startup script configures LanguageServer.jl for notebook-converted files:
 #
@@ -26,6 +44,16 @@ export HOME="$NOXDIR"
 #    expose a way to pass this key, so the post-init config refresh
 #    silently undoes our `:none` setting. Overriding it as a no-op
 #    keeps our initial configuration sticky.
+#
+# 4. Picks the env to ANALYSE explicitly instead of letting
+#    `LanguageServer.choose_env()` fall back to the bootstrap
+#    `--project=$NOXDIR` (which only has LanguageServer.jl in it and
+#    can't resolve any of the user's stdlib / registered packages).
+#    Walks up from `pwd` looking for a `Project.toml` first so
+#    workspaces with their own env win, and falls back to the user's
+#    shared `v$(major).$(minor)` environment under `homedir()` —
+#    which is where `Pkg.add` from an interactive session actually
+#    installs things.
 exec julia \
   --startup-file=no \
   --history-file=no \
@@ -39,7 +67,20 @@ exec julia \
               nothing
           end
       end
-      let env_path = LanguageServer.choose_env()
+      function pick_user_env()
+          dir = pwd()
+          while true
+              isfile(joinpath(dir, "Project.toml")) && return dir
+              parent = dirname(dir)
+              parent == dir && break
+              dir = parent
+          end
+          shared = joinpath(homedir(), ".julia", "environments",
+                            "v$(VERSION.major).$(VERSION.minor)")
+          isdir(shared) && return shared
+          return LanguageServer.choose_env()
+      end
+      let env_path = pick_user_env()
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
           server.lint_missingrefs = :none
           run(server)
