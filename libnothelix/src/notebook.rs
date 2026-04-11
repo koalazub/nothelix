@@ -77,14 +77,46 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     }
 
     // Locate cell markers.
+    //
+    // Match three shapes on each line:
+    //   `@cell N :lang`      (full marker, stamp N, record lang)
+    //   `@cell :lang`        (nothelix autofill produced it without
+    //                         an index yet — accept, assign index 0
+    //                         as a placeholder, the renumber pass
+    //                         later fixes it)
+    //   `@cell`              (bare — user typed it and the autofill
+    //                         hasn't fired yet; still a boundary)
+    //
+    // …and equivalent shapes for `@markdown`. Before we only matched
+    // `@cell ` (with trailing space), so bare `@cell` lines slipped
+    // through and got shipped into the Julia kernel where they
+    // detonated with `MethodError: no method matching var"@cell"`.
     let mut cells: Vec<JlCell> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if let Some(rest) = line.strip_prefix("@cell ") {
-            let mut parts = rest.splitn(2, ' ');
-            let idx: isize = parts.next().unwrap_or("0").parse().unwrap_or(0);
+        if line.trim_end() == "@cell" {
+            cells.push(JlCell {
+                index: 0,
+                kind: CellKind::Code,
+                code: String::new(),
+                start_line: i,
+            });
+        } else if let Some(rest) = line.strip_prefix("@cell ") {
+            let rest = rest.trim();
+            // Parse the first whitespace-separated token. If it's
+            // numeric, use it as the index; if it's a colon-prefixed
+            // language tag (`:julia`), assume index 0 for now.
+            let first = rest.split_whitespace().next().unwrap_or("");
+            let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Code,
+                code: String::new(),
+                start_line: i,
+            });
+        } else if line.trim_end() == "@markdown" {
+            cells.push(JlCell {
+                index: 0,
+                kind: CellKind::Markdown,
                 code: String::new(),
                 start_line: i,
             });
@@ -99,7 +131,13 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         }
     }
 
-    // Collect code for each cell (strip output sections).
+    // Collect code for each cell (strip output sections *and* any
+    // stray marker-shaped lines that slipped into the cell body).
+    // The stray-marker strip is a defense against users typing a new
+    // `@cell` inside an existing cell without triggering the autofill
+    // expansion — without it those lines would be forwarded to the
+    // Julia kernel, which would then choke on `@cell` as a malformed
+    // macro invocation.
     let n = cells.len();
     for ci in 0..n {
         let code_start = cells[ci].start_line + 1;
@@ -107,6 +145,14 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             .get(ci + 1)
             .map(|c| c.start_line)
             .unwrap_or(lines.len());
+
+        let is_marker_line = |line: &str| -> bool {
+            let t = line.trim_end();
+            t == "@cell"
+                || t == "@markdown"
+                || line.starts_with("@cell ")
+                || line.starts_with("@markdown ")
+        };
 
         let mut filtered: Vec<&str> = Vec::new();
         let mut in_output = false;
@@ -119,6 +165,12 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 if line.contains("# ─────────────") {
                     in_output = false;
                 }
+                continue;
+            }
+            if is_marker_line(line) {
+                continue;
+            }
+            if line.starts_with("# @image ") {
                 continue;
             }
             filtered.push(line);

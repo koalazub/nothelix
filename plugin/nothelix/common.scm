@@ -34,9 +34,17 @@
 
 ;;@doc
 ;; Return #true if `line-text` starts with a cell or markdown marker.
+;; Also matches bare `@cell` / `@markdown` lines (no trailing space,
+;; no arguments), which users sometimes type before the autofill
+;; hook gets a chance to expand them — treating these as markers
+;; means cell extraction still terminates at the right line instead
+;; of dumping bare `@cell` into the Julia kernel and blowing up on
+;; a `MethodError: no method matching var"@cell"`.
 ;; (-> string? boolean?)
 (define (cell-marker? line-text)
-  (or (string-starts-with? line-text "@cell ")
+  (or (string=? line-text "@cell")
+      (string=? line-text "@markdown")
+      (string-starts-with? line-text "@cell ")
       (string-starts-with? line-text "@markdown ")))
 
 ;;@doc
@@ -44,10 +52,24 @@
 ;; Checks the prefix directly on the rope slice to avoid allocating a String
 ;; per iteration — rope-starts-with? does the check without materialising the
 ;; line contents.
+;;
+;; Handles the bare-marker case the same way `cell-marker?` does: a
+;; line whose entire content is `@cell` or `@markdown` (with nothing
+;; following) still counts as a marker, so extraction loops treat
+;; it as a boundary.
 ;; (-> rope? integer? integer? boolean?)
 (define (cell-marker-line? rope total-lines line-idx)
   (if (< line-idx total-lines)
       (let ([line (text.rope->line rope line-idx)])
         (or (text.rope-starts-with? line "@cell ")
-            (text.rope-starts-with? line "@markdown ")))
+            (text.rope-starts-with? line "@markdown ")
+            ;; Bare markers: line content is exactly "@cell\n" or
+            ;; "@markdown\n". Materialise just for this check since
+            ;; rope-starts-with? can't distinguish prefixes from
+            ;; whole-line matches.
+            (let ([s (text.rope->string line)])
+              (or (string=? s "@cell")
+                  (string=? s "@cell\n")
+                  (string=? s "@markdown")
+                  (string=? s "@markdown\n")))))
       #false))

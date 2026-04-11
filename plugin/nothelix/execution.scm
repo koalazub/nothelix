@@ -125,16 +125,31 @@
           [else (find-output-end-line get-line total-lines (+ line-idx 1))]))))
 
 ;;@doc
-;; Extract code lines from a cell, skipping the @cell marker and separator lines.
+;; Extract code lines from a cell, skipping the `@cell` marker,
+;; separator lines, and any stray `@cell` / `@markdown` / `@image`
+;; marker lines that end up inside the cell body.
+;;
+;; The marker-stripping is a last line of defence: `find-cell-code-end`
+;; already stops at the next cell boundary, but a bare `@cell` typed
+;; by the user before the autofill hook got a chance to expand it
+;; would sneak past older versions of that check and land in the
+;; kernel, which then choked with `MethodError: no method matching
+;; var"@cell"`. Stripping here means even if a new marker shape
+;; shows up that extraction doesn't recognise, it still can't reach
+;; the kernel.
 (define (extract-cell-code get-line start end)
   (let loop ([idx (+ start 1)] [acc '()])
     (if (>= idx end)
         (reverse acc)
         (let ([line (get-line idx)])
-          (if (or (string-starts-with? line "# ═══")
-                  (string-starts-with? line "# ─── "))
-              (loop (+ idx 1) acc)
-              (loop (+ idx 1) (cons line acc)))))))
+          (cond
+            [(string-starts-with? line "# ═══") (loop (+ idx 1) acc)]
+            [(string-starts-with? line "# ─── ") (loop (+ idx 1) acc)]
+            [(string-starts-with? line "# @image ") (loop (+ idx 1) acc)]
+            [(cell-marker? line) (loop (+ idx 1) acc)]
+            [(string=? line "@cell") (loop (+ idx 1) acc)]
+            [(string=? line "@markdown") (loop (+ idx 1) acc)]
+            [else (loop (+ idx 1) (cons line acc))])))))
 
 ;;@doc
 ;; Delete lines from `start-line` to `end-line` (start inclusive, end exclusive).
