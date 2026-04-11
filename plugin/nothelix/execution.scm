@@ -475,14 +475,33 @@
          [else
           (set! image-ready #true)]))
 
-     ;; If the image will render, emit its cache marker now so the
-     ;; marker line exists in the buffer. The marker comes before the
-     ;; footer so the visual order is: [marker] [footer] [plot grid].
+     ;; If the image will render, emit its cache marker and then
+     ;; pad the buffer with `image-rows - 1` empty lines so the
+     ;; placeholder grid has real buffer space to land on. The
+     ;; marker line itself is row 0 of the image; the padding
+     ;; lines are rows 1 through `image-rows - 1`.
+     ;;
+     ;; The padding is essential with the helix fork that no
+     ;; longer reserves phantom visual rows for raw_content — if
+     ;; we don't provision real lines here, the grid's placeholder
+     ;; cells on rows 1+ would get overwritten by whatever
+     ;; follows (the footer, the next cell marker, etc).
+     ;;
+     ;; We capture `image-marker-line` BEFORE inserting anything
+     ;; so the anchor computation at the end doesn't have to walk
+     ;; the insert count backward from the current cursor position.
+     (define image-marker-line -1)
      (when image-ready
+       (set! image-marker-line (current-line-number))
        (define cache-path (save-image-to-cache jl-path cell-index image-b64))
        (if (string-starts-with? cache-path "ERROR:")
            (helix.static.insert_string "# @image [render only]\n")
-           (helix.static.insert_string (string-append "# @image " cache-path "\n"))))
+           (helix.static.insert_string (string-append "# @image " cache-path "\n")))
+       ;; Pad with blank lines for the image body.
+       (let loop ([i 1])
+         (when (< i image-rows)
+           (helix.static.insert_string "\n")
+           (loop (+ i 1)))))
 
      ;; If the payload was malformed, surface the error text in place
      ;; of the image.
@@ -508,33 +527,30 @@
      ;; stable anchor point we want for the placeholder grid.
      (helix.static.insert_string "# ─────────────\n")
 
-     ;; Register the raw_content LAST, after every text insert is done,
-     ;; so no further transaction reshuffles its char_idx. The cursor
-     ;; sits on the line immediately after the footer, so that line's
-     ;; char position is exactly where we want the placeholder grid's
-     ;; row 0 to start drawing.
+     ;; Register the raw_content LAST, after every text insert is
+     ;; done, so no further transaction reshuffles its char_idx.
+     ;; The anchor is the `# @image` marker line captured before
+     ;; we started inserting — that's row 0 of the image. The
+     ;; `image-rows - 1` blank lines we padded below the marker
+     ;; give the grid real buffer space to paint on, and with the
+     ;; helix fork's deferred raw_content draw the placeholder
+     ;; cells overwrite whatever the text pass drew on those rows.
      (when image-ready
        (define focus (editor-focus))
        (define doc-id (editor->doc-id focus))
        (define rope (editor->text doc-id))
        (define total-lines (text.rope-len-lines rope))
-       ;; `current-line-number` reads the cursor's line after the
-       ;; footer insert. If that's beyond the rope's last line (can
-       ;; happen if the cell is the last thing in the file and there's
-       ;; no trailing newline), clamp to the last valid line so
-       ;; `text.rope-line->char` doesn't panic.
-       (define anchor-line (current-line-number))
        (define safe-line
          (cond
-           [(< anchor-line 0) 0]
-           [(>= anchor-line total-lines) (- total-lines 1)]
-           [else anchor-line]))
+           [(< image-marker-line 0) 0]
+           [(>= image-marker-line total-lines) (- total-lines 1)]
+           [else image-marker-line]))
        (define char-idx (text.rope-line->char rope safe-line))
        (debug-log
          (string-append "execution.update-cell-output: register image cell="
                         (number->string cell-index)
                         " id=" (number->string image-id)
-                        " anchor-line=" (number->string safe-line)
+                        " marker-line=" (number->string safe-line)
                         " char-idx=" (number->string char-idx)
                         " total-lines=" (number->string total-lines)
                         " payload-bytes=" (number->string (string-length image-payload))
@@ -1027,20 +1043,42 @@
            (cond
              [(and cell-index (> (string-length image-b64) 0))
               (define image-id (cell-index->image-id cell-index))
-              (define image-rows 12)
               (define image-cols 40)
+              (define max-image-rows 12)
+              ;; Count how many blank lines follow this `# @image`
+              ;; line before we hit the next content. That tells us
+              ;; how many real buffer rows the grid actually has to
+              ;; paint on — if the user backspaced some padding, we
+              ;; render a shorter image instead of stomping on the
+              ;; footer or the next cell header.
+              (define available-padding
+                (let count ([j (+ line-idx 1)] [n 0])
+                  (cond
+                    [(>= n max-image-rows) n]
+                    [(>= j total-lines) n]
+                    [else
+                     (define next-line (doc-get-line rope total-lines j))
+                     (define trimmed
+                       (if (string-suffix? next-line "\n")
+                           (substring next-line 0 (- (string-length next-line) 1))
+                           next-line))
+                     (if (= (string-length trimmed) 0)
+                         (count (+ j 1) (+ n 1))
+                         n)])))
+              ;; `image-rows` = marker line (1) + available blank
+              ;; lines below. Clamped to the full grid height so
+              ;; we never exceed the placeholder table's
+              ;; max-dim guarantees.
+              (define image-rows (min max-image-rows (+ 1 available-padding)))
               (define payload (kitty-placeholder-payload image-b64 image-id))
-              (define placeholder-rows (kitty-placeholder-rows image-id image-cols image-rows))
-              ;; Anchor to the line AFTER the marker, not the marker
-              ;; line itself — matches the live-execution anchoring in
-              ;; update-cell-output. `line-idx + 1` resolved via the
-              ;; rope gives us the char position where the placeholder
-              ;; grid should start drawing.
-              (define target-line
-                (if (< (+ line-idx 1) total-lines)
-                    (+ line-idx 1)
-                    line-idx))
-              (define char-pos (text.rope-line->char rope target-line))
+              (define placeholder-rows
+                (kitty-placeholder-rows image-id image-cols image-rows))
+              ;; Anchor at the marker line itself — row 0 of the
+              ;; image overwrites the `# @image …` text on reopen,
+              ;; matching the live-execution anchoring in
+              ;; `update-cell-output`. Rows 1..image-rows-1 cover
+              ;; the blank lines immediately below the marker.
+              (define char-pos (text.rope-line->char rope line-idx))
               (cond
                 [(string-starts-with? payload "ERROR:")
                  (debug-log
@@ -1052,13 +1090,19 @@
                    (string-append "execution.render-cached-images: SKIP cell="
                                   (number->string cell-index)
                                   " reason=grid-too-large"))]
+                [(< image-rows 1)
+                 (debug-log
+                   (string-append "execution.render-cached-images: SKIP cell="
+                                  (number->string cell-index)
+                                  " reason=no-padding"))]
                 [else
                  (debug-log
                    (string-append "execution.render-cached-images: REGISTER cell="
                                   (number->string cell-index)
                                   " id=" (number->string image-id)
                                   " marker-line=" (number->string line-idx)
-                                  " target-line=" (number->string target-line)
+                                  " rows=" (number->string image-rows)
+                                  " padding=" (number->string available-padding)
                                   " char-pos=" (number->string char-pos)
                                   " payload-bytes=" (number->string (string-length payload))
                                   " rows-bytes=" (number->string (string-length placeholder-rows))))
