@@ -17,6 +17,17 @@ use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
 
 steel::declare_module!(build_module);
 
+/// Compile-time BUILD_ID for this libnothelix. Used by
+/// `nothelix doctor` to verify the installed dylib matches the
+/// installed fork binary.
+///
+/// Format:
+///   - `ci-<yyyymmdd>-<short-git-sha>` for CI builds
+///   - `dev-<short-git-sha>[-dirty]`   for local developer builds
+pub fn build_id() -> &'static str {
+    env!("NOTHELIX_BUILD_ID")
+}
+
 fn build_module() -> FFIModule {
     let mut m = FFIModule::new("nothelix");
 

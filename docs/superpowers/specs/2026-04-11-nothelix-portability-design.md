@@ -435,13 +435,18 @@ nothelix v0.2.1 environment check
 | `libnothelix`     | File exists at `~/.steel/native/libnothelix.{dylib,so}`. On macOS also runs        |
 |                   | `codesign --verify` — a broken signature manifests as a kernel `Killed: 9`         |
 |                   | on Steel's first `#%require-dylib`, which is otherwise opaque.                     |
-| `steel engine`    | Reads the Steel engine version from two places: the `STEEL_VERSION` constant       |
-|                   | compiled into `libnothelix` at build time (exposed via a new FFI getter), and      |
-|                   | the same constant baked into `hx-nothelix`. A mismatch means the dylib and the     |
-|                   | fork binary were built against different Steel releases — rare under curl-sh       |
-|                   | install because CI pins both, but catches the case where a user manually swapped   |
-|                   | one of the two files. Fails hard with `steel version drift detected, run           |
-|                   | nothelix upgrade`.                                                                 |
+| `build id`        | Compares the `BUILD_ID` written to the tarball's `VERSION` file at CI              |
+|                   | assembly time against the same `BUILD_ID` written to a `libnothelix.meta`          |
+|                   | sidecar file installed next to the dylib. A match means the dylib, wrapper,       |
+|                   | runtime, cogs, and demo all came from the same CI run (and therefore the same     |
+|                   | pinned Steel revision, fork SHA, and plugin version). A mismatch means someone     |
+|                   | manually swapped a file or mixed installs across releases — fails hard with       |
+|                   | `nothelix build mismatch (libnothelix=<id1>, nothelix=<id2>), run nothelix         |
+|                   | upgrade`. This is a cleaner implementation of the same intent as a naive "Steel    |
+|                   | engine version" check: we don't need an FFI getter because the files the doctor   |
+|                   | reads are already on disk, and BUILD_ID catches the real failure mode (mixed      |
+|                   | installs) rather than the theoretical one (Steel version drift within a single    |
+|                   | CI build, which can't happen because CI builds both binaries in one pipeline).    |
 | `plugin cogs`     | `~/.steel/cogs/nothelix.scm` exists, `~/.steel/cogs/nothelix/` has submodules.     |
 | `HELIX_RUNTIME`   | Resolves the assumed path; confirms `queries/`, `themes/`, `grammars/` exist.      |
 | `grammars`        | Counts `.so`/`.dylib` files under `runtime/grammars/`. Warns if zero.              |

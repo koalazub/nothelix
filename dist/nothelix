@@ -1,0 +1,103 @@
+#!/bin/bash
+# nothelix — research-friendly Jupyter notebooks inside Helix
+#
+# This script is the single entry point peers type. It forwards file
+# arguments to hx-nothelix (the Helix fork binary) and exposes a small
+# set of subcommands for install management.
+#
+# Sourced by bats tests with NOTHELIX_TEST_MODE=1 to avoid exec'ing
+# hx-nothelix during testing. In test mode, commands that would exec
+# print the command line they WOULD run and exit 0.
+
+set -euo pipefail
+
+# ─── Paths ────────────────────────────────────────────────────────────
+NOTHELIX_BIN="${NOTHELIX_BIN:-$HOME/.local/bin}"
+NOTHELIX_SHARE="${NOTHELIX_SHARE:-${XDG_DATA_HOME:-$HOME/.local/share}/nothelix}"
+STEEL_HOME="${STEEL_HOME:-$HOME/.steel}"
+HX_NOTHELIX="$NOTHELIX_BIN/hx-nothelix"
+DEMO_NOTEBOOK="$NOTHELIX_SHARE/examples/demo.jl"
+VERSION_FILE="$NOTHELIX_SHARE/VERSION"
+
+export HELIX_RUNTIME="$NOTHELIX_SHARE/runtime"
+export STEEL_HOME
+
+# ─── Test mode helper ─────────────────────────────────────────────────
+# In test mode we print what we WOULD exec instead of actually execing.
+_run_or_print() {
+    if [ "${NOTHELIX_TEST_MODE:-}" = "1" ]; then
+        echo "$*"
+        exit 0
+    fi
+    exec "$@"
+}
+
+# ─── Usage ────────────────────────────────────────────────────────────
+usage() {
+    cat <<EOF
+nothelix — Jupyter-style notebooks inside Helix
+
+Usage:
+  nothelix                      Open the bundled demo notebook
+  nothelix <file> [<file>...]   Open files with hx-nothelix
+  nothelix upgrade              Re-run the installer to upgrade in place
+  nothelix uninstall            Remove nothelix (see: nothelix uninstall --help)
+  nothelix doctor [--smoke]     Run environment checks
+  nothelix config [show|edit|path]  Inspect or edit effective config
+  nothelix reset [--lsp|--kernel|--all]  Reset runtime state
+  nothelix version              Print version metadata
+  nothelix --help / -h          Show this help
+
+Install dir: $NOTHELIX_SHARE
+Steel home:  $STEEL_HOME
+Report bugs at https://github.com/koalazub/nothelix/issues
+EOF
+}
+
+# ─── Command dispatch ─────────────────────────────────────────────────
+case "${1:-}" in
+    --help|-h|help)
+        usage
+        exit 0
+        ;;
+    "")
+        _run_or_print "$HX_NOTHELIX" "$DEMO_NOTEBOOK"
+        ;;
+    version)
+        if [ ! -f "$VERSION_FILE" ]; then
+            echo "nothelix: VERSION file not found at $VERSION_FILE" >&2
+            echo "Run: nothelix upgrade" >&2
+            exit 1
+        fi
+        # Parse key=value lines from VERSION
+        # shellcheck disable=SC1090
+        source "$VERSION_FILE"
+        cat <<EOF
+nothelix ${NOTHELIX_VERSION:-unknown}
+  build id:     ${BUILD_ID:-unknown}
+  helix fork:   koalazub/helix@${FORK_SHA:-unknown} (${FORK_BRANCH:-unknown})
+  libnothelix:  ${LIBNOTHELIX_VERSION:-unknown}
+  install dir:  $NOTHELIX_SHARE
+  steel home:   $STEEL_HOME
+  installed:    ${INSTALL_DATE:-unknown}
+EOF
+        if command -v julia >/dev/null 2>&1; then
+            julia_path=$(command -v julia)
+            julia_version=$(julia --version 2>&1 | head -1)
+            echo "  julia:        $julia_version ($julia_path)"
+        else
+            echo "  julia:        not found on PATH"
+        fi
+        exit 0
+        ;;
+    upgrade|uninstall|doctor|config|reset)
+        # Subcommand stubs — implemented in later tasks. For now, echo
+        # "not implemented" so the dispatcher is in place but callers
+        # get a clear signal.
+        echo "nothelix: '$1' not yet implemented" >&2
+        exit 1
+        ;;
+    *)
+        _run_or_print "$HX_NOTHELIX" "$@"
+        ;;
+esac
