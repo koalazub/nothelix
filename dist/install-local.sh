@@ -112,6 +112,11 @@ place_dir "$TARBALL_DIR/share/nothelix/examples" "$SHARE_DIR/examples"
 # LSP env scaffold (Project.toml, Manifest.toml — NOT depot/)
 place_dir "$TARBALL_DIR/share/nothelix/lsp" "$SHARE_DIR/lsp"
 
+# Doctor helper scripts
+if [ -d "$TARBALL_DIR/share/nothelix/dist" ]; then
+    place_dir "$TARBALL_DIR/share/nothelix/dist" "$SHARE_DIR/dist"
+fi
+
 # Version metadata
 place_file "$TARBALL_DIR/VERSION" "$SHARE_DIR/VERSION"
 

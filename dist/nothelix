@@ -90,7 +90,49 @@ EOF
         fi
         exit 0
         ;;
-    upgrade|uninstall|doctor|config|reset)
+    doctor)
+        # Locate the doctor helper dir. Two possibilities:
+        #   - Installed: $NOTHELIX_SHARE/dist/doctor/
+        #   - Dev: the dist/doctor/ dir next to this script
+        doctor_dir=""
+        if [ -d "$NOTHELIX_SHARE/dist/doctor" ]; then
+            doctor_dir="$NOTHELIX_SHARE/dist/doctor"
+        elif [ -d "$(dirname "$0")/doctor" ]; then
+            doctor_dir="$(dirname "$0")/doctor"
+        fi
+        if [ -z "$doctor_dir" ]; then
+            echo "nothelix: doctor helpers not found (looked in $NOTHELIX_SHARE/dist/doctor and $(dirname "$0")/doctor)" >&2
+            exit 1
+        fi
+
+        # shellcheck disable=SC1091
+        . "$doctor_dir/static.sh"
+
+        # Additional env the static checks read
+        export NOTHELIX_BIN
+        export HX_NOTHELIX
+        export NOTHELIX_SHARE
+        export STEEL_HOME
+        export VERSION_FILE
+        export HELIX_RUNTIME
+
+        version_tag="unknown"
+        if [ -f "$VERSION_FILE" ]; then
+            version_tag=$(grep '^NOTHELIX_VERSION=' "$VERSION_FILE" | head -1 | cut -d= -f2)
+        fi
+        echo "nothelix doctor (${version_tag:-unknown})"
+        run_static_doctor_checks
+        printf '%s' "$DOCTOR_CHECKS_OUTPUT"
+        echo ""
+        if [ "$DOCTOR_FAIL_COUNT" -eq 0 ]; then
+            echo "Ready to go ($DOCTOR_WARN_COUNT warnings, 0 failures)."
+            exit 0
+        else
+            echo "$DOCTOR_FAIL_COUNT checks failed, $DOCTOR_WARN_COUNT warnings. Run 'nothelix upgrade' or fix manually using the hints above."
+            exit 1
+        fi
+        ;;
+    upgrade|uninstall|config|reset)
         # Subcommand stubs — implemented in later tasks. For now, echo
         # "not implemented" so the dispatcher is in place but callers
         # get a clear signal.

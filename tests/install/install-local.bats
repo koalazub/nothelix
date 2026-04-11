@@ -12,6 +12,8 @@ setup() {
     mkdir -p "$TARBALL_DIR/share/nothelix/examples"
     mkdir -p "$TARBALL_DIR/share/nothelix/plugin/nothelix"
     mkdir -p "$TARBALL_DIR/share/nothelix/lsp"
+    mkdir -p "$TARBALL_DIR/share/nothelix/dist/doctor"
+    echo "# fake doctor helper" > "$TARBALL_DIR/share/nothelix/dist/doctor/static.sh"
 
     # Stub files the installer will copy
     echo "#!/bin/bash" > "$TARBALL_DIR/bin/hx-nothelix"
