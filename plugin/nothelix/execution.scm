@@ -163,6 +163,56 @@
             [else (loop (+ idx 1) (cons line acc))])))))
 
 ;;@doc
+;; True when the given rope line (possibly trailing `\n`) is empty or
+;; contains only spaces/tabs. Used to absorb padding blanks around the
+;; output block so re-runs don't let them compound.
+(define (line-blank? line)
+  (define trimmed
+    (if (string-suffix? line "\n")
+        (substring line 0 (- (string-length line) 1))
+        line))
+  (define len (string-length trimmed))
+  (let loop ([i 0])
+    (cond
+      [(>= i len) #true]
+      [(or (char=? (string-ref trimmed i) #\space)
+           (char=? (string-ref trimmed i) #\tab))
+       (loop (+ i 1))]
+      [else #false])))
+
+;;@doc
+;; Walk backward from `start - 1` while the line is blank; return the
+;; lowest index that should still be deleted. Stops walking at
+;; `floor-line` (exclusive lower bound).
+(define (expand-delete-start-backward get-line floor-line start)
+  (let loop ([i (- start 1)])
+    (cond
+      [(<= i floor-line) (+ floor-line 1)]
+      [(line-blank? (get-line i)) (loop (- i 1))]
+      [else (+ i 1)])))
+
+;;@doc
+;; Walk forward from `end` while the line is blank; return the lowest
+;; index that should NOT be deleted (i.e. first non-blank line).
+(define (expand-delete-end-forward get-line total-lines end)
+  (let loop ([i end])
+    (cond
+      [(>= i total-lines) i]
+      [(line-blank? (get-line i)) (loop (+ i 1))]
+      [else i])))
+
+;;@doc
+;; Walk backward from `start - 1` looking for the first non-blank line
+;; (the actual last line of code). Stops at `floor-line` so we never
+;; cross past the cell header.
+(define (find-last-non-blank-line-before get-line floor-line start)
+  (let loop ([i (- start 1)])
+    (cond
+      [(<= i floor-line) (+ floor-line 1)]
+      [(line-blank? (get-line i)) (loop (- i 1))]
+      [else i])))
+
+;;@doc
 ;; Delete lines from `start-line` to `end-line` (start inclusive, end exclusive).
 ;;
 ;; Uses a single range-based selection and a single delete_selection call,
@@ -723,17 +773,37 @@
                  [(string-contains? path ".py") "python"]
                  [else "julia"]))
 
-  ;; Find and delete existing output section if present
+  ;; Find and delete existing output section if present. Expand the
+  ;; delete range through any blank lines padding the block on either
+  ;; side — otherwise re-runs of the same cell leave one leftover
+  ;; blank above the header and one below the footer each time,
+  ;; which compounds into the "way more padding than required"
+  ;; scenery the user sees after running a notebook more than once.
   (define output-start (find-output-start get-line total-lines cell-code-end))
 
   (when output-start
     (define output-end (find-output-end-line get-line total-lines (+ output-start 1)))
-    (delete-line-range output-start output-end))
+    (define extended-start
+      (expand-delete-start-backward get-line cell-start output-start))
+    (define extended-end
+      (expand-delete-end-forward get-line total-lines output-end))
+    (delete-line-range extended-start extended-end))
 
-  ;; Position cursor at end of last code line
-  (define insert-at-line (- cell-code-end 1))
+  ;; Position cursor at the last real line of code (skipping any
+  ;; blank padding that might have survived from earlier runs — on
+  ;; fresh cells this degenerates to `cell-code-end - 1`). We use
+  ;; `goto_line_end_newline` (the command that parks the cursor AT
+  ;; the `\n` char index) rather than `goto_line_end`, which uses
+  ;; `prev_grapheme_boundary` and therefore lands BEFORE the last
+  ;; grapheme on the line. With plain `goto_line_end`, inserting
+  ;; `"\n\n# ─── Output ───\n"` here would slice the last char of
+  ;; code off and strand it as a dangling line below the output
+  ;; footer — visible for multi-byte chars like `¹` and for every
+  ;; trailing `)` / `]` that the user happens to end a cell on.
+  (define insert-at-line
+    (find-last-non-blank-line-before get-line cell-start cell-code-end))
   (helix.goto (number->string (+ insert-at-line 1)))
-  (helix.static.goto_line_end)
+  (helix.static.goto_line_end_newline)
 
   ;; Get kernel for this notebook (async — may need to start one)
   (define notebook-path (editor-document->path doc-id))
@@ -926,18 +996,33 @@
         ;; Find where code ends
         (define cell-code-end (find-cell-code-end get-line updated-total-lines (+ cell-marker-line 1)))
 
-        ;; Delete existing output if present
+        ;; Delete existing output if present. Expand the delete
+        ;; range through any blank lines on either side of the block
+        ;; so multiple `:execute-all-cells` passes don't accumulate
+        ;; a growing cushion of empty lines around the footer — this
+        ;; is the "way more padding than required" the user hits
+        ;; after running the whole notebook twice.
         (define output-start (find-output-start get-line updated-total-lines cell-code-end))
         (when output-start
           (define output-end (find-output-end-line get-line updated-total-lines (+ output-start 1)))
-          (delete-line-range output-start output-end))
+          (define extended-start
+            (expand-delete-start-backward get-line cell-marker-line output-start))
+          (define extended-end
+            (expand-delete-end-forward get-line updated-total-lines output-end))
+          (delete-line-range extended-start extended-end))
 
-        ;; Position cursor and insert the output header only. The
-        ;; spinner lives in the status line so we don't churn the
-        ;; undo history with transient spinner-frame text (see
-        ;; execute-cell for the same reasoning).
-        (helix.goto (number->string cell-code-end))
-        (helix.static.goto_line_end)
+        ;; Position cursor at the true last non-blank line of code
+        ;; (not `cell-code-end - 1`, which could be a leftover blank
+        ;; from a previous run). Then use `goto_line_end_newline`
+        ;; rather than `goto_line_end`: the latter walks back one
+        ;; grapheme with `prev_grapheme_boundary` and would slice
+        ;; the last char of code off, stranding it below the output
+        ;; footer — visible for `¹` and every trailing `)` / `]`
+        ;; user happens to end a cell on.
+        (define insert-at-line
+          (find-last-non-blank-line-before get-line cell-marker-line cell-code-end))
+        (helix.goto (number->string (+ insert-at-line 1)))
+        (helix.static.goto_line_end_newline)
         (spinner-reset)
         (define spinner-frame (spinner-next-frame))
         (define executed-count (- total-count (length remaining-indices)))

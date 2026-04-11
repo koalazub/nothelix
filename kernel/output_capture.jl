@@ -348,6 +348,11 @@ function capture_toplevel(mod::Module, code::String)
     code_error = nothing
     code_stacktrace = nothing
 
+    # Track whether we pushed a replacement TextDisplay so we can
+    # pop exactly what we pushed (and not anything the user's code
+    # may have pushed during execution).
+    display_pushed = false
+
     try
         # Redirect output BEFORE executing code
         rd_out, wr_out = redirect_stdout()
@@ -366,6 +371,23 @@ function capture_toplevel(mod::Module, code::String)
                 data = String(readavailable(rd_err))
                 write(stderr_buf, data)
             end
+        end
+
+        # `Base.Multimedia.displays` was built at kernel startup with
+        # a `TextDisplay(stdout)` that holds the ORIGINAL stdout ref,
+        # so `display(x)` still writes to the terminal even after we
+        # redirected `stdout` above. That's why a cell like
+        # `display(A); print(A)` showed nothing from `display` — it
+        # escaped the pipe and went to the kernel's real stdout.
+        #
+        # Push a fresh TextDisplay that closes over the *new* (piped)
+        # stdout so `display(x)` routes through our capture. Pop it in
+        # the `finally`-ish cleanup below.
+        try
+            pushdisplay(TextDisplay(stdout))
+            display_pushed = true
+        catch e
+            capture_log("pushdisplay(TextDisplay(stdout)) failed: $e")
         end
 
         # Execute code with REPL-like soft scope semantics
@@ -389,6 +411,15 @@ function capture_toplevel(mod::Module, code::String)
             code_stacktrace = catch_backtrace()
         end
 
+        # Pop the TextDisplay we pushed above (if any) so we don't
+        # leave the display stack growing across cell executions.
+        if display_pushed
+            try popdisplay() catch e
+                capture_log("popdisplay() failed: $e")
+            end
+            display_pushed = false
+        end
+
         # Restore stdout/stderr - these should not fail, but if they do, don't
         # override a code execution error
         try redirect_stdout(old_stdout) catch end
@@ -410,7 +441,11 @@ function capture_toplevel(mod::Module, code::String)
             code_error = e
             code_stacktrace = catch_backtrace()
         end
-        # Ensure we restore stdout/stderr on error
+        # Ensure we restore stdout/stderr and pop display on error
+        if display_pushed
+            try popdisplay() catch end
+            display_pushed = false
+        end
         try redirect_stdout(old_stdout) catch end
         try redirect_stderr(old_stderr) catch end
     end
