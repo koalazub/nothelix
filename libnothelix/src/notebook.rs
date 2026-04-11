@@ -620,4 +620,67 @@ mod tests {
         assert_eq!(nb["cells"][0]["cell_type"], "code");
         assert_eq!(nb["cells"][2]["cell_type"], "markdown");
     }
+
+    #[test]
+    fn parse_bare_cell_marker_is_a_boundary_and_stripped_from_body() {
+        // Regression test for the "LoadError: MethodError: no method
+        // matching var\"@cell\"" crash that happens when a user typed
+        // a bare `@cell` line mid-cell before the autofill hook
+        // expanded it. The bare line must:
+        //   1. act as a cell boundary (so we don't collapse two
+        //      logical cells into one body),
+        //   2. never appear in any cell's emitted code string (so
+        //      the Julia kernel never tries to re-interpret it as
+        //      a 0-arg macro call and blow up on the strict
+        //      `@cell(index, exec_count, body)` definition from
+        //      ~/.local/share/nothelix/kernel/cell_macros.jl).
+        //
+        // Also exercises `@cell 0:julia` (no space between the index
+        // and the language tag — our parser's strip_prefix is tolerant
+        // but early versions of this code fell over when the index
+        // wasn't followed by whitespace).
+        let src = "\
+@cell 0:julia
+
+using DSP
+
+# building a matrix
+
+@cell
+
+A = zeros(8, 8)
+
+display(A)
+";
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), src).unwrap();
+
+        let (cells, _) = parse_jl_file(&tmp.path().to_string_lossy()).unwrap();
+
+        // Two cells: the `@cell 0:julia` header and the bare `@cell`.
+        assert_eq!(cells.len(), 2, "bare `@cell` must split into its own cell");
+
+        // Neither cell's code should contain any `@cell` line — the
+        // marker-stripping pass in parse_jl_file should have removed
+        // them along with `# ─── Output ───` separators.
+        for (i, cell) in cells.iter().enumerate() {
+            assert!(
+                !cell.code.contains("@cell"),
+                "cell {i} still contains @cell: {:?}",
+                cell.code
+            );
+            assert!(
+                !cell.code.contains("@markdown"),
+                "cell {i} still contains @markdown: {:?}",
+                cell.code
+            );
+        }
+
+        // Cell 0 should have the imports and comment; cell 1 should
+        // have the matrix code. Confirm the content actually made it
+        // through (i.e. we didn't over-strip everything).
+        assert!(cells[0].code.contains("using DSP"));
+        assert!(cells[1].code.contains("A = zeros(8, 8)"));
+        assert!(cells[1].code.contains("display(A)"));
+    }
 }

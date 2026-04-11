@@ -91,35 +91,44 @@
             (find-cell-start-line get-line (- line-idx 1))))))
 
 ;;@doc
-;; Find where cell code ends: the next marker, output section header, or EOF.
+;; Find where cell code ends: the next marker, output section
+;; header, or EOF. Anchors the output-header match with
+;; `string-starts-with?` instead of `string-contains?` so a raw
+;; stdout fragment that happens to include "# ─── Output" mid-line
+;; can't fake a cell boundary.
 (define (find-cell-code-end get-line total-lines line-idx)
   (if (>= line-idx total-lines) total-lines
       (let ([line (get-line line-idx)])
         (if (or (cell-marker? line)
                 (string-starts-with? line "# ═══")
-                (string-contains? line "# ─── Output"))
+                (string-starts-with? line "# ─── Output"))
             line-idx
             (find-cell-code-end get-line total-lines (+ line-idx 1))))))
 
 ;;@doc
 ;; Find the "# --- Output ---" header line starting from `line-idx`.
-;; Returns #false if no output section exists before the next cell marker or EOF.
+;; Returns #false if no output section exists before the next cell
+;; marker or EOF. Uses `string-starts-with?` so mid-line text that
+;; happens to contain the header phrase is not mistaken for a
+;; header line.
 (define (find-output-start get-line total-lines line-idx)
   (if (>= line-idx total-lines) #false
       (let ([line (get-line line-idx)])
         (cond
-          [(string-contains? line "# ─── Output ───") line-idx]
+          [(string-starts-with? line "# ─── Output ───") line-idx]
           [(or (cell-marker? line)
                (string-starts-with? line "# ═══")) #false]
           [else (find-output-start get-line total-lines (+ line-idx 1))]))))
 
 ;;@doc
-;; Find the end of an output section (the "# -----" footer, or next marker).
+;; Find the end of an output section (the "# -----" footer, or next
+;; marker). Anchored with `string-starts-with?` for the same reason
+;; as `find-output-start`.
 (define (find-output-end-line get-line total-lines line-idx)
   (if (>= line-idx total-lines) line-idx
       (let ([line (get-line line-idx)])
         (cond
-          [(string-contains? line "# ─────────────") (+ line-idx 1)]
+          [(string-starts-with? line "# ─────────────") (+ line-idx 1)]
           [(or (cell-marker? line)
                (string-starts-with? line "# ═══")) line-idx]
           [else (find-output-end-line get-line total-lines (+ line-idx 1))]))))
@@ -242,6 +251,39 @@
       [else (scan (+ i 1))])))
 
 ;;@doc
+;; Prefix every line of `text` with `# ` so it's a safe Julia comment
+;; when inserted into a notebook buffer. Preserves the original line
+;; structure (including empty lines) and normalises the trailing
+;; newline so there's exactly one.
+;;
+;; This is the defense against raw stdout / stderr / output_repr
+;; leaking out of the output section and being picked up as real
+;; Julia code by:
+;;
+;;   * The Julia LSP's StaticLint, which parses the whole buffer and
+;;     throws "extra tokens after end of expression" all over the
+;;     output block when it finds non-comment text there.
+;;   * The next `:execute-cell` extraction, which walks line-by-line
+;;     between cell markers and forwards anything that isn't itself
+;;     a marker / separator — raw matrix output with lines like
+;;     `1.0  1.0  0.0 …` would be forwarded into the kernel as code
+;;     and usually destroys the cell's next execution.
+(define (commentify text)
+  (cond
+    [(= (string-length text) 0) ""]
+    [else
+     (define trimmed
+       (if (string-suffix? text "\n")
+           (substring text 0 (- (string-length text) 1))
+           text))
+     (string-append
+       (string-join
+         (map (lambda (line) (string-append "# " line))
+              (string-split trimmed "\n"))
+         "\n")
+       "\n")]))
+
+;;@doc
 ;; Locate the "# ─── Output ───" header line for a specific cell.
 ;; Scans forward from the cell's `@cell N` marker and returns the
 ;; 0-indexed line index of the header, or `#false` if not found
@@ -313,11 +355,15 @@
      (define stderr-text (json-get result-json "stderr"))
      (define has-error (equal? (json-get-bool result-json "has_error") "true"))
 
-     ;; Insert stdout if present
+     ;; Insert stdout if present, line-commented so it can't pollute
+     ;; the buffer with raw Julia tokens. A `display(A)` call that
+     ;; prints a multi-line matrix would previously land in the
+     ;; buffer as `8×8 Matrix{Float64}:\n 1.0 1.0 …` — the LSP
+     ;; parses those continuation lines as code and complains, and
+     ;; the next `:execute-cell` re-runs with that text as part of
+     ;; the cell body, which blows up.
      (when (> (string-length stdout-text) 0)
-       (helix.static.insert_string stdout-text)
-       (when (not (string-suffix? stdout-text "\n"))
-         (helix.static.insert_string "\n")))
+       (helix.static.insert_string (commentify stdout-text)))
 
      ;; Prepare the image payload BEFORE any text insertion so we know
      ;; up front whether we'll render inline or fall through to a text
@@ -370,13 +416,19 @@
      (when (> (string-length image-error-msg) 0)
        (helix.static.insert_string image-error-msg))
 
-     ;; Insert output representation only if no image was rendered
+     ;; Insert output representation only if no image was rendered.
+     ;; Commentified for the same reason as stdout.
      (when (and (not image-ready) (> (string-length output-repr) 0))
-       (helix.static.insert_string (string-append output-repr "\n")))
+       (helix.static.insert_string (commentify output-repr)))
 
-     ;; Insert stderr if present
+     ;; Insert stderr if present, also line-commented. The previous
+     ;; implementation only prefixed the FIRST line with `# stderr: `
+     ;; and dumped the rest raw, which is what produced the big
+     ;; cascade of "extra tokens after end of expression" on multi-
+     ;; line Pkg.add progress output.
      (when (> (string-length stderr-text) 0)
-       (helix.static.insert_string (string-append "# stderr: " stderr-text "\n")))
+       (helix.static.insert_string "# stderr:\n")
+       (helix.static.insert_string (commentify stderr-text)))
 
      ;; Insert footer — the cursor lands on the line AFTER the footer
      ;; (because insert_string just appended a newline), which is the
