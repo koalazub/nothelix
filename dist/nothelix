@@ -141,7 +141,23 @@ EOF
             exit 1
         fi
         ;;
-    upgrade|uninstall|config|reset)
+    config)
+        shift
+        # shellcheck disable=SC1091
+        if [ -f "$(dirname "$0")/config.sh" ]; then
+            . "$(dirname "$0")/config.sh"
+        else
+            # shellcheck disable=SC1091
+            . "$NOTHELIX_SHARE/dist/config.sh"
+        fi
+        case "${1:-show}" in
+            show) nothelix_config_show ;;
+            path) nothelix_config_path ;;
+            edit) nothelix_config_edit ;;
+            *) echo "nothelix config: unknown subcommand: $1" >&2; exit 2 ;;
+        esac
+        ;;
+    upgrade|uninstall|reset)
         # Subcommand stubs — implemented in later tasks. For now, echo
         # "not implemented" so the dispatcher is in place but callers
         # get a clear signal.
