@@ -99,17 +99,17 @@ hx examples/simple.ipynb
 Raw `.ipynb` files are JSON and aren't directly editable, so the first thing to do is convert. Run `:convert-notebook` — nothelix writes out a `.jl` companion file and opens it in place. The cells look like this:
 
 ```
-@cell 0 julia
+@cell 0 :julia
 using Plots
 
-@cell 1 julia
+@cell 1 :julia
 x = 1:10
 y = x.^2
 
 @markdown 2
 # # Results
 
-@cell 3 julia
+@cell 3 :julia
 plot(x, y)
 ```
 
@@ -117,12 +117,35 @@ Run `:execute-all-cells` to walk the cells top-to-bottom. The first run is slow 
 
 To execute a single cell, put your cursor inside it and run `:execute-cell` (or press `<space>nr`). To push your edits back into the original `.ipynb`, run `:sync-to-ipynb`.
 
+### Starting from scratch
+
+You don't need an `.ipynb` to begin with. Nothelix ships a scaffold command and an autofill hook that build up a notebook as you type.
+
+The fastest path from an empty project:
+
+```
+:new-notebook maths.jl
+```
+
+That creates `maths.jl` with a one-cell template and opens it. From there, everything you need to know is **one keystroke away**:
+
+- **Type `@cell` and press space.** A small popup appears asking whether you want a code cell or a markdown cell. Pick one and the plugin stamps the next available cell index, the file's language, and parks the cursor right where you start typing. You never type a number or `:julia` yourself.
+- **Type `@md` (or `@mark`, or `@markdown`) and press space.** Same idea but skips the popup — markdown is unambiguous so the plugin just expands directly.
+- **Press `<space>nn`** on an existing notebook to pop the same picker without typing anything. Useful when you're at the bottom of a cell and want to start another one.
+
+Under the hood, typing any `@<word>` followed by a space on an otherwise-blank line opens the picker — so typos and guesses like `@code` or `@c` still give you something instead of silently doing nothing. You never have to remember the exact marker syntax.
+
+When you save the buffer (`:w`), nothelix runs a quiet renumber pass that compacts the cell indices to a contiguous `0, 1, 2, …` sequence. Holes that appeared from deleting or rearranging cells during editing get cleaned up automatically. If you'd rather trigger it yourself, `:renumber-cells` does the same thing on demand.
+
 ## Usage
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
+| `:new-notebook [path]` | Create a new `.jl` notebook with a starter template and open it |
+| `:new-cell` | Insert a new cell at the cursor (opens the code/markdown picker) |
+| `:renumber-cells` | Renumber `@cell` / `@markdown` markers to a contiguous `0, 1, 2, …` |
 | `:convert-notebook` | Convert the raw JSON to the readable cell format |
 | `:sync-to-ipynb` | Sync edits in the `.jl` file back to the `.ipynb` |
 | `:execute-cell` | Run the code cell under your cursor |
@@ -139,6 +162,7 @@ To execute a single cell, put your cursor inside it and run `:execute-cell` (or 
 | `:kernel-shutdown-all` | Stop all running kernels |
 | `:graphics-check` | Show which graphics protocol is active |
 | `:nothelix-status` | Show full status info |
+| `:nothelix-debug-on` / `:nothelix-debug-off` / `:nothelix-debug-toggle` | Toggle debug logging |
 
 ### Keybindings
 
@@ -147,10 +171,21 @@ Nothelix adds these bindings for `.ipynb` and `.jl` files:
 - `]l` — next cell
 - `[l` — previous cell
 - `<space>nr` — execute cell
-- `<space>nj` — cell picker
+- `<space>nn` — new cell (opens the code/markdown picker)
+- `<space>nj` — cell picker (jump to any cell)
 - `<space>nc` — select cell
 - `<space>ns` — select cell code
 - `<space>no` — select output
+
+### Autofill shortcuts
+
+At the start of a line in a notebook file, these expand automatically when you press space:
+
+| You type | You get |
+|----------|---------|
+| `@cell<space>` | Code / markdown picker, then `@cell N :julia` stamped with the next index |
+| `@md<space>`, `@mark<space>`, `@markdown<space>` | `@markdown N` with the cursor parked after `# ` on the next line |
+| `@<anything><space>` | Same picker as `@cell`, forgiving of typos like `@code` or `@c` |
 
 ## Configuration
 
