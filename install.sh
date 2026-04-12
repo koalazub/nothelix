@@ -57,9 +57,7 @@ fi
 
 # ─── Mode: uninstall ──────────────────────────────────────────────────
 if [ "$MODE" = "uninstall" ]; then
-    # Uninstall is a separate script flow (Task 14).
-    # For now: echo the not-yet-implemented message.
-    echo "install.sh: --uninstall not yet implemented in this task" >&2
+    echo "install.sh: --uninstall not yet implemented" >&2
     echo "install.sh: EXTRA_FLAGS=$EXTRA_FLAGS" >&2
     exit 1
 fi
@@ -156,6 +154,14 @@ if [ "$MODE" = "upgrade" ]; then
     EXTRA_ARGS="--upgrade"
 fi
 "$EXTRACTED_DIR/install-local.sh" "$EXTRACTED_DIR" $EXTRA_ARGS
+
+# Cache the extracted tarball so `nothelix reset` can re-copy files
+# without hitting the network. Overwrites any previous cache.
+NOTHELIX_SHARE_DIR="${NOTHELIX_SHARE:-${XDG_DATA_HOME:-$HOME/.local/share}/nothelix}"
+CACHE_DIR="$NOTHELIX_SHARE_DIR/.cache"
+mkdir -p "$CACHE_DIR"
+rm -rf "$CACHE_DIR/extracted"
+cp -R "$EXTRACTED_DIR" "$CACHE_DIR/extracted"
 
 check_julia
 

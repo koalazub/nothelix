@@ -168,10 +168,16 @@ EOF
         fi
         nothelix_reset "$@"
         ;;
-    upgrade|uninstall)
-        # Subcommand stubs — implemented in later tasks. For now, echo
-        # "not implemented" so the dispatcher is in place but callers
-        # get a clear signal.
+    upgrade)
+        shift
+        url="${NOTHELIX_INSTALL_URL:-https://raw.githubusercontent.com/koalazub/nothelix/main/install.sh}"
+        if [ "${NOTHELIX_TEST_MODE:-}" = "1" ]; then
+            echo "nothelix upgrade: would curl $url | sh -s -- --upgrade $*"
+            exit 0
+        fi
+        exec sh -c "curl -sSL '$url' | sh -s -- --upgrade $*"
+        ;;
+    uninstall)
         echo "nothelix: '$1' not yet implemented" >&2
         exit 1
         ;;

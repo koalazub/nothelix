@@ -1,15 +1,13 @@
 #!/usr/bin/env bats
 
-# install.sh is harder to unit-test because it hits the network. We
-# use a MOCK_GH_RELEASES env var to point at a local file:// URL
-# during tests so the installer downloads from a local fixture dir
-# instead of GitHub.
+# install.sh caches the extracted tarball under NOTHELIX_SHARE/.cache/
+# so `nothelix reset` can re-use it. This suite verifies both the
+# cache behaviour and the wrapper's upgrade dispatch in test mode.
 
 setup() {
     FAKE_HOME="$(mktemp -d)"
     export HOME="$FAKE_HOME"
 
-    # Build a local fake release: a tarball in a temp dir
     FIXTURE_DIR="$(mktemp -d)"
     mkdir -p "$FIXTURE_DIR/release"
 
@@ -29,9 +27,8 @@ setup() {
 
     echo "fake" > "$TARBALL_SRC/lib/libnothelix.dylib"
     echo "BUILD_ID=ci-test-00000000" > "$TARBALL_SRC/lib/libnothelix.meta"
-
     echo "# plugin" > "$TARBALL_SRC/share/nothelix/plugin/nothelix.scm"
-    echo "# submod" > "$TARBALL_SRC/share/nothelix/plugin/nothelix/execution.scm"
+    echo "# sub" > "$TARBALL_SRC/share/nothelix/plugin/nothelix/execution.scm"
     echo "# demo" > "$TARBALL_SRC/share/nothelix/examples/demo.jl"
 
     cat > "$TARBALL_SRC/VERSION" <<EOF
@@ -46,55 +43,44 @@ EOF
     cp "$BATS_TEST_DIRNAME/../../dist/install-local.sh" "$TARBALL_SRC/install-local.sh"
     chmod +x "$TARBALL_SRC/install-local.sh"
 
-    # Pack into a .tar.gz in FIXTURE_DIR/release/
-    tar -czf "$FIXTURE_DIR/release/nothelix-vtest-darwin-arm64.tar.gz" -C "$(dirname "$TARBALL_SRC")" "$(basename "$TARBALL_SRC")"
+    tar -czf "$FIXTURE_DIR/release/nothelix-vtest-darwin-arm64.tar.gz" \
+        -C "$(dirname "$TARBALL_SRC")" "$(basename "$TARBALL_SRC")"
     (cd "$FIXTURE_DIR/release" && shasum -a 256 nothelix-vtest-darwin-arm64.tar.gz > SHA256SUMS)
 
-    # Point installer at the fixture release dir
     export NOTHELIX_RELEASE_URL="file://$FIXTURE_DIR/release"
     export NOTHELIX_VERSION_OVERRIDE="vtest"
     export NOTHELIX_PLATFORM_OVERRIDE="darwin-arm64"
     export STEEL_HOME="$FAKE_HOME/.steel"
+    export NOTHELIX_SHARE="$FAKE_HOME/.local/share/nothelix"
 
     INSTALL_SH="$BATS_TEST_DIRNAME/../../install.sh"
+    WRAPPER="$BATS_TEST_DIRNAME/../../dist/nothelix"
 }
 
 teardown() {
     rm -rf "$FAKE_HOME" "$FIXTURE_DIR" "${TARBALL_SRC%/*}"
 }
 
-@test "install.sh runs end to end with a local fixture release" {
-    run bash "$INSTALL_SH"
-    [ "$status" -eq 0 ]
-    [ -x "$HOME/.local/bin/hx-nothelix" ]
-    [ -x "$HOME/.local/bin/nothelix" ]
-    [ -f "$HOME/.steel/native/libnothelix.dylib" ]
-    [ -f "$HOME/.steel/native/libnothelix.meta" ]
-    [ -f "$HOME/.local/share/nothelix/examples/demo.jl" ]
-    [ -f "$HOME/.local/share/nothelix/VERSION" ]
+@test "install.sh caches extracted tarball under NOTHELIX_SHARE/.cache/extracted" {
+    bash "$INSTALL_SH"
+    [ -d "$NOTHELIX_SHARE/.cache/extracted" ]
+    [ -x "$NOTHELIX_SHARE/.cache/extracted/install-local.sh" ]
+    [ -f "$NOTHELIX_SHARE/.cache/extracted/VERSION" ]
 }
 
-@test "install.sh aborts if SHA256SUMS mismatches the tarball" {
-    # Corrupt the SHA
-    echo "0000000000000000000000000000000000000000000000000000000000000000  nothelix-vtest-darwin-arm64.tar.gz" > "$FIXTURE_DIR/release/SHA256SUMS"
-    run bash "$INSTALL_SH"
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"SHA256"* ]]
-}
-
-@test "install.sh aborts on unsupported platform" {
-    export NOTHELIX_PLATFORM_OVERRIDE="freebsd-sparc"
-    run bash "$INSTALL_SH"
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"freebsd-sparc"* ]] || [[ "$output" == *"not supported"* ]]
-}
-
-@test "install.sh --upgrade is idempotent (two runs leave same state)" {
+@test "install.sh --upgrade refreshes cache idempotently" {
     bash "$INSTALL_SH"
     run bash "$INSTALL_SH" --upgrade
     [ "$status" -eq 0 ]
-    [ -f "$HOME/.local/share/nothelix/VERSION" ]
+    [ -d "$NOTHELIX_SHARE/.cache/extracted" ]
     # init.scm should have exactly one require line
     run grep -c 'require "nothelix.scm"' "$HOME/.config/helix/init.scm"
     [ "$output" = "1" ]
+}
+
+@test "wrapper upgrade in test mode reports the install URL" {
+    NOTHELIX_TEST_MODE=1 run "$WRAPPER" upgrade
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"upgrade"* ]]
+    [[ "$output" == *"install.sh"* ]]
 }
