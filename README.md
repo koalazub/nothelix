@@ -4,11 +4,53 @@ Jupyter notebooks in the Helix editor.
 
 Nothelix brings Jupyter into Helix. Execute cells, see outputs land in place, and render plots inline — all from the modal editor you already use, without detouring through a browser.
 
+## Install
+
+One line on macOS (Apple Silicon) or x86_64 Linux:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/koalazub/nothelix/main/install.sh | sh
+```
+
+That downloads a pre-built tarball matching your OS/arch, places the Helix fork binary, the libnothelix dylib, the plugin cogs, and a runtime + demo notebook under `~/.local/bin` and `~/.local/share/nothelix`, and adds `(require "nothelix.scm")` to `~/.config/helix/init.scm` if it's not already there. After it finishes, run:
+
+```bash
+nothelix
+```
+
+to open the bundled demo notebook. See `nothelix --help` for the full subcommand list (`upgrade`, `uninstall`, `doctor`, `config`, `reset`, `version`).
+
+**Requirements:**
+
+- macOS arm64 or Linux x86_64 (other targets are not yet shipped)
+- A Kitty-protocol terminal — Kitty, Ghostty, or WezTerm — for inline plots
+- Julia 1.9+ on PATH. If you don't have it, install [juliaup](https://julialang.org/install/) first.
+
+**If something's broken:**
+
+```bash
+nothelix doctor
+```
+
+runs a set of environment checks and tells you exactly what's wrong. Add `--smoke` to additionally spawn a Julia kernel and verify the full execution pipeline end to end.
+
+**To uninstall:**
+
+```bash
+nothelix uninstall
+```
+
+Removes every file this install placed. Leaves `~/.julia/`, your existing Helix config, and your own notebooks completely untouched. Use `--purge` to also scrub `~/.cache/helix/helix.log`.
+
 ## Why Nothelix?
 
 Jupyter's browser interface is great for exploration but painful if you live in a terminal. Nothelix lets you edit `.ipynb` files at the speed of modal editing, run cells against a real kernel, and view plot outputs inline without leaving Helix.
 
 Under the hood, a Rust library handles everything performance-sensitive — notebook parsing, kernel IPC, image decoding, Kitty protocol encoding — while Steel, Helix's embedded Scheme, drives the editor integration.
+
+## Building from source
+
+If you need to iterate on the fork, libnothelix, or the plugin, skip the curl installer above and follow the manual build steps below.
 
 ## Requirements
 
