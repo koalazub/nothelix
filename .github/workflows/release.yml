@@ -1,0 +1,188 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Override tag (for manual runs)'
+        required: false
+
+jobs:
+  build:
+    name: build-${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: darwin-arm64
+            runner: macos-14
+            triple: aarch64-apple-darwin
+            dylib: libnothelix.dylib
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            dylib: libnothelix.so
+    steps:
+      - name: Checkout nothelix
+        uses: actions/checkout@v4
+
+      - name: Read .helix-fork-rev
+        id: fork
+        run: |
+          SHA=$(cat .helix-fork-rev)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout helix fork
+        uses: actions/checkout@v4
+        with:
+          repository: koalazub/helix
+          ref: ${{ steps.fork.outputs.sha }}
+          path: helix
+
+      - name: Verify fork checkout matches pin
+        run: |
+          ACTUAL=$(cd helix && git rev-parse HEAD)
+          if [ "$ACTUAL" != "${{ steps.fork.outputs.sha }}" ]; then
+            echo "fork checkout mismatch: expected ${{ steps.fork.outputs.sha }}, got $ACTUAL"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.triple }}
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            helix/target
+          key: cargo-${{ matrix.target.name }}-${{ hashFiles('**/Cargo.lock', 'helix/Cargo.lock') }}
+
+      - name: Build hx-nothelix (fork)
+        working-directory: helix
+        run: cargo build --release --features steel --target ${{ matrix.target.triple }}
+
+      - name: Build libnothelix
+        env:
+          NOTHELIX_CI_BUILD: '1'
+          NOTHELIX_BUILD_DATE: ${{ github.run_id }}
+        run: cargo build --release --target ${{ matrix.target.triple }} -p libnothelix
+
+      - name: Build grammars
+        working-directory: helix
+        run: |
+          ./target/${{ matrix.target.triple }}/release/hx --grammar fetch
+          ./target/${{ matrix.target.triple }}/release/hx --grammar build
+
+      - name: Ad-hoc codesign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - helix/target/${{ matrix.target.triple }}/release/hx
+          codesign --force --sign - target/${{ matrix.target.triple }}/release/${{ matrix.target.dylib }}
+
+      - name: Assemble tarball
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          if [ -z "$TAG_NAME" ]; then TAG_NAME="vdev"; fi
+          STAGING="nothelix-${TAG_NAME}-${{ matrix.target.name }}"
+          mkdir -p "$STAGING/bin" "$STAGING/lib"
+          mkdir -p "$STAGING/share/nothelix/runtime"
+          mkdir -p "$STAGING/share/nothelix/examples"
+          mkdir -p "$STAGING/share/nothelix/plugin"
+          mkdir -p "$STAGING/share/nothelix/lsp"
+          mkdir -p "$STAGING/share/nothelix/kernel-scripts"
+          mkdir -p "$STAGING/share/nothelix/dist"
+
+          cp helix/target/${{ matrix.target.triple }}/release/hx "$STAGING/bin/hx-nothelix"
+          cp dist/nothelix "$STAGING/bin/nothelix"
+          cp lsp/julia-lsp "$STAGING/bin/julia-lsp"
+
+          cp target/${{ matrix.target.triple }}/release/${{ matrix.target.dylib }} "$STAGING/lib/"
+          ./target/${{ matrix.target.triple }}/release/nothelix-meta > "$STAGING/lib/libnothelix.meta"
+
+          cp -R helix/runtime/* "$STAGING/share/nothelix/runtime/"
+
+          cp plugin/nothelix.scm "$STAGING/share/nothelix/plugin/"
+          cp -R plugin/nothelix "$STAGING/share/nothelix/plugin/"
+
+          cp examples/demo.jl "$STAGING/share/nothelix/examples/"
+
+          cp lsp/Project.toml lsp/Manifest.toml "$STAGING/share/nothelix/lsp/"
+
+          cp kernel/*.jl "$STAGING/share/nothelix/kernel-scripts/"
+
+          cp -R dist/doctor "$STAGING/share/nothelix/dist/"
+          cp dist/config.sh dist/reset.sh dist/uninstall.sh "$STAGING/share/nothelix/dist/"
+
+          cp dist/install-local.sh "$STAGING/install-local.sh"
+
+          FORK_SHA=$(cat .helix-fork-rev)
+          BUILD_ID="ci-$(date -u +%Y%m%d)-$(git rev-parse --short=12 HEAD)"
+          LIBNOTHELIX_VERSION=$(grep '^version' libnothelix/Cargo.toml | head -1 | cut -d'"' -f2)
+          cat > "$STAGING/VERSION" <<EOF
+          NOTHELIX_VERSION=${TAG_NAME}
+          BUILD_ID=${BUILD_ID}
+          FORK_SHA=${FORK_SHA}
+          FORK_BRANCH=feature/inline-image-rendering
+          LIBNOTHELIX_VERSION=${LIBNOTHELIX_VERSION}
+          INSTALL_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+          tar -czf "${STAGING}.tar.gz" "$STAGING"
+          echo "TARBALL=${STAGING}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Compute SHA256
+        run: |
+          if command -v shasum >/dev/null; then
+            shasum -a 256 "$TARBALL" > "${TARBALL}.sha256"
+          else
+            sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          fi
+
+      - name: Upload tarball + sha
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.name }}
+          path: |
+            ${{ env.TARBALL }}
+            ${{ env.TARBALL }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Combine SHA256SUMS
+        run: |
+          mkdir -p release
+          find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+          find artifacts -name '*.sha256' -exec cat {} \; > release/SHA256SUMS
+          cp install.sh release/install.sh
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS
+            release/install.sh
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
