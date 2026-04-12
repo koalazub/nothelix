@@ -134,12 +134,11 @@
 
           postInstall = ''
             mkdir -p $out/lib $out/bin
-            if [ -f $out/lib/libnothelix.dylib ]; then
-              true
-            elif [ -f target/*/release/libnothelix.dylib ]; then
-              cp target/*/release/libnothelix.dylib $out/lib/
-            elif [ -f target/*/release/libnothelix.so ]; then
-              cp target/*/release/libnothelix.so $out/lib/
+            # cargoInstallHook places binaries but not cdylib outputs.
+            # Find the dylib wherever cargo left it and copy to $out/lib.
+            dylib=$(find target -name 'libnothelix.dylib' -o -name 'libnothelix.so' 2>/dev/null | head -1)
+            if [ -n "$dylib" ] && [ ! -f "$out/lib/$(basename "$dylib")" ]; then
+              cp "$dylib" "$out/lib/"
             fi
             if [ -f $out/bin/nothelix-meta ]; then
               $out/bin/nothelix-meta > $out/lib/libnothelix.meta
