@@ -1,0 +1,27 @@
+name: shellcheck
+
+on:
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'dist/**.sh'
+      - 'dist/nothelix'
+      - '.github/workflows/shellcheck.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'dist/**.sh'
+      - 'dist/nothelix'
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck install.sh
+          shellcheck dist/nothelix
+          find dist -name '*.sh' -print0 | xargs -0 shellcheck
