@@ -178,8 +178,16 @@ EOF
         exec sh -c "curl -sSL '$url' | sh -s -- --upgrade $*"
         ;;
     uninstall)
-        echo "nothelix: '$1' not yet implemented" >&2
-        exit 1
+        shift
+        # shellcheck disable=SC1091
+        if [ -f "$(dirname "$0")/uninstall.sh" ]; then
+            . "$(dirname "$0")/uninstall.sh"
+        else
+            # shellcheck disable=SC1091
+            . "$NOTHELIX_SHARE/dist/uninstall.sh"
+        fi
+        export NOTHELIX_BIN NOTHELIX_SHARE STEEL_HOME
+        nothelix_uninstall "$@"
         ;;
     *)
         _run_or_print "$HX_NOTHELIX" "$@"
