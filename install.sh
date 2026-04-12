@@ -63,8 +63,38 @@ if [ "$MODE" = "uninstall" ]; then
 fi
 
 # ─── Resolve release URL ──────────────────────────────────────────────
-RELEASE_URL="${NOTHELIX_RELEASE_URL:-https://github.com/koalazub/nothelix/releases/latest/download}"
-VERSION="${NOTHELIX_VERSION_OVERRIDE:-latest}"
+# For local testing (NOTHELIX_RELEASE_URL = file://...) or a pinned
+# version override (NOTHELIX_VERSION_OVERRIDE), use those values
+# directly. Otherwise query the GitHub API for the latest release tag
+# so the filename (nothelix-<tag>-<platform>.tar.gz) matches what CI
+# actually uploaded.
+VERSION="${NOTHELIX_VERSION_OVERRIDE:-}"
+RELEASE_URL="${NOTHELIX_RELEASE_URL:-}"
+
+if [ -z "$VERSION" ] && [ -z "$RELEASE_URL" ]; then
+    api_url="https://api.github.com/repos/koalazub/nothelix/releases/latest"
+    if command -v curl >/dev/null 2>&1; then
+        latest_tag=$(curl -fsSL "$api_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    elif command -v wget >/dev/null 2>&1; then
+        latest_tag=$(wget -qO- "$api_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    else
+        echo "install.sh: need curl or wget to resolve latest release" >&2
+        exit 1
+    fi
+    if [ -z "$latest_tag" ]; then
+        echo "install.sh: could not resolve latest release tag from $api_url" >&2
+        echo "install.sh: set NOTHELIX_VERSION_OVERRIDE=v0.1.0 (or similar) to pin" >&2
+        exit 1
+    fi
+    VERSION="$latest_tag"
+fi
+
+if [ -z "$VERSION" ]; then
+    VERSION="latest"
+fi
+if [ -z "$RELEASE_URL" ]; then
+    RELEASE_URL="https://github.com/koalazub/nothelix/releases/download/$VERSION"
+fi
 
 TARBALL="nothelix-${VERSION}-${PLATFORM}.tar.gz"
 TARBALL_URL="$RELEASE_URL/$TARBALL"

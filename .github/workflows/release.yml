@@ -129,7 +129,12 @@ jobs:
           cp dist/install-local.sh "$STAGING/install-local.sh"
 
           FORK_SHA=$(cat .helix-fork-rev)
-          BUILD_ID="ci-$(date -u +%Y%m%d)-$(git rev-parse --short=12 HEAD)"
+          # Single source of truth for BUILD_ID: read the id that
+          # libnothelix's build.rs baked into the dylib, via the
+          # nothelix-meta helper. This guarantees the VERSION file's
+          # BUILD_ID matches libnothelix.meta exactly, which is what
+          # `nothelix doctor`'s build-consistency check verifies.
+          BUILD_ID=$(grep '^BUILD_ID=' "$STAGING/lib/libnothelix.meta" | head -1 | cut -d= -f2)
           LIBNOTHELIX_VERSION=$(grep '^version' libnothelix/Cargo.toml | head -1 | cut -d'"' -f2)
           cat > "$STAGING/VERSION" <<EOF
           NOTHELIX_VERSION=${TAG_NAME}
