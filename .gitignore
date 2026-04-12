@@ -2,8 +2,9 @@ node_modules/
 build/
 .build/
 target/
-# Ignore tree-sitter Cargo.lock, but not the workspace one
-/Cargo.lock
+# Ignore tree-sitter-generated Cargo.lock in subdirs, but keep the
+# workspace root one — nix needs it for cargoLock.lockFile.
+!/Cargo.lock
 # Tree-sitter generated source (root only)
 /src/
 !/src/grammar.json
