@@ -1,0 +1,87 @@
+name: helix-fork-bump
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [helix-fork-updated]
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve current fork tip
+        id: fork
+        run: |
+          NEW_SHA=$(git ls-remote https://github.com/koalazub/helix.git \
+            refs/heads/feature/inline-image-rendering | awk '{print $1}')
+          CURRENT_SHA=$(cat .helix-fork-rev)
+          echo "new=$NEW_SHA" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
+          if [ "$NEW_SHA" = "$CURRENT_SHA" ]; then
+            echo "same=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No bump needed
+        if: steps.fork.outputs.same == '1'
+        run: echo "fork tip matches pin (${{ steps.fork.outputs.current }}); nothing to do"
+
+      - name: Fetch fork commits for changelog
+        if: steps.fork.outputs.same != '1'
+        id: log
+        run: |
+          git clone --depth 50 https://github.com/koalazub/helix.git helix-log
+          cd helix-log
+          git fetch origin ${{ steps.fork.outputs.current }} 2>/dev/null || true
+          RANGE="${{ steps.fork.outputs.current }}..${{ steps.fork.outputs.new }}"
+          if git rev-parse "${{ steps.fork.outputs.current }}" >/dev/null 2>&1; then
+            LOG=$(git log --oneline "$RANGE" 2>/dev/null || git log --oneline -10 "${{ steps.fork.outputs.new }}")
+          else
+            LOG=$(git log --oneline -10 "${{ steps.fork.outputs.new }}")
+          fi
+          {
+            echo 'log<<EOF'
+            echo "$LOG"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create bump branch and PR
+        if: steps.fork.outputs.same != '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT="${{ steps.fork.outputs.new }}"
+          SHORT="${SHORT:0:12}"
+          BRANCH="bump/helix-fork-${SHORT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          echo "${{ steps.fork.outputs.new }}" > .helix-fork-rev
+          git add .helix-fork-rev
+          git commit -m "chore(deps): bump helix fork to ${SHORT}
+
+          Fork commits in range:
+          ${{ steps.log.outputs.log }}
+          "
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "chore(deps): bump helix fork to ${SHORT}" \
+            --body "Auto-generated bump. Merges on green build; opens an issue on red." \
+            --head "$BRANCH" \
+            --base main \
+            --label auto-bump
+
+      - name: Enable auto-merge on green
+        if: steps.fork.outputs.same != '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT="${{ steps.fork.outputs.new }}"
+          SHORT="${SHORT:0:12}"
+          gh pr merge "bump/helix-fork-${SHORT}" --auto --squash
