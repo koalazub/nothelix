@@ -110,6 +110,8 @@
              (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@cell ")))]
             [(string-starts-with? line "@markdown ")
              (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@markdown ")))]
+            [(string-starts-with? line "@typst ")
+             (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@typst ")))]
             [else (loop (+ line-idx 1) max-idx)])))))
 
 ;; ─── Line helpers ─────────────────────────────────────────────────────────────
@@ -190,8 +192,13 @@
 (define (expand-markdown-marker! next-idx)
   (replace-current-line-with!
     (string-append "@markdown " (number->string next-idx) "\n# "))
-  ;; Cursor is currently at the end of the inserted text (right after
-  ;; `# `), which is exactly where we want it — no adjustment needed.
+  #true)
+
+;;@doc
+;; Expand a `@typst` marker. Same comment-prefix style as markdown.
+(define (expand-typst-marker! next-idx)
+  (replace-current-line-with!
+    (string-append "@typst " (number->string next-idx) "\n# "))
   #true)
 
 ;;@doc
@@ -225,6 +232,8 @@
                (string=? word "mark")
                (string=? word "markdown"))
            (expand-markdown-marker! next-idx)]
+          [(string=? word "typst")
+           (expand-typst-marker! next-idx)]
           [else
            (open-cell-type-picker line-idx next-idx (file-lang path))])))))
 
@@ -239,7 +248,8 @@
 (define (cell-type-picker-items state)
   (list
     (string-append "Code cell (" (CellTypePickerState-lang state) ")")
-    "Markdown cell"))
+    "Markdown cell"
+    "Typst cell"))
 
 (define (render-cell-type-picker state rect buf)
   (let* ([items (cell-type-picker-items state)]
@@ -277,12 +287,12 @@
   ;; it, and stamp the expanded marker. `helix.goto` is 1-indexed;
   ;; our stored line index is 0-indexed, so add 1.
   (helix.goto (number->string (+ (CellTypePickerState-line-idx state) 1)))
+  (define sel (CellTypePickerState-selected state))
+  (define idx (CellTypePickerState-next-idx state))
   (cond
-    [(= 0 (CellTypePickerState-selected state))
-     (expand-code-marker! (CellTypePickerState-next-idx state)
-                          (CellTypePickerState-lang state))]
-    [else
-     (expand-markdown-marker! (CellTypePickerState-next-idx state))]))
+    [(= sel 0) (expand-code-marker! idx (CellTypePickerState-lang state))]
+    [(= sel 1) (expand-markdown-marker! idx)]
+    [(= sel 2) (expand-typst-marker! idx)]))
 
 (define (handle-cell-type-picker-event state event)
   (let ([char (key-event-char event)]
@@ -377,6 +387,9 @@
                 [(string-starts-with? line "@markdown ")
                  (loop (+ line-idx 1)
                        (cons (list line-idx 'md line) acc))]
+                [(string-starts-with? line "@typst ")
+                 (loop (+ line-idx 1)
+                       (cons (list line-idx 'typst line) acc))]
                 [else (loop (+ line-idx 1) acc)])))))
     ;; Compute the new content for each marker with its target index
     ;; in forward order, then reverse to apply back-to-front.
@@ -439,7 +452,27 @@
                               (scan (+ j 1))]
                              [else
                               (substring md-trimmed j (string-length md-trimmed))])))
-                       (string-append "@markdown " (number->string i) md-rest)])])
+                       (string-append "@markdown " (number->string i) md-rest)]
+                      [(typst)
+                       (define ty-after
+                         (substring current
+                                    (string-length "@typst ")
+                                    (string-length current)))
+                       (define ty-trimmed
+                         (if (string-suffix? ty-after "\n")
+                             (substring ty-after 0 (- (string-length ty-after) 1))
+                             ty-after))
+                       (define ty-rest
+                         (let scan ([j 0])
+                           (cond
+                             [(>= j (string-length ty-trimmed))
+                              (substring ty-trimmed j (string-length ty-trimmed))]
+                             [(let ([c (string-ref ty-trimmed j)])
+                                (and (char>=? c #\0) (char<=? c #\9)))
+                              (scan (+ j 1))]
+                             [else
+                              (substring ty-trimmed j (string-length ty-trimmed))])))
+                       (string-append "@typst " (number->string i) ty-rest)])])
               (loop (cdr ms) (+ i 1)
                     ;; Only queue the line for rewrite if the new
                     ;; content actually differs from what's there —

@@ -29,6 +29,7 @@ use serde_json::{json, Value};
 pub enum CellKind {
     Code,
     Markdown,
+    Typst,
 }
 
 pub struct JlCell {
@@ -121,13 +122,27 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 start_line: i,
             });
         } else if let Some(rest) = line.strip_prefix("@markdown ") {
-            // Parse only the first token as the index — trailing
-            // tokens (e.g. a quoted label `"intro"`) are ignored here.
             let first = rest.trim().split_whitespace().next().unwrap_or("");
             let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Markdown,
+                code: String::new(),
+                start_line: i,
+            });
+        } else if line.trim_end() == "@typst" {
+            cells.push(JlCell {
+                index: 0,
+                kind: CellKind::Typst,
+                code: String::new(),
+                start_line: i,
+            });
+        } else if let Some(rest) = line.strip_prefix("@typst ") {
+            let first = rest.trim().split_whitespace().next().unwrap_or("");
+            let idx: isize = first.parse().unwrap_or(0);
+            cells.push(JlCell {
+                index: idx,
+                kind: CellKind::Typst,
                 code: String::new(),
                 start_line: i,
             });
@@ -153,8 +168,10 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             let t = line.trim_end();
             t == "@cell"
                 || t == "@markdown"
+                || t == "@typst"
                 || line.starts_with("@cell ")
                 || line.starts_with("@markdown ")
+                || line.starts_with("@typst ")
         };
 
         let mut filtered: Vec<&str> = Vec::new();
@@ -378,7 +395,7 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
                 Value::Array(lines)
             };
 
-            if cell.kind == CellKind::Markdown {
+            if cell.kind == CellKind::Markdown || cell.kind == CellKind::Typst {
                 // Strip leading "# " comment prefix from each line.
                 let md: String = cell
                     .code

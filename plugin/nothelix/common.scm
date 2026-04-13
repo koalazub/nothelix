@@ -44,8 +44,10 @@
 (define (cell-marker? line-text)
   (or (string=? line-text "@cell")
       (string=? line-text "@markdown")
+      (string=? line-text "@typst")
       (string-starts-with? line-text "@cell ")
-      (string-starts-with? line-text "@markdown ")))
+      (string-starts-with? line-text "@markdown ")
+      (string-starts-with? line-text "@typst ")))
 
 ;;@doc
 ;; Return #true if the line at `line-idx` in the rope is a cell marker.
@@ -63,13 +65,12 @@
       (let ([line (text.rope->line rope line-idx)])
         (or (text.rope-starts-with? line "@cell ")
             (text.rope-starts-with? line "@markdown ")
-            ;; Bare markers: line content is exactly "@cell\n" or
-            ;; "@markdown\n". Materialise just for this check since
-            ;; rope-starts-with? can't distinguish prefixes from
-            ;; whole-line matches.
+            (text.rope-starts-with? line "@typst ")
             (let ([s (text.rope->string line)])
               (or (string=? s "@cell")
                   (string=? s "@cell\n")
                   (string=? s "@markdown")
-                  (string=? s "@markdown\n")))))
+                  (string=? s "@markdown\n")
+                  (string=? s "@typst")
+                  (string=? s "@typst\n")))))
       #false))

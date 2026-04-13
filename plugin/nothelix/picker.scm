@@ -84,9 +84,16 @@
      (define parts (string-split (string-trim rest) " "))
      (define first (if (null? parts) "" (car parts)))
      (define idx (or (string->number first) 0))
-     ;; Label = everything after the index
      (define label (extract-label-from-parts parts 1))
      (list "markdown" idx label)]
+    [(string-starts-with? line "@typst ")
+     (define rest (strip-trailing-newline
+                    (substring line (string-length "@typst ") (string-length line))))
+     (define parts (string-split (string-trim rest) " "))
+     (define first (if (null? parts) "" (car parts)))
+     (define idx (or (string->number first) 0))
+     (define label (extract-label-from-parts parts 1))
+     (list "typst" idx label)]
     [else (list "unknown" 0 "")]))
 
 ;;@doc
@@ -104,7 +111,8 @@
         (let ([line (doc-get-line rope total-lines line-idx)])
           (cond
             [(or (string-starts-with? line "@cell ")
-                 (string-starts-with? line "@markdown "))
+                 (string-starts-with? line "@markdown ")
+                 (string-starts-with? line "@typst "))
              (define parsed (parse-cell-header line))
              (define kind-label (list-ref parsed 0))
              (define idx (list-ref parsed 1))
