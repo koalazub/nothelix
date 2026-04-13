@@ -501,6 +501,8 @@
     [else
      (define template
        (string-append
+         "using NothelixMacros  # cell markers for static checking\n"
+         "\n"
          "@markdown 0\n"
          "# # New notebook\n"
          "#\n"

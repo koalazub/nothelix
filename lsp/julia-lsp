@@ -68,6 +68,16 @@ exec julia \
               nothing
           end
       end
+
+      # @cell and @markdown are resolved by StaticLint because:
+      # 1. NothelixMacros (a tiny package in lsp/NothelixMacros/)
+      #    exports both macros as no-ops
+      # 2. The installer Pkg.develops it into $NOXDIR (the LSP
+      #    bootstrap env) — NOT the users env, so their
+      #    Project.toml stays untouched and nothelix uninstall
+      #    cleans it up completely
+      # 3. Every nothelix notebook file starts with
+      #    `using NothelixMacros` (added by scaffold + converter)
       function pick_user_env()
           dir = pwd()
           while true

@@ -70,7 +70,14 @@ pub fn ensure_lsp_environment() -> String {
             "--quiet",
             &format!("--project={project_path}"),
             "-e",
-            "using Pkg; Pkg.instantiate(); using LanguageServer; println(\"OK\")",
+            &format!(
+                "using Pkg; Pkg.instantiate(); \
+                 macros_path = joinpath(\"{project_path}\", \"NothelixMacros\"); \
+                 if isdir(macros_path); \
+                     try Pkg.develop(Pkg.PackageSpec(path=macros_path)); catch end; \
+                 end; \
+                 using LanguageServer; println(\"OK\")"
+            ),
         ])
         .env("JULIA_DEPOT_PATH", &depot_path)
         .stdout(File::create(&log_path).unwrap_or_else(|_| File::create("/dev/null").unwrap()))

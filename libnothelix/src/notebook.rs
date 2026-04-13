@@ -247,6 +247,11 @@ pub fn notebook_convert_sync(path: String) -> String {
         .unwrap_or("julia");
 
     let mut out = String::new();
+    // Preamble: using NothelixMacros so the Julia LSP resolves @cell
+    // and @markdown markers without false-positive "Missing reference"
+    // squiggles. The package lives in the nothelix LSP bootstrap env
+    // (not the user's Project.toml) so uninstall cleans it up.
+    out.push_str("using NothelixMacros  # cell markers for static checking\n\n");
     out.push_str(&format!(
         "# ═══ Nothelix Notebook: {path} ═══\n# Cells: {}\n\n",
         cells.len()
@@ -491,7 +496,8 @@ mod tests {
     #[test]
     fn convert_sync_header() {
         let result = notebook_convert_sync(fixture_path("simple.ipynb"));
-        assert!(result.starts_with("# ═══ Nothelix Notebook:"));
+        assert!(result.starts_with("using NothelixMacros"));
+        assert!(result.contains("# ═══ Nothelix Notebook:"));
         assert!(result.contains("# Cells: 4"));
     }
 
