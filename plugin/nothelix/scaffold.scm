@@ -546,6 +546,8 @@
          "# :new-notebook        create a notebook\n"
          "# :execute-all-cells   run everything\n"
          "# :sync-to-ipynb       save as .ipynb\n"
+         "#\n"
+         "# Add packages: ! julia --project=. -e 'using Pkg; Pkg.add(\"Plots\")'\n"
          "\n"
          "@cell 1 :julia\n"
          "\n"))

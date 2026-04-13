@@ -229,4 +229,21 @@ run_static_doctor_checks() {
     doctor_check_lsp_env
     doctor_check_demo
     doctor_check_terminal_graphics
+    doctor_check_julia_project
+}
+
+doctor_check_julia_project() {
+    local project="Project.toml"
+    if [ ! -f "$project" ]; then
+        _doctor_warn "no Project.toml in $(pwd) — the Julia LSP can't resolve packages without it
+    run: julia --project=. -e 'using Pkg; Pkg.add([\"LinearAlgebra\", \"Plots\"])'
+    or:  :new-notebook (generates one automatically)"
+        return
+    fi
+    if ! grep -q "CellMarkers" "$project" 2>/dev/null; then
+        _doctor_warn "Project.toml missing CellMarkers — @cell/@markdown will show LSP warnings
+    run: julia --project=. -e 'using Pkg; Pkg.add(url=\"https://github.com/koalazub/CellMarkers.jl\")'"
+        return
+    fi
+    _doctor_pass "Project.toml has CellMarkers ($(pwd)/Project.toml)"
 }
