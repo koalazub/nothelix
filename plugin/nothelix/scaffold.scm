@@ -501,24 +501,19 @@
     [else
      (define template
        (string-append
-         "using NothelixMacros  # cell markers for static checking\n"
+         "using NothelixMacros\n"
          "\n"
          "@markdown 0\n"
          "# # New notebook\n"
          "#\n"
-         "# Quick reference:\n"
-         "#   <space>nr           execute the cell under the cursor\n"
-         "#   <space>nn           insert a new cell (code or markdown)\n"
-         "#   <space>nj           jump to any cell by index\n"
-         "#   ]l / [l             next / previous cell\n"
-         "#   :execute-all-cells  run every cell top to bottom\n"
-         "#   :sync-to-ipynb      save back to .ipynb format\n"
+         "# <space>nr  run cell  |  <space>nn  new cell  |  <space>nj  jump\n"
+         "# ]l / [l    next/prev |  dd on marker line to delete a cell\n"
          "#\n"
-         "# Type @cell<space> on an empty line to open the cell-type picker,\n"
-         "# or @md<space> to insert a markdown cell directly.\n"
+         "# :new-notebook        create a notebook\n"
+         "# :execute-all-cells   run everything\n"
+         "# :sync-to-ipynb       save as .ipynb\n"
          "\n"
          "@cell 1 :julia\n"
-         "using LinearAlgebra\n"
          "\n"))
      (define err (write-string-to-file path template))
      (cond

@@ -4,7 +4,7 @@
 ;;; just the code portion, or just the output section.
 
 (require "common.scm")
-(require "execution.scm")
+(require "cell-boundaries.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)

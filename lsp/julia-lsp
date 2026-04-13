@@ -3,63 +3,22 @@ set -euo pipefail
 
 NOXDIR="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
 
-# Keep LanguageServer + its deps isolated in $NOXDIR/depot, but also
-# expose the user's real Julia depot ($HOME/.julia) so the LSP can
-# *read* the packages they've actually installed (LinearAlgebra,
-# Plots, Makie, whatever Pkg.add pulled in from their notebook cells).
-# Without the second entry, the LSP analyses against a depot that
-# only knows LanguageServer.jl, and every stdlib-backed name like
-# `norm` shows up as an undefined reference with no hover doc.
+# Stack the bootstrap env ($NOXDIR, which has LanguageServer +
+# NothelixMacros) onto JULIA_LOAD_PATH so Julia can `using` them
+# from any active project. The user's default env (@v#.#) and
+# stdlib stay in the path via the default entries.
 #
-# NB: the bootstrap depot comes FIRST so its precompile artifacts
-# win over anything in the shared depot, and we never write into
-# $HOME/.julia from the LSP.
+# This replaces the old --project=$NOXDIR flag which forced the
+# active project to $NOXDIR, causing LanguageServer to analyze
+# against an env that only had LanguageServer itself — which is
+# why every package reference showed as "Missing reference".
+export JULIA_LOAD_PATH="$NOXDIR:@:@v#.#:@stdlib"
 export JULIA_DEPOT_PATH="$NOXDIR/depot:$HOME/.julia"
 
-# Don't override HOME. The previous version of this script set
-# HOME=$NOXDIR as a belt-and-braces isolation measure, but that
-# also hid the user's real `~/.julia/environments/v1.x` from
-# `homedir()` — which is exactly the env the LSP needs to analyse.
-# `--startup-file=no` below already skips `~/.julia/config/startup.jl`
-# so there's no need to fake HOME to avoid it.
-
-# Startup script configures LanguageServer.jl for notebook-converted files:
-#
-# 1. Defines the `@cell` and `@markdown` marker macros as no-ops that
-#    return `nothing`. Previously `esc(last(args))` caused
-#    `@cell 13 julia` to expand to the bare identifier `julia`, producing
-#    "Missing reference: julia" on every cell header. Returning `nothing`
-#    emits no AST nodes for StaticLint to chase.
-#
-# 2. Enables StaticLint's missing-reference warnings (`lint_missingrefs =
-#    :all`). This was previously set to `:none` because the old macro
-#    expansion produced bare identifiers that tripped false positives.
-#    Now that the macros return `nothing`, there are no false positives
-#    and real undefined-name errors show up as squiggles in the editor.
-#    Cross-cell references work because StaticLint analyses the whole
-#    .jl file as one module — `A` defined in cell 0 is visible in cell 5.
-#
-# 3. Monkey-patches `LanguageServer.request_julia_config` to a no-op.
-#    That function normally pulls `julia.lint.missingrefs` from the
-#    LSP client config and RESETS `server.lint_missingrefs` to whatever
-#    the client returned. Helix doesn't expose a way to pass this key,
-#    so the post-init config refresh could override our setting.
-#    Overriding it as a no-op keeps our initial configuration sticky.
-#
-# 4. Picks the env to ANALYSE explicitly instead of letting
-#    `LanguageServer.choose_env()` fall back to the bootstrap
-#    `--project=$NOXDIR` (which only has LanguageServer.jl in it and
-#    can't resolve any of the user's stdlib / registered packages).
-#    Walks up from `pwd` looking for a `Project.toml` first so
-#    workspaces with their own env win, and falls back to the user's
-#    shared `v$(major).$(minor)` environment under `homedir()` —
-#    which is where `Pkg.add` from an interactive session actually
-#    installs things.
 exec julia \
   --startup-file=no \
   --history-file=no \
   --quiet \
-  "--project=$NOXDIR" \
   -e 'macro cell(args...) nothing end
       macro markdown(args...) nothing end
       using LanguageServer
@@ -68,30 +27,7 @@ exec julia \
               nothing
           end
       end
-
-      # @cell and @markdown are resolved by StaticLint because:
-      # 1. NothelixMacros (a tiny package in lsp/NothelixMacros/)
-      #    exports both macros as no-ops
-      # 2. The installer Pkg.develops it into $NOXDIR (the LSP
-      #    bootstrap env) — NOT the users env, so their
-      #    Project.toml stays untouched and nothelix uninstall
-      #    cleans it up completely
-      # 3. Every nothelix notebook file starts with
-      #    `using NothelixMacros` (added by scaffold + converter)
-      function pick_user_env()
-          dir = pwd()
-          while true
-              isfile(joinpath(dir, "Project.toml")) && return dir
-              parent = dirname(dir)
-              parent == dir && break
-              dir = parent
-          end
-          shared = joinpath(homedir(), ".julia", "environments",
-                            "v$(VERSION.major).$(VERSION.minor)")
-          isdir(shared) && return shared
-          return LanguageServer.choose_env()
-      end
-      let env_path = pick_user_env()
+      let env_path = LanguageServer.choose_env()
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
           server.lint_missingrefs = :all
           run(server)
