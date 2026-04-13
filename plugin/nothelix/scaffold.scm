@@ -554,5 +554,17 @@
        [(> (string-length err) 0)
         (set-status! (string-append "nothelix: failed to create notebook: " err))]
        [else
+        ;; Generate a Julia Project.toml alongside the notebook if one
+        ;; doesn't exist in the directory. The LSP resolves packages
+        ;; from this env, so without it every `using` shows as
+        ;; "Missing reference". Seed with CellMarkers + LinearAlgebra
+        ;; as sensible defaults.
+        (define project-toml "Project.toml")
+        (when (string=? (path-exists project-toml) "no")
+          (write-string-to-file project-toml
+            (string-append
+              "[deps]\n"
+              "CellMarkers = \"019d8495-069e-72c6-9285-251bb2f95da1\"\n"
+              "LinearAlgebra = \"37e2e46d-f89d-539d-b4ee-838fcccc9c8e\"\n")))
         (helix.open path)
         (set-status! (string-append "nothelix: created " path))])]))
