@@ -39,6 +39,21 @@
 ;; is the integer parsed from the marker. Falls back to (0, kind)
 ;; when the header is malformed so the picker still renders
 ;; something rather than crashing.
+;; Extract a quoted label from the tail of a marker line.
+;; If the string contains `"…"` at the end, return the contents
+;; between the first and last quote; otherwise return "".
+(define (extract-label str)
+  (define q-start (string-index-of str "\""))
+  (cond
+    [(not q-start) ""]
+    [else
+     (define after (substring str (+ q-start 1) (string-length str)))
+     (define q-end (string-index-of after "\""))
+     (if q-end
+         (substring after 0 q-end)
+         ;; Unterminated quote — take rest as label anyway
+         after)]))
+
 (define (parse-cell-header line)
   (define (strip-trailing-newline s)
     (if (string-suffix? s "\n")
@@ -51,8 +66,8 @@
                                (string-length "@cell ")
                                (string-length line))))
      (define trimmed (string-trim rest))
-     ;; `N :lang` or `N` or `:lang` (when autofill hasn't stamped
-     ;; the index yet) — be forgiving.
+     (define label (extract-label trimmed))
+     ;; `N :lang` or `N :lang "label"` or `N` or `:lang`
      (define parts (string-split trimmed " "))
      (define first (if (null? parts) "" (car parts)))
      (define maybe-num (string->number first))
@@ -69,15 +84,20 @@
           (substring lang-tok 1 (string-length lang-tok))]
          [(> (string-length lang-tok) 0) lang-tok]
          [else "julia"]))
-     (cons (string-append "code (" lang ")") idx)]
+     (list (string-append "code (" lang ")") idx label)]
     [(string-starts-with? line "@markdown ")
      (define rest (strip-trailing-newline
                     (substring line
                                (string-length "@markdown ")
                                (string-length line))))
-     (define idx (or (string->number (string-trim rest)) 0))
-     (cons "markdown" idx)]
-    [else (cons "unknown" 0)]))
+     (define label (extract-label rest))
+     ;; Strip the label from rest before parsing index
+     (define before-label
+       (let ([q (string-index-of rest "\"")])
+         (if q (string-trim (substring rest 0 q)) (string-trim rest))))
+     (define idx (or (string->number before-label) 0))
+     (list "markdown" idx label)]
+    [else (list "unknown" 0 "")]))
 
 ;;@doc
 ;; Scan the document for all @cell and @markdown markers.
@@ -96,10 +116,11 @@
             [(or (string-starts-with? line "@cell ")
                  (string-starts-with? line "@markdown "))
              (define parsed (parse-cell-header line))
-             (define label (car parsed))
-             (define idx (cdr parsed))
+             (define kind-label (list-ref parsed 0))
+             (define idx (list-ref parsed 1))
+             (define user-label (list-ref parsed 2))
              (find-cells (+ line-idx 1)
-                         (cons (list line-idx label idx line) acc))]
+                         (cons (list line-idx kind-label idx line user-label) acc))]
             [else (find-cells (+ line-idx 1) acc)]))))
 
   (find-cells 0 '()))
@@ -162,17 +183,31 @@
 
     (buffer/clear buf list-area)
     (block/render buf list-area (make-block popup-style popup-style "all" "plain"))
-    (frame-set-string! buf (+ x 2) y "Jump to Cell" text-style)
 
+    ;; Title updates to show which cell index the user is about to
+    ;; jump to. Reduces cognitive load: the number lives in one place
+    ;; (the title) rather than cluttering every row.
+    (define selected-cell-idx
+      (if (and (>= selected 0) (< selected (length cells)))
+          (list-ref (list-ref cells selected) 2)
+          0))
+    (define title
+      (string-append "Jump to Cell: " (number->string selected-cell-idx)))
+    (frame-set-string! buf (+ x 2) y title text-style)
+
+    ;; Each row shows the label (if present), or falls back to the
+    ;; kind ("code (julia)" / "markdown"). No numbered prefix — the
+    ;; cell index is in the title above.
     (let loop ([i 0])
       (when (< i (length cells))
         (let* ([cell (list-ref cells i)]
-               ;; cell = (line-num kind-label cell-index header-text)
-               [label (list-ref cell 1)]
-               [cell-idx (list-ref cell 2)]
+               [kind-label (list-ref cell 1)]
+               [user-label (if (>= (length cell) 5) (list-ref cell 4) "")]
                [row-style (if (= i selected) selected-style text-style)]
                [row-text
-                (string-append (number->string cell-idx) ". " label)])
+                (if (> (string-length user-label) 0)
+                    user-label
+                    kind-label)])
           (frame-set-string! buf (+ x 2) (+ y i 1) row-text row-style)
           (loop (+ i 1)))))
 
@@ -217,14 +252,21 @@
            (helix.goto (number->string (+ line-num 1)))))
        event-result/close]
       [else
+       ;; Digit press: match the cell's actual @cell N index, not the
+       ;; list position. Pressing 0 jumps to cell index 0, pressing 3
+       ;; jumps to cell index 3, etc. Previous code did
+       ;; `(list-ref cells (- num 1))` which mapped digit 1 → cell
+       ;; index 0, off by one from what the user sees in the picker.
        (let ([num (char->number (or char #\null))])
-         (if (and num (>= num 1) (<= num (length cells)))
-             (begin
-               (let* ([cell (list-ref cells (- num 1))]
-                      [line-num (list-ref cell 0)])
-                 ;; line-num is 0-indexed, helix.goto expects 1-indexed
-                 (helix.goto (number->string (+ line-num 1))))
-               event-result/close)
+         (if num
+             (let loop ([i 0])
+               (cond
+                 [(>= i (length cells)) event-result/consume]
+                 [(= (list-ref (list-ref cells i) 2) num)
+                  (let ([line-num (list-ref (list-ref cells i) 0)])
+                    (helix.goto (number->string (+ line-num 1))))
+                  event-result/close]
+                 [else (loop (+ i 1))]))
              event-result/consume))])))
 
 (define (make-cell-picker-component)

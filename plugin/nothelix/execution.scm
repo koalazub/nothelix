@@ -620,14 +620,33 @@
      (when (and (not image-ready) (> (string-length output-repr) 0))
        (helix.static.insert_string (commentify output-repr)))
 
-     ;; Insert stderr if present, also line-commented. The previous
-     ;; implementation only prefixed the FIRST line with `# stderr: `
-     ;; and dumped the rest raw, which is what produced the big
-     ;; cascade of "extra tokens after end of expression" on multi-
-     ;; line Pkg.add progress output.
+     ;; Insert stderr if present, also line-commented. Filter out
+     ;; purely informational Pkg noise ("Resolving package versions",
+     ;; "No packages added or removed", "Precompiling") that clutters
+     ;; the output when the user has `using Pkg; Pkg.add(...)` in the
+     ;; same cell as their real code. Only show stderr when it carries
+     ;; real content — actual errors, warnings, or status changes.
      (when (> (string-length stderr-text) 0)
-       (helix.static.insert_string "# stderr:\n")
-       (helix.static.insert_string (commentify stderr-text)))
+       (define filtered-stderr
+         (let* ([lines (string-split stderr-text "\n")]
+                [keep (filter
+                        (lambda (line)
+                          (define trimmed (string-trim line))
+                          (not (or (= (string-length trimmed) 0)
+                                   (string-contains? trimmed "Resolving package versions")
+                                   (string-contains? trimmed "No packages added to or removed from")
+                                   (string-contains? trimmed "No packages added or removed from")
+                                   (string-contains? trimmed "Manifest No packages added")
+                                   (string-contains? trimmed "Project No packages added")
+                                   (and (string-contains? trimmed "Precompiling")
+                                        (not (string-contains? trimmed "error")))
+                                   (and (string-contains? trimmed "Progress")
+                                        (not (string-contains? trimmed "error"))))))
+                        lines)])
+           (string-join keep "\n")))
+       (when (> (string-length (string-trim filtered-stderr)) 0)
+         (helix.static.insert_string "# stderr:\n")
+         (helix.static.insert_string (commentify filtered-stderr))))
 
      ;; Insert footer — the cursor lands on the line AFTER the footer
      ;; (because insert_string just appended a newline), which is the

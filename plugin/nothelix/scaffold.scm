@@ -419,7 +419,27 @@
                               (substring trimmed j (string-length trimmed))])))
                        (string-append "@cell " (number->string i) rest-after-digits)]
                       [(md)
-                       (string-append "@markdown " (number->string i))])])
+                       ;; Preserve any trailing label after the index.
+                       (define md-after
+                         (substring current
+                                    (string-length "@markdown ")
+                                    (string-length current)))
+                       (define md-trimmed
+                         (if (string-suffix? md-after "\n")
+                             (substring md-after 0
+                                        (- (string-length md-after) 1))
+                             md-after))
+                       (define md-rest
+                         (let scan ([j 0])
+                           (cond
+                             [(>= j (string-length md-trimmed))
+                              (substring md-trimmed j (string-length md-trimmed))]
+                             [(let ([c (string-ref md-trimmed j)])
+                                (and (char>=? c #\0) (char<=? c #\9)))
+                              (scan (+ j 1))]
+                             [else
+                              (substring md-trimmed j (string-length md-trimmed))])))
+                       (string-append "@markdown " (number->string i) md-rest)])])
               (loop (cdr ms) (+ i 1)
                     ;; Only queue the line for rewrite if the new
                     ;; content actually differs from what's there —
@@ -484,10 +504,19 @@
          "@markdown 0\n"
          "# # New notebook\n"
          "#\n"
-         "# Describe what this notebook is for.\n"
+         "# Quick reference:\n"
+         "#   <space>nr           execute the cell under the cursor\n"
+         "#   <space>nn           insert a new cell (code or markdown)\n"
+         "#   <space>nj           jump to any cell by index\n"
+         "#   ]l / [l             next / previous cell\n"
+         "#   :execute-all-cells  run every cell top to bottom\n"
+         "#   :sync-to-ipynb      save back to .ipynb format\n"
+         "#\n"
+         "# Type @cell<space> on an empty line to open the cell-type picker,\n"
+         "# or @md<space> to insert a markdown cell directly.\n"
          "\n"
          "@cell 1 :julia\n"
-         "# Your code here\n"
+         "using LinearAlgebra\n"
          "\n"))
      (define err (write-string-to-file path template))
      (cond

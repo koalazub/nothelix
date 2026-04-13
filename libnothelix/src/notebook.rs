@@ -121,7 +121,10 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 start_line: i,
             });
         } else if let Some(rest) = line.strip_prefix("@markdown ") {
-            let idx: isize = rest.trim().parse().unwrap_or(0);
+            // Parse only the first token as the index — trailing
+            // tokens (e.g. a quoted label `"intro"`) are ignored here.
+            let first = rest.trim().split_whitespace().next().unwrap_or("");
+            let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Markdown,
