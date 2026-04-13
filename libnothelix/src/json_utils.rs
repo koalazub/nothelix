@@ -34,7 +34,83 @@ pub fn json_get_bool(json_str: String, key: String) -> String {
 
 pub fn json_get_first_image(json_str: String) -> String {
     let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
-    find_first_image_b64(&parsed).unwrap_or_default()
+    find_first_image_data(&parsed).unwrap_or_default()
+}
+
+/// Like `json_get_first_image` but resolves sidecar files from `kernel_dir`.
+/// If image data starts with `"file:"`, reads the raw PNG and base64-encodes it.
+pub fn json_get_first_image_with_dir(json_str: String, kernel_dir: String) -> String {
+    let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
+    match find_first_image_data(&parsed) {
+        None => String::new(),
+        Some(data) => {
+            if let Some(filename) = data.strip_prefix("file:") {
+                // Sidecar file: read raw bytes and base64-encode for Steel
+                let path = std::path::Path::new(&kernel_dir).join(filename);
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        use base64::Engine;
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    }
+                    Err(_) => String::new(),
+                }
+            } else {
+                // Legacy: data is already base64
+                data
+            }
+        }
+    }
+}
+
+/// Like `json_get_first_image_with_dir` but returns raw bytes instead of base64.
+/// Uses the new Steel ByteVector FFI return (Phase 3).
+/// Returns empty vec if no image found.
+pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> Vec<u8> {
+    let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
+    match find_first_image_data(&parsed) {
+        None => Vec::new(),
+        Some(data) => {
+            if let Some(filename) = data.strip_prefix("file:") {
+                // Sidecar file: return raw bytes directly
+                let path = std::path::Path::new(&kernel_dir).join(filename);
+                std::fs::read(&path).unwrap_or_default()
+            } else {
+                // Legacy base64: decode to bytes
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(data.trim())
+                    .unwrap_or_default()
+            }
+        }
+    }
+}
+
+/// Extract multiple fields from a JSON string in one parse.
+/// `keys_csv` is comma-separated field names. Returns tab-separated values.
+/// Missing fields return empty strings. Non-string values are stringified.
+pub fn json_get_many(json_str: String, keys_csv: String) -> String {
+    let parsed = match serde_json::from_str::<Value>(&json_str) {
+        Ok(v) => v,
+        Err(_) => {
+            let count = keys_csv.split(',').count();
+            return "\t".repeat(count.saturating_sub(1));
+        }
+    };
+    keys_csv
+        .split(',')
+        .map(|key| {
+            parsed
+                .get(key.trim())
+                .map_or(String::new(), |val| match val {
+                    Value::String(s) => s.clone(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\t")
 }
 
 /// Extract the `plot_data` field as a JSON string for the braille chart renderer.
@@ -122,14 +198,71 @@ mod tests {
     fn json_get_invalid_json() {
         assert_eq!(json_get("not json".into(), "key".into()), "");
     }
+
+    #[test]
+    fn json_get_many_extracts_multiple() {
+        let json = r#"{"error": "boom", "stdout": "hi", "stderr": "", "has_error": true}"#;
+        let result = json_get_many(json.into(), "error,stdout,stderr,has_error".into());
+        assert_eq!(result, "boom\thi\t\ttrue");
+    }
+
+    #[test]
+    fn json_get_many_missing_fields() {
+        let json = r#"{"a": "1"}"#;
+        let result = json_get_many(json.into(), "a,b,c".into());
+        assert_eq!(result, "1\t\t");
+    }
+
+    #[test]
+    fn json_get_many_invalid_json() {
+        let result = json_get_many("not json".into(), "a,b".into());
+        assert_eq!(result, "\t");
+    }
+
+    #[test]
+    fn first_image_sidecar_file() {
+        // Create a temp dir with a fake PNG sidecar
+        let dir = tempfile::tempdir().unwrap();
+        let png_path = dir.path().join("image_1.png");
+        std::fs::write(&png_path, b"\x89PNG fake data").unwrap();
+
+        let json = r#"{"images": [{"format": "png", "data": "file:image_1.png"}]}"#;
+        let result = json_get_first_image_with_dir(
+            json.into(),
+            dir.path().to_string_lossy().into_owned(),
+        );
+        // Should be base64 of the raw bytes
+        assert!(!result.is_empty());
+        assert!(!result.starts_with("file:"));
+        // Decode and verify
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&result)
+            .unwrap();
+        assert_eq!(decoded, b"\x89PNG fake data");
+    }
+
+    #[test]
+    fn first_image_legacy_base64_passthrough() {
+        let json = r#"{"images": [{"format": "png", "data": "iVBORw0KGgo="}]}"#;
+        let result = json_get_first_image_with_dir(json.into(), "/nonexistent".into());
+        assert_eq!(result, "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn first_image_sidecar_missing_file() {
+        let json = r#"{"images": [{"format": "png", "data": "file:missing.png"}]}"#;
+        let result = json_get_first_image_with_dir(json.into(), "/nonexistent".into());
+        assert_eq!(result, "");
+    }
 }
 
-/// Recursively search `v` for base64 image data.
+/// Recursively search `v` for image data (base64 or `file:` sidecar marker).
 ///
 /// Handles two formats:
 /// - runner.jl: `{"images": [{"format": "png", "data": "..."}]}`
 /// - Jupyter:   `{"image/png": "base64..."}`
-fn find_first_image_b64(v: &Value) -> Option<String> {
+fn find_first_image_data(v: &Value) -> Option<String> {
     match v {
         Value::Object(map) => {
             // runner.jl images format.
@@ -152,13 +285,13 @@ fn find_first_image_b64(v: &Value) -> Option<String> {
             }
             // Recurse into child values.
             for val in map.values() {
-                if let Some(img) = find_first_image_b64(val) {
+                if let Some(img) = find_first_image_data(val) {
                     return Some(img);
                 }
             }
             None
         }
-        Value::Array(arr) => arr.iter().find_map(find_first_image_b64),
+        Value::Array(arr) => arr.iter().find_map(find_first_image_data),
         _ => None,
     }
 }

@@ -23,6 +23,7 @@
 
 mod conceal;
 mod fence;
+pub(crate) mod typst_conceal;
 mod math_regions;
 mod overlay;
 mod scanner;
@@ -424,17 +425,33 @@ mod tests {
     }
 
     #[test]
-    fn comment_conceal_backslash_parens() {
+    fn comment_conceal_markdown_escape_backslashes_hidden() {
+        // \(a\) is a markdown list marker — NOT math, but backslashes hidden
         let input = "# \\(a\\) Find the eigenvalues\n";
         let result = compute_conceal_overlays_for_comments(input.to_string());
         let overlays = parse_tsv(&result);
-        // \( and \) delimiters should be hidden
-        let hidden_count = overlays.iter().filter(|(_, r)| r.is_empty()).count();
+        let hidden: Vec<_> = overlays.iter().filter(|(_, r)| r.is_empty()).collect();
+        assert_eq!(hidden.len(), 2, "Expected 2 hidden backslashes, got: {:?}", overlays);
+    }
+
+    #[test]
+    fn comment_conceal_square_bracket_escapes() {
+        let input = "# Some text \\[2 marks\\]\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
+        let hidden: Vec<_> = overlays.iter().filter(|(_, r)| r.is_empty()).collect();
+        assert_eq!(hidden.len(), 2, "Expected 2 hidden backslashes for \\[...\\], got: {:?}", overlays);
+    }
+
+    #[test]
+    fn comment_conceal_real_backslash_parens_math() {
+        // \(\alpha + \beta\) IS real math — should produce overlays
+        let input = "# \\(\\alpha + \\beta\\)\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
         assert!(
-            hidden_count >= 4,
-            "Expected \\( (2 chars) and \\) (2 chars) hidden, got {} hidden in {:?}",
-            hidden_count,
-            overlays
+            !overlays.is_empty(),
+            "\\(\\alpha + \\beta\\) should be treated as math, got no overlays"
         );
     }
 
@@ -543,4 +560,73 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    #[test]
+    fn comment_conceal_dollar_dollar_block() {
+        // Multi-line $$ block: \alpha should become α, ^2 should become ²
+        let input = "# $$\n# y_n = x_n - \\alpha^2\\, x_{n-2}\n# $$\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
+        // Should have overlays — at minimum: $$ hidden (4), \alpha → α, ^2 → ², \, → thin space
+        assert!(
+            overlays.len() >= 4,
+            "Expected overlays for $$ block, got {} overlays: {:?}",
+            overlays.len(),
+            overlays
+        );
+        // Check α replacement exists
+        assert!(
+            overlays.iter().any(|(_, r)| r == "α"),
+            "Expected α in overlays, got: {:?}",
+            overlays
+        );
+        // Check ² replacement exists
+        assert!(
+            overlays.iter().any(|(_, r)| r == "²"),
+            "Expected ² in overlays, got: {:?}",
+            overlays
+        );
+    }
+
+    #[test]
+    fn comment_conceal_norm_and_subscript() {
+        // \|x - P_K x\|^2 — norms, subscript K (braced would work, bare K won't have subscript glyph)
+        let input = "# $\\|x - P_K x\\|^2$\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
+        // Should have: $ hidden (2), \| → ‖ (2), ^2 → ² (1)
+        assert!(
+            overlays.iter().any(|(_, r)| r == "‖"),
+            "Expected ‖ for \\|, got: {:?}",
+            overlays
+        );
+        assert!(
+            overlays.iter().any(|(_, r)| r == "²"),
+            "Expected ² for ^2, got: {:?}",
+            overlays
+        );
+    }
+
+    #[test]
+    fn comment_conceal_ldots() {
+        let input = "# $K = 1, 2, \\ldots, 32$\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
+        assert!(
+            overlays.iter().any(|(_, r)| r == "…"),
+            "Expected … for \\ldots, got: {:?}",
+            overlays
+        );
+    }
+
+    #[test]
+    fn comment_conceal_begin_cases_block() {
+        let input = "# $$\n#    h_n = \\begin{cases}\n#    1 & 0 \\leq n \\leq 2 \\\\\\\\\n#    0 & \\text{otherwise}\n#    \\end{cases}\n# $$\n";
+        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let overlays = parse_tsv(&result);
+        assert!(
+            overlays.iter().any(|(_, r)| r == "≤"),
+            "Expected ≤ for \\leq, got: {:?}",
+            overlays
+        );
+    }
 }

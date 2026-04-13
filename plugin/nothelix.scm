@@ -62,7 +62,7 @@
 
 ;; Test modules are loaded dynamically (see test commands below).
 
-(provide convert-notebook sync-to-ipynb
+(provide convert-notebook sync-to-ipynb export-markdown export-typst
          execute-cell execute-all-cells execute-cells-above cancel-cell
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
@@ -209,6 +209,8 @@
     ;; Notebook lifecycle
     "convert-notebook" "Convert an .ipynb into editable cell format (.jl)."
     "sync-to-ipynb"    "Sync edits in the .jl file back to the source .ipynb."
+    "export-markdown"  "Export the .jl notebook to Markdown (.md)."
+    "export-typst"     "Export the .jl notebook to Typst (.typ)."
     "new-notebook"     "Create a new .jl notebook file and open it."
     "renumber-cells"   "Renumber @cell / @markdown markers to 0, 1, 2, …"
 
@@ -318,7 +320,7 @@
 ;; asynchronously inside update-cell-output, which calls schedule-reconceal
 ;; directly at the end of that callback.
 (define *mutating-commands*
-  '("convert-notebook" "sync-to-ipynb"))
+  '("convert-notebook" "sync-to-ipynb" "export-markdown" "export-typst"))
 
 ;; Commands that write the buffer to disk. We hook these to run the
 ;; cell renumber pass so holes that accumulate during editing (from

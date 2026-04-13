@@ -1,139 +1,770 @@
+# Error hints for Julia cell execution.
+#
+# Token-based matching — no regex. Each hint declares:
+#   match_type     = substring match on the error type
+#   match_tokens   = ALL must appear in the error message
+#   exclude_tokens = NONE may appear (for disambiguation)
+#
+# Highest specificity wins (most constraints matched).
+
+# ─── BoundsError ─────────────────────────────────────────────────────────────
+
 [[hint]]
 id = "E001"
-pattern = "BoundsError.*index \\[0\\]"
+match_type = "BoundsError"
+match_tokens = ["index [0]"]
 title = "index out of bounds — Julia is 1-indexed"
 help = "Use v[1] for the first element, not v[0]."
 example = "before: v[0]\nafter:  v[1]"
 
 [[hint]]
-id = "E002"
-pattern = "BoundsError.*index \\[(\\d+)\\].*?(\\d+)-element"
-title = "index {1} out of range for {2}-element array"
-help = "Valid indices: 1 to {2}. Check with length()."
-example = ""
-
-[[hint]]
 id = "E003"
-pattern = "BoundsError"
+match_type = "BoundsError"
+match_tokens = []
 title = "index out of bounds"
 help = "Check array length with length(). Valid indices: 1 to length(arr)."
 example = "before: arr[i]\nafter:  1 <= i <= length(arr) && arr[i]"
 
+# ─── UndefVarError ───────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E050"
+match_type = "UndefVarError"
+match_tokens = ["not defined in local scope"]
+title = "variable not visible inside loop (scope issue)"
+help = "In scripts, for/while loops create a new scope. Wrap in a function or use `global`."
+example = "# Wrap in a function:\nfunction run()\n    x = 0\n    for i in 1:10; x += i; end\n    x\nend"
+
 [[hint]]
 id = "E004"
-pattern = "UndefVarError: (\\w+) not defined"
-title = "undefined variable `{1}`"
+match_type = "UndefVarError"
+match_tokens = ["not defined"]
+title = "undefined variable `{var}`"
 help = "Check spelling, or define it in an earlier cell. If it's from a package, add `using PackageName`."
 example = ""
 
+# ─── MethodError: specific patterns ─────────────────────────────────────────
+
+# Functions used as arguments (missing parentheses)
 [[hint]]
 id = "E005"
-pattern = "MethodError.*/(.*::typeof\\((\\w+)\\))"
+match_type = "MethodError"
+match_tokens = ["/", "typeof("]
 title = "dividing by a function, not a number"
-help = "`{2}` is a function — you're dividing by the function itself, not its result. Call it with parentheses."
-example = "before: x / {2}\nafter:  x / {2}(value)"
+help = "You're dividing by the function itself, not its result. Call it with parentheses."
+example = "before: x / sqrt\nafter:  x / sqrt(value)"
 
 [[hint]]
 id = "E006"
-pattern = "MethodError.*\\*(.*::typeof\\((\\w+)\\))"
+match_type = "MethodError"
+match_tokens = ["*", "typeof("]
 title = "multiplying by a function, not a number"
-help = "`{2}` is a function — call it first, then multiply."
-example = "before: x * {2}\nafter:  x * {2}(value)"
+help = "You're multiplying by the function itself. Call it first, then multiply."
+example = "before: x * sqrt\nafter:  x * sqrt(value)"
 
+# String concatenation
 [[hint]]
 id = "E007"
-pattern = "MethodError: no method matching \\+(::String"
+match_type = "MethodError"
+match_tokens = ["+", "String"]
 title = "cannot add string and number with +"
 help = "Julia uses * for string concatenation, or string() to convert."
 example = "before: \"hello\" + 42\nafter:  \"hello\" * string(42)\nafter:  \"hello$(42)\""
 
+# String to number conversion
+[[hint]]
+id = "E019"
+match_type = "MethodError"
+match_tokens = ["convert", "String", "Int"]
+title = "cannot convert String to Int"
+help = "Use parse() to convert a string to a number."
+example = "before: Int(\"42\")\nafter:  parse(Int, \"42\")"
+
+# Missing value propagation
+[[hint]]
+id = "E021"
+match_type = "MethodError"
+match_tokens = ["Missing"]
+exclude_tokens = ["Nothing", "typeof("]
+title = "operation not defined for `missing` values"
+help = "Your data contains `missing` values. Filter them out or replace them before operating."
+example = "skipmissing(data) |> collect  # drop missing\ncoalesce.(data, 0.0)          # replace missing → 0.0"
+
+# Nothing: specific patterns before generic
+[[hint]]
+id = "E024"
+match_type = "MethodError"
+match_tokens = ["iterate", "Nothing"]
+title = "tried to iterate over `nothing`"
+help = "The value is `nothing`, not a collection. Check the function that was supposed to return data."
+example = "# A function with no explicit `return` returns `nothing`.\n# Make sure yours returns the collection you intend."
+
+[[hint]]
+id = "E025"
+match_type = "MethodError"
+match_tokens = ["length", "Nothing"]
+title = "called length() on `nothing`"
+help = "The value is `nothing`, not a collection. The function that produced it likely has a missing return."
+example = ""
+
+[[hint]]
+id = "E022"
+match_type = "MethodError"
+match_tokens = ["Nothing"]
+exclude_tokens = ["Missing", "typeof(", "iterate", "length"]
+title = "operation on `nothing` — expected a value"
+help = "A function returned `nothing` where a real value was expected. Check the return value before using it."
+example = "result = find_something()\nif result !== nothing\n    use(result)\nend"
+
+# Immutable assignment
+[[hint]]
+id = "E028"
+match_type = "MethodError"
+match_tokens = ["setindex!"]
+title = "cannot assign to this collection"
+help = "This collection is immutable or doesn't support indexing assignment. Use a mutable type."
+example = "before: t = (1,2,3); t[1] = 10  # tuples are immutable\nafter:  v = [1,2,3]; v[1] = 10  # use a Vector"
+
+# World age
+[[hint]]
+id = "E033"
+match_type = "MethodError"
+match_tokens = ["world age"]
+title = "world age mismatch — function was just defined"
+help = "You defined a function and called it in the same top-level expression. Split into separate cells or use invokelatest()."
+example = "# Cell 1:\nf(x) = x^2\n\n# Cell 2 (separate execution):\nf(3)  # works now"
+
+# Objects not callable (missing operator)
+[[hint]]
+id = "E043"
+match_type = "MethodError"
+match_tokens = ["objects of type", "not callable"]
+title = "value is not a function — missing operator?"
+help = "You're using function-call syntax on a non-function. You probably forgot * or another operator."
+example = "before: 2(x + 1)     # tries to \"call\" 2\nafter:  2 * (x + 1)  # multiplication"
+
+# Ambiguous method
+[[hint]]
+id = "E066"
+match_type = "MethodError"
+match_tokens = ["ambiguous"]
+title = "ambiguous method — multiple dispatch can't decide"
+help = "Two or more method signatures match equally well. Convert arguments to a concrete type to resolve the ambiguity."
+example = ""
+
+# ─── Broadcasting gotchas (Vector op scalar) ────────────────────────────────
+
+[[hint]]
+id = "E060"
+match_type = "MethodError"
+match_tokens = ["matching +", "Vector"]
+exclude_tokens = ["String", "typeof(", "Nothing", "Missing"]
+title = "cannot add array + scalar — use broadcasting"
+help = "Julia doesn't auto-broadcast. Use .+ for element-wise addition."
+example = "before: v + 1\nafter:  v .+ 1"
+
+[[hint]]
+id = "E061"
+match_type = "MethodError"
+match_tokens = ["matching -", "Vector"]
+exclude_tokens = ["String", "typeof(", "Nothing", "Missing"]
+title = "cannot subtract array - scalar — use broadcasting"
+help = "Julia doesn't auto-broadcast. Use .- for element-wise subtraction."
+example = "before: v - 1\nafter:  v .- 1"
+
+[[hint]]
+id = "E062"
+match_type = "MethodError"
+match_tokens = ["matching ^", "Vector"]
+title = "cannot raise array to a power — use broadcasting"
+help = "Use .^ for element-wise exponentiation."
+example = "before: v ^ 2\nafter:  v .^ 2"
+
+[[hint]]
+id = "E064"
+match_type = "MethodError"
+match_tokens = ["matching *", "Vector", "Vector"]
+exclude_tokens = ["typeof("]
+title = "cannot multiply two vectors with * — dot product or element-wise?"
+help = "Vector * Vector is ambiguous. Use dot() for inner product, .* for element-wise, or v * v' for outer product."
+example = "using LinearAlgebra\ndot(a, b)    # inner product (scalar)\na .* b       # element-wise (vector)\na * b'       # outer product (matrix)"
+
+[[hint]]
+id = "E065"
+match_type = "MethodError"
+match_tokens = ["matching /", "Vector"]
+exclude_tokens = ["typeof("]
+title = "cannot divide arrays with / — use broadcasting"
+help = "Use ./ for element-wise division."
+example = "before: v / 2\nafter:  v ./ 2"
+
+# push! type mismatch
+[[hint]]
+id = "E080"
+match_type = "MethodError"
+match_tokens = ["push!", "Vector"]
+title = "wrong element type for push!"
+help = "The vector's element type is fixed. Convert the value, or create a wider-typed vector."
+example = "before: v = Int[]; push!(v, 1.5)     # can't store Float in Int[]\nafter:  v = Float64[]; push!(v, 1.5) # use the right type"
+
+# Math functions on arrays/ranges — need broadcasting dot
+[[hint]]
+id = "E092"
+match_type = "MethodError"
+match_tokens = ["matching cos"]
+exclude_tokens = ["typeof("]
+title = "cos() doesn't broadcast — use cos.()"
+help = "Math functions like cos, sin, exp, log don't auto-broadcast over arrays or ranges. Add a dot."
+example = "before: cos(0:0.1:2π)\nafter:  cos.(0:0.1:2π)"
+
+[[hint]]
+id = "E093"
+match_type = "MethodError"
+match_tokens = ["matching sin"]
+exclude_tokens = ["typeof("]
+title = "sin() doesn't broadcast — use sin.()"
+help = "Math functions don't auto-broadcast. Add a dot for element-wise application."
+example = "before: sin(range)\nafter:  sin.(range)"
+
+[[hint]]
+id = "E094"
+match_type = "MethodError"
+match_tokens = ["matching exp"]
+exclude_tokens = ["typeof("]
+title = "exp() doesn't broadcast — use exp.()"
+help = "Math functions don't auto-broadcast. Add a dot."
+example = "before: exp(array)\nafter:  exp.(array)"
+
+[[hint]]
+id = "E095"
+match_type = "MethodError"
+match_tokens = ["matching log"]
+exclude_tokens = ["typeof(", "negative"]
+title = "log() doesn't broadcast — use log.()"
+help = "Math functions don't auto-broadcast. Add a dot."
+example = "before: log(array)\nafter:  log.(array)"
+
+[[hint]]
+id = "E096"
+match_type = "MethodError"
+match_tokens = ["matching sqrt"]
+exclude_tokens = ["typeof(", "negative"]
+title = "sqrt() doesn't broadcast — use sqrt.()"
+help = "Math functions don't auto-broadcast. Add a dot."
+example = "before: sqrt(array)\nafter:  sqrt.(array)"
+
+[[hint]]
+id = "E097"
+match_type = "MethodError"
+match_tokens = ["matching abs"]
+exclude_tokens = ["typeof("]
+title = "abs() doesn't broadcast — use abs.()"
+help = "Math functions don't auto-broadcast. Add a dot."
+example = "before: abs(array)\nafter:  abs.(array)"
+
+# Array construction — passed scalar where array expected
+[[hint]]
+id = "E089"
+match_type = "MethodError"
+match_tokens = ["similar", "Int"]
+title = "similar() expects an array, not a number"
+help = "The first argument to similar() must be an existing array to match its shape/type. You passed a scalar."
+example = "before: similar(n, Float64)        # n is an Int, not an array\nafter:  similar(A, Float64)        # A is the array to match\nafter:  Vector{Float64}(undef, n)  # or allocate by size"
+
+[[hint]]
+id = "E090"
+match_type = "MethodError"
+match_tokens = ["zeros", "String"]
+title = "zeros() takes dimensions, not a string"
+help = "Pass integer dimensions to zeros(), not a type name as a string."
+example = "before: zeros(\"Float64\", 3, 3)\nafter:  zeros(Float64, 3, 3)"
+
+[[hint]]
+id = "E091"
+match_type = "MethodError"
+match_tokens = ["reshape", "Float"]
+title = "reshape dimensions must be integers, not floats"
+help = "Use Int dimensions for reshape. Convert with Int() or round(Int, x)."
+example = "before: reshape(A, 3.0, 4.0)\nafter:  reshape(A, 3, 4)"
+
+# Function called on a range — probably needs broadcasting
+[[hint]]
+id = "E098"
+match_type = "MethodError"
+match_tokens = ["StepRange"]
+title = "`{func}` called on a range — use broadcasting with a dot"
+help = "This function doesn't accept ranges directly. Use dot-syntax to apply it element-wise."
+example = "before: func(1:10)\nafter:  func.(1:10)"
+
+[[hint]]
+id = "E099"
+match_type = "MethodError"
+match_tokens = ["UnitRange"]
+title = "`{func}` called on a range — use broadcasting with a dot"
+help = "This function doesn't accept ranges directly. Use dot-syntax to apply it element-wise."
+example = "before: func(1:10)\nafter:  func.(1:10)"
+
+# Generic MethodError (lowest priority — fewest tokens)
 [[hint]]
 id = "E008"
-pattern = "MethodError: no method matching (\\w+)\\("
-title = "no method `{1}` for these argument types"
+match_type = "MethodError"
+match_tokens = ["no method matching"]
+title = "no method `{func}` for these argument types"
 help = "Check argument types with typeof(). The function exists but doesn't accept these types."
+example = ""
+
+# ─── DimensionMismatch ──────────────────────────────────────────────────────
+
+[[hint]]
+id = "E034"
+match_type = "DimensionMismatch"
+match_tokens = ["broadcast to a common size"]
+title = "arrays have incompatible shapes for broadcasting"
+help = "Broadcasting requires dimensions to match or be 1. Reshape one array so dimensions align."
+example = "before: rand(3) .+ rand(4)          # sizes 3 vs 4\nafter:  rand(3) .+ rand(1, 4)       # → 3×4 result"
+
+[[hint]]
+id = "E067"
+match_type = "DimensionMismatch"
+match_tokens = ["matrix A", "vector B"]
+title = "matrix × vector size mismatch"
+help = "For A * b, the number of columns in A must equal the length of b."
+example = "size(A)    # → (m, n)\nlength(b)  # → L   — need n == L"
+
+[[hint]]
+id = "E068"
+match_type = "DimensionMismatch"
+match_tokens = ["number of rows", "must match"]
+title = "hcat — row counts differ"
+help = "Horizontal concatenation [A B] requires the same number of rows."
+example = "before: [rand(3,2) rand(4,2)]  # 3 rows vs 4 rows\nafter:  [rand(3,2) rand(3,2)]  # both 3 rows"
+
+[[hint]]
+id = "E069"
+match_type = "DimensionMismatch"
+match_tokens = ["number of columns", "must match"]
+title = "vcat — column counts differ"
+help = "Vertical concatenation [A; B] requires the same number of columns."
+example = ""
+
+[[hint]]
+id = "E070"
+match_type = "DimensionMismatch"
+match_tokens = ["match destination"]
+title = "broadcast result doesn't fit the destination array"
+help = "The broadcast output shape doesn't match the target. Check sizes with size()."
 example = ""
 
 [[hint]]
 id = "E009"
-pattern = "DimensionMismatch"
-title = "matrix dimensions don't match"
+match_type = "DimensionMismatch"
+match_tokens = []
+title = "dimensions don't match"
 help = "For A*B, inner dimensions must agree: size(A,2) == size(B,1). Check with size()."
 example = "size(A)  # → (m, n)\nsize(B)  # → (p, q)  — need n == p for A*B"
 
+# ─── Linear algebra ─────────────────────────────────────────────────────────
+
 [[hint]]
 id = "E010"
-pattern = "SingularException"
+match_type = "SingularException"
+match_tokens = []
 title = "matrix is singular (not invertible)"
 help = "The matrix has no inverse. Check with det() — singular matrices have det ≈ 0."
 example = "det(A)    # → 0.0 means singular\nrank(A)   # if rank < size, it's singular"
 
 [[hint]]
+id = "E030"
+match_type = "PosDefException"
+match_tokens = []
+title = "matrix is not positive definite"
+help = "Operations like cholesky() require a positive definite matrix. Check with isposdef()."
+example = "isposdef(A)  # false means cholesky will fail\n# Try: factorize(A) for a general factorization"
+
+[[hint]]
+id = "E031"
+match_type = "LAPACKException"
+match_tokens = []
+title = "LAPACK linear algebra error"
+help = "The underlying LAPACK routine failed — typically the matrix is singular, ill-conditioned, or has NaN/Inf entries."
+example = "any(isnan, A) || any(isinf, A)  # check for bad values\ncond(A)  # large condition number → ill-conditioned"
+
+# ─── Domain / math errors ────────────────────────────────────────────────────
+
+[[hint]]
+id = "E035"
+match_type = "DomainError"
+match_tokens = ["sqrt", "negative"]
+title = "sqrt of a negative number"
+help = "sqrt only works on non-negative reals. For complex results, pass a Complex argument."
+example = "before: sqrt(-4)\nafter:  sqrt(Complex(-4))   # → 0.0 + 2.0im"
+
+[[hint]]
+id = "E036"
+match_type = "DomainError"
+match_tokens = ["log", "negative"]
+title = "log of a negative number"
+help = "log only works on positive reals. For complex results, pass a Complex argument."
+example = "before: log(-1)\nafter:  log(Complex(-1))    # → 0.0 + πim"
+
+[[hint]]
 id = "E011"
-pattern = "DomainError.*(\\w+)"
-title = "domain error in `{1}`"
+match_type = "DomainError"
+match_tokens = []
+title = "domain error"
 help = "Argument is outside the valid domain. Common: sqrt of negative, log of zero."
-example = "before: sqrt(-1)\nafter:  sqrt(complex(-1))  # or sqrt(abs(x))"
+example = "before: sqrt(-1)\nafter:  sqrt(complex(-1))"
+
+# ─── InexactError ────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E074"
+match_type = "InexactError"
+match_tokens = ["NaN"]
+title = "cannot convert NaN to integer"
+help = "The value is NaN — it can't be an integer. Find where NaN originates (0/0, Inf-Inf, etc.)."
+example = "isnan(x) && error(\"unexpected NaN\")\nfilter(!isnan, data)  # remove NaN"
+
+[[hint]]
+id = "E075"
+match_type = "InexactError"
+match_tokens = ["Inf"]
+title = "cannot convert Inf to integer"
+help = "The value is Inf — check for division by zero or unbounded growth."
+example = "clamp(x, -1e15, 1e15)  # bound the value"
+
+[[hint]]
+id = "E015"
+match_type = "InexactError"
+match_tokens = []
+title = "cannot convert without losing precision"
+help = "The value doesn't fit the target type exactly. Use round(), floor(), or ceil()."
+example = "before: Int(2.5)\nafter:  round(Int, 2.5)  # → 2"
+
+# ─── OverflowError ───────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E037"
+match_type = "OverflowError"
+match_tokens = ["factorial"]
+title = "integer overflow in factorial"
+help = "factorial(n) overflows Int64 for n > 20. Use BigInt."
+example = "before: factorial(25)\nafter:  factorial(big(25))"
+
+[[hint]]
+id = "E038"
+match_type = "OverflowError"
+match_tokens = []
+title = "integer overflow"
+help = "The result exceeds the integer type's range. Use BigInt or a wider type."
+example = "before: 2^63\nafter:  big(2)^63"
+
+# ─── DivideError ─────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E039"
+match_type = "DivideError"
+match_tokens = []
+title = "integer division by zero"
+help = "Cannot divide an integer by zero. Guard against zero divisors."
+example = ""
+
+# ─── ArgumentError ───────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E071"
+match_type = "ArgumentError"
+match_tokens = ["reducing over an empty collection"]
+title = "reducing over an empty collection"
+help = "The array is empty — sum(), maximum() etc. need at least one element. Provide an init value."
+example = "before: maximum(arr)\nafter:  maximum(arr; init=-Inf)"
+
+[[hint]]
+id = "E072"
+match_type = "ArgumentError"
+match_tokens = ["matrix is not square"]
+title = "matrix is not square"
+help = "det(), inv(), eigen() require a square matrix. For non-square, use pinv() or A \\ b (least-squares)."
+example = "size(A)  # → (m, n) — need m == n"
+
+[[hint]]
+id = "E046"
+match_type = "ArgumentError"
+match_tokens = ["invalid index", "Float"]
+title = "used a Float as an array index"
+help = "Array indices must be integers. Convert with Int() or round(Int, x)."
+example = "before: arr[1.0]\nafter:  arr[Int(1.0)]"
+
+[[hint]]
+id = "E077"
+match_type = "ArgumentError"
+match_tokens = ["invalid Array dimensions"]
+title = "invalid array dimensions"
+help = "The dimensions are invalid (negative or overflow). Check your size calculation."
+example = ""
+
+[[hint]]
+id = "E051"
+match_type = "ArgumentError"
+match_tokens = ["provide a valid sink argument"]
+title = "CSV.read needs a sink type (e.g. DataFrame)"
+help = "CSV.read requires you to specify what to read into."
+example = "before: CSV.read(\"data.csv\")\nafter:  CSV.read(\"data.csv\", DataFrame)"
+
+[[hint]]
+id = "E048"
+match_type = "ArgumentError"
+match_tokens = ["Package", "does not have", "dependencies"]
+title = "package dependency missing"
+help = "The package environment doesn't include this dependency. Add it explicitly."
+example = "using Pkg; Pkg.add(\"MissingPackage\")"
 
 [[hint]]
 id = "E012"
-pattern = "ArgumentError: Package (\\w+) not found"
-title = "package `{1}` not installed"
+match_type = "ArgumentError"
+match_tokens = ["Package", "not found"]
+title = "package not installed"
 help = "Install it first, then import."
-example = "using Pkg; Pkg.add(\"{1}\")\nusing {1}"
+example = "using Pkg; Pkg.add(\"PackageName\")\nusing PackageName"
+
+# ─── Package / loading errors ────────────────────────────────────────────────
 
 [[hint]]
-id = "E013"
-pattern = "StackOverflowError"
-title = "infinite recursion (stack overflow)"
-help = "Your function calls itself without reaching a base case."
-example = "# Add a base case:\nfunction f(n)\n    n <= 0 && return 1  # ← base case\n    return f(n-1)\nend"
+id = "E073"
+match_tokens = ["Unsatisfiable requirements"]
+title = "package version conflict"
+help = "Package versions are incompatible. Try updating or check compat constraints."
+example = "using Pkg\nPkg.update()\nPkg.status()"
+
+[[hint]]
+id = "E049"
+match_type = "LoadError"
+match_tokens = ["Failed to precompile"]
+title = "package precompilation failed"
+help = "A package failed to precompile. Try rebuilding it."
+example = "using Pkg; Pkg.build(\"PackageName\")"
+
+# ─── TypeError ───────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E023"
+match_type = "TypeError"
+match_tokens = ["non-boolean", "Missing"]
+title = "`missing` used as a condition"
+help = "Comparisons involving `missing` return `missing`, not true/false. Use coalesce()."
+example = "before: if x > 0        # fails when x is missing\nafter:  if coalesce(x > 0, false)"
 
 [[hint]]
 id = "E014"
-pattern = "TypeError: non-boolean.*if"
+match_type = "TypeError"
+match_tokens = ["non-boolean"]
 title = "non-boolean used as if condition"
 help = "Julia requires true/false in if conditions, not numbers. Use an explicit comparison."
 example = "before: if length(arr)  # number, not bool\nafter:  if length(arr) > 0"
 
 [[hint]]
-id = "E015"
-pattern = "InexactError"
-title = "cannot convert without losing precision"
-help = "The value doesn't fit the target type exactly. Use round(), floor(), or ceil()."
-example = "before: Int(2.5)\nafter:  round(Int, 2.5)  # → 2"
+id = "E027"
+match_type = "TypeError"
+match_tokens = ["typeassert"]
+title = "type assertion failed"
+help = "A ::Type assertion failed. The value's actual type doesn't match what was declared."
+example = ""
+
+# ─── Other error types ──────────────────────────────────────────────────────
+
+[[hint]]
+id = "E013"
+match_type = "StackOverflowError"
+match_tokens = []
+title = "infinite recursion (stack overflow)"
+help = "Your function calls itself without reaching a base case."
+example = "function f(n)\n    n <= 0 && return 1  # base case\n    return f(n-1)\nend"
 
 [[hint]]
 id = "E016"
-pattern = "KeyError: key (.*) not found"
-title = "key `{1}` not found in dictionary"
-help = "The dictionary doesn't have this key. Use get() for safe access with a default."
+match_type = "KeyError"
+match_tokens = []
+title = "key not found in dictionary"
+help = "Use get() for safe access with a default."
 example = "before: dict[key]           # throws if missing\nafter:  get(dict, key, 0)   # returns 0 if missing"
 
 [[hint]]
+id = "E029"
+match_type = "ReadOnlyMemoryError"
+match_tokens = []
+title = "tried to modify read-only memory"
+help = "You're writing to an immutable value. Check if you need a mutable copy."
+example = "before: sort!(immutable_arr)\nafter:  sorted = sort(immutable_arr)"
+
+[[hint]]
 id = "E017"
-pattern = "ParseError"
-title = "syntax error"
-help = "Check for missing parentheses, brackets, quotes, or commas."
-example = ""
-
-[[hint]]
-id = "E018"
-pattern = "LoadError.*syntax"
-title = "syntax error in loaded code"
-help = "Check the line number in the error for mismatched brackets or missing commas."
-example = ""
-
-[[hint]]
-id = "E019"
-pattern = "MethodError.*convert\\(.*String.*Int"
-title = "cannot convert String to Int"
-help = "Use parse() to convert a string to a number."
-example = "before: Int(\"42\")\nafter:  parse(Int, \"42\")"
+match_type = "ParseError"
+match_tokens = []
+title = "syntax error in Julia code"
+help = "The parser couldn't understand the code. Common causes: missing `end`, unclosed parenthesis/bracket/quote, stray operator, or mixing up = and ==."
+example = "# Common fixes:\n# - Count your `end` keywords — every if/for/while/function/begin needs one\n# - Check for unclosed ( [ { or string quotes\n# - The `.` in broadcasting goes BEFORE the operator: .+ not +."
 
 [[hint]]
 id = "E020"
-pattern = "AssertionError"
+match_type = "AssertionError"
+match_tokens = []
 title = "assertion failed"
 help = "An @assert condition evaluated to false. Check your assumptions."
 example = ""
+
+[[hint]]
+id = "E032"
+match_type = "TaskFailedException"
+match_tokens = []
+title = "background task failed"
+help = "An async task threw an error. The real error is nested inside — check the cause."
+example = ""
+
+[[hint]]
+id = "E040"
+match_type = "StringIndexError"
+match_tokens = []
+title = "invalid string index — middle of a Unicode character"
+help = "Julia strings are UTF-8. Use eachindex() or nextind() for safe indexing."
+example = "before: s[2]             # may land mid-character\nafter:  collect(s)[2]    # index by character"
+
+[[hint]]
+id = "E041"
+match_tokens = ["has no field"]
+title = "struct field not found"
+help = "Check available fields with fieldnames(typeof(x))."
+example = "fieldnames(typeof(x))"
+
+[[hint]]
+id = "E042"
+match_type = "UndefRefError"
+match_tokens = []
+title = "access to undefined reference"
+help = "You're reading an uninitialized array slot. Arrays created with `undef` must be filled first."
+example = "before: v = Vector{String}(undef, 3); v[1]\nafter:  v = fill(\"\", 3)"
+
+[[hint]]
+id = "E044"
+match_tokens = ["invalid redefinition of constant"]
+title = "cannot redefine a constant or struct"
+help = "Structs and const values can't be redefined in the same session. Restart the kernel."
+example = ""
+
+[[hint]]
+id = "E045"
+match_tokens = ["cannot assign a value to imported variable"]
+title = "cannot reassign an imported name"
+help = "Choose a different variable name — this one was brought in by `using`."
+example = ""
+
+[[hint]]
+id = "E047"
+match_type = "SystemError"
+match_tokens = ["No such file"]
+title = "file not found"
+help = "The path doesn't exist. Check with isfile(path) and verify pwd()."
+example = "isfile(\"data.csv\")  # check path\npwd()               # check working directory"
+
+[[hint]]
+id = "E076"
+match_type = "OutOfMemoryError"
+match_tokens = []
+title = "out of memory"
+help = "Allocation too large. Check for accidental huge arrays. Use sparse matrices for large problems."
+example = "using SparseArrays; spzeros(n, n)  # instead of zeros(n, n)"
+
+# ─── Syntax errors ──────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E085"
+match_tokens = ["invalid interpolation syntax"]
+title = "invalid string interpolation"
+help = "A bare $ needs an expression after it. Escape with \\$ for a literal dollar sign."
+example = "before: \"costs $\"\nafter:  \"costs \\$\""
+
+[[hint]]
+id = "E086"
+match_tokens = ["extra token", "after end of expression"]
+title = "extra token after expression"
+help = "Unexpected text after a complete expression. Missing operator, comma, or `end`?"
+example = "before: x = 1 y = 2   # missing separator\nafter:  x = 1; y = 2"
+
+# ─── AD / Zygote ────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E052"
+match_tokens = ["Mutating arrays is not supported"]
+title = "array mutation inside gradient computation"
+help = "Zygote can't differentiate through in-place mutations. Use functional style."
+example = "before: x[i] = val\nafter:  x = vcat(x[1:i-1], [val], x[i+1:end])"
+
+[[hint]]
+id = "E053"
+match_tokens = ["differentiate foreigncall"]
+title = "can't differentiate through C call (Zygote)"
+help = "push!, pop!, deleteat! call C code Zygote can't diff. Avoid mutating ops in the gradient path."
+example = ""
+
+# ─── ODE solvers ─────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E054"
+match_tokens = ["dtmin", "Aborting"]
+title = "ODE solver step size collapsed"
+help = "The solver shrank dt to its minimum. Likely a stiff ODE or bug in the model."
+example = "solve(prob, Rodas5())  # stiff solver"
+
+[[hint]]
+id = "E055"
+match_tokens = ["Instability detected", "Aborting"]
+title = "ODE solution diverged (NaN)"
+help = "The solution contains NaN. Debug your ODE function or try a stiff solver."
+example = "solve(prob, Rodas5(), abstol=1e-8, reltol=1e-8)"
+
+[[hint]]
+id = "E059"
+match_tokens = ["NaN dt detected"]
+title = "ODE solver produced NaN"
+help = "A NaN appeared in the state or derivative. Find where NaN originates."
+example = ""
+
+# ─── GPU ─────────────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E056"
+match_tokens = ["Scalar indexing is disallowed"]
+title = "scalar indexing on a GPU array"
+help = "Accessing individual CuArray elements is extremely slow. Use broadcasting."
+example = "before: cu_arr[1]\nafter:  cu_arr .+= 1.0"
+
+# ─── Distribution parameters ────────────────────────────────────────────────
+
+[[hint]]
+id = "E057"
+match_tokens = ["the condition", "is not satisfied"]
+title = "invalid distribution parameter"
+help = "Distribution created with out-of-range parameters (e.g. negative σ)."
+example = "before: Normal(0, -1)\nafter:  Normal(0, abs(σ))"
+
+# ─── Plotting ────────────────────────────────────────────────────────────────
+
+[[hint]]
+id = "E058"
+match_tokens = ["GKS", "socket"]
+title = "no display for GR plot backend"
+help = "GR can't open a display. Set a non-interactive backend."
+example = "ENV[\"GKSwstype\"] = \"100\""
+
+[[hint]]
+id = "E081"
+match_tokens = ["No backend available", "Makie"]
+title = "no Makie backend available"
+help = "Install a rendering backend."
+example = "using Pkg; Pkg.add(\"CairoMakie\")"
+
+[[hint]]
+id = "E082"
+match_tokens = ["Failed to open display"]
+title = "no display available for OpenGL"
+help = "Use CairoMakie instead of GLMakie for headless environments."
+example = "using CairoMakie  # instead of GLMakie"

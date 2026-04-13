@@ -1,6 +1,6 @@
 module CellRegistry
 
-export Cell, CELLS, VARIABLE_SOURCES, get_dependencies, get_dependents, clear_registry
+export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies
 
 # Cell state structure
 mutable struct Cell
@@ -26,11 +26,13 @@ Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(
 # Global registry
 const CELLS = Dict{Int, Cell}()
 const VARIABLE_SOURCES = Dict{Symbol, Int}()  # Which cell defines each variable
+const VARIABLE_USERS = Dict{Symbol, Set{Int}}()  # var → set of cell indices that use it
 
 # Clear registry (useful for testing)
 function clear_registry()
     empty!(CELLS)
     empty!(VARIABLE_SOURCES)
+    empty!(VARIABLE_USERS)
 end
 
 # Get cells that this cell depends on
@@ -46,22 +48,18 @@ function get_dependencies(cell_idx::Int)::Vector{Int}
     sort!(unique!(deps))
 end
 
-# Get cells that depend on this cell
+# Get cells that depend on this cell (uses reverse index for O(d) lookup)
 function get_dependents(cell_idx::Int)::Vector{Int}
     !haskey(CELLS, cell_idx) && return Int[]
     cell = CELLS[cell_idx]
-    dependents = Int[]
-
-    # Find all variables this cell defines
+    dependents = Set{Int}()
     for var in cell.defines
-        # Find all cells that use this variable
-        for (idx, other_cell) in CELLS
-            if idx != cell_idx && var in other_cell.uses
-                push!(dependents, idx)
-            end
+        if haskey(VARIABLE_USERS, var)
+            union!(dependents, VARIABLE_USERS[var])
         end
     end
-    sort!(unique!(dependents))
+    delete!(dependents, cell_idx)
+    sort!(collect(dependents))
 end
 
 # Get topological execution order for a set of cells
@@ -83,6 +81,37 @@ function get_execution_order(cell_indices::Vector{Int})::Vector{Int}
     end
 
     order
+end
+
+"""
+For a set of variable names, return context about where they're defined
+and whether those cells have been executed.
+"""
+function lookup_variable_context(var_names)::Dict{String, Any}
+    context = Dict{String, Any}()
+    for var in var_names
+        sym = var isa Symbol ? var : Symbol(var)
+        if haskey(VARIABLE_SOURCES, sym)
+            src_idx = VARIABLE_SOURCES[sym]
+            if haskey(CELLS, src_idx)
+                src_cell = CELLS[src_idx]
+                context[string(sym)] = Dict{String, Any}(
+                    "defined_in_cell" => src_idx,
+                    "cell_status" => string(src_cell.status),
+                    "was_executed" => src_cell.status in (:done, :error),
+                )
+            end
+        end
+    end
+    context
+end
+
+"""
+Return cell indices that this cell depends on but haven't been executed.
+"""
+function unexecuted_dependencies(cell_idx::Int)::Vector{Int}
+    deps = get_dependencies(cell_idx)
+    filter(d -> haskey(CELLS, d) && CELLS[d].status ∉ (:done,), deps)
 end
 
 end # module

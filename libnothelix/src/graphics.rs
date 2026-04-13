@@ -1,5 +1,7 @@
 //! Graphics protocol detection and Kitty escape sequence generation.
 
+use std::fmt::Write;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 // ─── Protocol detection ───────────────────────────────────────────────────────
@@ -32,20 +34,17 @@ pub fn viuer_protocol() -> String {
 pub fn kitty_escape_for_b64_png(b64: &str, image_id: u32, rows: u32) -> String {
     let bytes = b64.as_bytes();
     let chunk_size = 4096;
-    let chunks: Vec<&[u8]> = bytes.chunks(chunk_size).collect();
-    let total = chunks.len();
+    let total = bytes.len().div_ceil(chunk_size);
     let mut out = String::with_capacity(b64.len() + total * 64);
 
-    for (i, chunk) in chunks.iter().enumerate() {
+    for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
         let s = std::str::from_utf8(chunk).unwrap_or("");
         let more = if i < total - 1 { 1 } else { 0 };
 
         if i == 0 {
-            out.push_str(&format!(
-                "\x1b_Ga=T,f=100,t=d,q=2,I={image_id},r={rows},m={more};{s}\x1b\\"
-            ));
+            let _ = write!(out, "\x1b_Ga=T,f=100,t=d,q=2,I={image_id},r={rows},m={more};{s}\x1b\\");
         } else {
-            out.push_str(&format!("\x1b_Gm={more};{s}\x1b\\"));
+            let _ = write!(out, "\x1b_Gm={more};{s}\x1b\\");
         }
     }
 

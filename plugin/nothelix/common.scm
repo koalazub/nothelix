@@ -12,7 +12,14 @@
 (provide current-line-number
          doc-get-line
          cell-marker?
-         cell-marker-line?)
+         cell-marker-line?
+         *plot-rows*
+         *plot-cols*)
+
+;; Terminal cell grid for inline plots. Increase for bigger images.
+;; Override in init.scm: (set! *plot-rows* 24) (set! *plot-cols* 60)
+(define *plot-rows* 12)
+(define *plot-cols* 40)
 
 ;;@doc
 ;; Return the 0-indexed line number at the cursor position.

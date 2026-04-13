@@ -68,7 +68,7 @@
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
-     (update-cell-output result-json jl-path cell-index)]))
+     (update-cell-output result-json jl-path cell-index kernel-dir)]))
 
 ;;@doc
 ;; Execute the code cell under the cursor (async, non-blocking).
@@ -280,6 +280,7 @@
         (set-status! (string-append spinner-frame " Executing cell " (number->string executed-count) "/" (number->string total-count) "..."))
         (helix.redraw)
 
+        (set! *executing-kernel-dir* kernel-dir)
         (define start-result (kernel-execute-cell-start kernel-dir cell-idx cell-code))
         (define start-status (json-get start-result "status"))
 
@@ -288,6 +289,7 @@
               (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)))
             (let ()
               (define err (json-get start-result "error"))
+              (set! *executing-kernel-dir* #false)
               (handle-execution-error cell-code-end err)
               (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line))))))
 
@@ -328,7 +330,7 @@
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
-     (update-cell-output result-json jl-path cell-idx)
+     (update-cell-output result-json jl-path cell-idx kernel-dir)
      (enqueue-thread-local-callback-with-delay 10
        (lambda () (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]))
 
@@ -337,7 +339,8 @@
 (define (parse-indices-string str)
   (if (or (not str) (equal? str ""))
       '()
-      (map string->number (string-split str ","))))
+      (filter (lambda (n) (and n (number? n)))
+              (map string->number (string-split str ",")))))
 
 ;;@doc
 ;; Execute all cells from the top up to and including the current cell.

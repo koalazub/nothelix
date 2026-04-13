@@ -39,6 +39,12 @@ macro cell(index, exec_count, body)
             CellRegistry.VARIABLE_SOURCES[var] = cell_idx
         end
 
+        # Maintain reverse index
+        for var in uses
+            local _users = get!(Set{Int}, CellRegistry.VARIABLE_USERS, var)
+            push!(_users, cell_idx)
+        end
+
         # Execute with output capture
         local captured = OutputCapture.capture_simple() do
             $body_escaped
@@ -94,6 +100,12 @@ function execute_cell(cell_idx::Int, code::String)
     # Update variable sources for defines
     for var in cell.defines
         CellRegistry.VARIABLE_SOURCES[var] = cell_idx
+    end
+
+    # Maintain reverse index
+    for var in cell.uses
+        users = get!(Set{Int}, CellRegistry.VARIABLE_USERS, var)
+        push!(users, cell_idx)
     end
 
     # Execute at TRUE top level with output capture
@@ -170,12 +182,11 @@ end
 function get_output_type(x)
     x === nothing && return "nothing"
     x isa Exception && return "error"
-    t = string(typeof(x))
     if OutputCapture.is_displayable_plot(x)
         return "plot"
     elseif x isa AbstractArray
         return "array"
-    elseif occursin("DataFrame", t)
+    elseif hasproperty(x, :columns) && hasproperty(x, :colindex)
         return "dataframe"
     elseif x isa AbstractString
         return "string"

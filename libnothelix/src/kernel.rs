@@ -1,10 +1,12 @@
 //! Kernel lifecycle management.
 //!
 //! Manages Julia kernel processes via file-based IPC:
-//!   - `input.json`      — command written by Rust
-//!   - `output.json`     — result written by Julia
-//!   - `output.json.done`— sentinel file signalling completion
-//!   - `pid`             — PID of the running Julia process
+//!   - `input.json`       — command written by Rust
+//!   - `output.msgpack`   — result written by Julia (preferred, when MsgPack.jl is available)
+//!   - `output.done`      — sentinel file signalling msgpack completion
+//!   - `output.json`      — result written by Julia (fallback)
+//!   - `output.json.done` — sentinel file signalling JSON completion
+//!   - `pid`              — PID of the running Julia process
 //!
 //! Signals are sent via `nix` for proper POSIX semantics (SIGTERM / SIGINT).
 
@@ -92,8 +94,9 @@ fn sigint_pid(pid: u32) {
 
 pub fn write_kernel_command(kernel_dir: &str, cmd: &Value) -> Result<(), String> {
     let input_file = Path::new(kernel_dir).join("input.json");
-    // Remove any stale done marker before writing a new command.
+    // Remove any stale done markers before writing a new command.
     let _ = fs::remove_file(Path::new(kernel_dir).join("output.json.done"));
+    let _ = fs::remove_file(Path::new(kernel_dir).join("output.done"));
     fs::write(&input_file, cmd.to_string()).map_err(|e| format!("Cannot write input.json: {e}"))
 }
 
@@ -116,6 +119,8 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
         "input.json",
         "output.json",
         "output.json.done",
+        "output.msgpack",
+        "output.done",
     ] {
         let _ = fs::remove_file(kdir.join(f));
     }
@@ -186,7 +191,14 @@ pub fn kernel_stop(kernel_dir: String) -> String {
     }
 
     // Clean up IPC files.
-    for f in &["input.json", "output.json", "output.json.done", "ready"] {
+    for f in &[
+        "input.json",
+        "output.json",
+        "output.json.done",
+        "output.msgpack",
+        "output.done",
+        "ready",
+    ] {
         let _ = fs::remove_file(kdir.join(f));
     }
 
@@ -214,23 +226,41 @@ pub fn kernel_execute_cell_start(kernel_dir: String, cell_index: isize, code: St
 }
 
 pub fn kernel_poll_result(kernel_dir: String) -> String {
-    let done_file = Path::new(&kernel_dir).join("output.json.done");
-    let output_file = Path::new(&kernel_dir).join("output.json");
+    let kdir = Path::new(&kernel_dir);
+    let msgpack_done = kdir.join("output.done");
+    let json_done = kdir.join("output.json.done");
 
-    if !done_file.exists() {
+    // Prefer msgpack, fall back to JSON.
+    let (done_file, use_msgpack) = if msgpack_done.exists() {
+        (msgpack_done, true)
+    } else if json_done.exists() {
+        (json_done, false)
+    } else {
         return json!({"status": "pending"}).to_string();
-    }
+    };
 
     let _ = fs::remove_file(&done_file);
 
-    let content = match fs::read_to_string(&output_file) {
-        Ok(c) => c,
-        Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
-    };
-
-    let parsed: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
+    let parsed: Value = if use_msgpack {
+        let output_file = kdir.join("output.msgpack");
+        let bytes = match fs::read(&output_file) {
+            Ok(b) => b,
+            Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
+        };
+        match rmp_serde::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
+        }
+    } else {
+        let output_file = kdir.join("output.json");
+        let content = match fs::read_to_string(&output_file) {
+            Ok(c) => c,
+            Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
+        };
+        match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => return json!({"status": "error", "error": e.to_string()}).to_string(),
+        }
     };
 
     let status = parsed["status"].as_str().unwrap_or("error");
@@ -260,6 +290,10 @@ pub fn kernel_poll_result(kernel_dir: String) -> String {
 
     if let Some(plot_data) = cell.get("plot_data") {
         response["plot_data"] = plot_data.clone();
+    }
+
+    if let Some(se) = cell.get("structured_error") {
+        response["structured_error"] = se.clone();
     }
 
     response.to_string()

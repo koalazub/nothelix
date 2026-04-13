@@ -36,11 +36,13 @@ jobs:
         if: steps.fork.outputs.same != '1'
         id: log
         run: |
-          git clone --depth 50 https://github.com/koalazub/helix.git helix-log
+          git clone --depth 100 https://github.com/koalazub/helix.git helix-log
           cd helix-log
-          git fetch origin ${{ steps.fork.outputs.current }} 2>/dev/null || true
-          RANGE="${{ steps.fork.outputs.current }}..${{ steps.fork.outputs.new }}"
-          if git rev-parse "${{ steps.fork.outputs.current }}" >/dev/null 2>&1; then
+          # Try to deepen enough to include the old rev; ignore failures
+          git fetch --deepen=200 origin 2>/dev/null || true
+          # Check if old rev is reachable in this clone
+          if git cat-file -t "${{ steps.fork.outputs.current }}" >/dev/null 2>&1; then
+            RANGE="${{ steps.fork.outputs.current }}..${{ steps.fork.outputs.new }}"
             LOG=$(git log --oneline "$RANGE" 2>/dev/null || git log --oneline -10 "${{ steps.fork.outputs.new }}")
           else
             LOG=$(git log --oneline -10 "${{ steps.fork.outputs.new }}")

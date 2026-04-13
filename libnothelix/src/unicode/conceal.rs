@@ -65,105 +65,215 @@ pub fn compute_conceal_overlays(text: String) -> String {
 /// Like `compute_conceal_overlays`, but only scans lines that start with `# `
 /// (Julia/notebook comment lines that contain markdown with LaTeX math).
 ///
-/// Processes each comment line independently so `$` on different lines
-/// cannot match each other (e.g. `$5` on one line and `$10` on another).
-/// Returns a tab-separated format for zero-overhead Scheme parsing:
-///   `"char_offset1\treplacement1\nchar_offset2\treplacement2\n..."`
+/// Single-line math (`$...$`, `\(...\)`) is scanned per-line so `$5` on one
+/// line can't accidentally match `$10` on another. Multi-line `$$...$$` blocks
+/// are detected by finding `# $$` open/close lines and joining the content
+/// between them.
 ///
-/// All offsets are CHAR offsets (not byte offsets) because Helix's overlay
-/// system uses character positions.
+/// Returns tab-separated format: `"char_offset\treplacement\n..."`
+/// All offsets are CHAR offsets (not byte offsets).
 pub fn compute_conceal_overlays_for_comments(text: String) -> String {
     let byte_to_char = build_byte_to_char_map(&text);
     let doc_char_len = text.chars().count();
     let mut out = String::new();
 
-    for (line_byte_start, line) in line_ranges(&text) {
+    let lines: Vec<(usize, &str)> = line_ranges(&text);
+
+    // Helper: emit one overlay from a byte offset in the document.
+    let mut emit = |doc_byte_offset: usize, repl: &str| {
+        let char_offset = byte_to_char.get(doc_byte_offset).copied().unwrap_or_else(|| {
+            text[..doc_byte_offset.min(text.len())].chars().count()
+        });
+        if char_offset < doc_char_len {
+            out.push_str(&char_offset.to_string());
+            out.push('\t');
+            out.push_str(repl);
+            out.push('\n');
+        }
+    };
+
+    let mut i = 0;
+    while i < lines.len() {
+        let (line_byte_start, line) = lines[i];
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
         let content = match trimmed.strip_prefix("# ") {
             Some(c) => c,
-            None => continue,
+            None => {
+                i += 1;
+                continue;
+            }
         };
+
+        // Detect multi-line $$ block: a line whose content is just "$$"
+        if content.trim() == "$$" {
+            // Find the closing # $$ line
+            let open_line = i;
+            let mut close_line = None;
+            for (j, &(_, jline)) in lines.iter().enumerate().skip(i + 1) {
+                let jt = jline
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r');
+                if let Some(jc) = jt.strip_prefix("# ") {
+                    if jc.trim() == "$$" {
+                        close_line = Some(j);
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(close) = close_line {
+                // Hide the opening $$ line
+                let open_content_start = line_byte_start + (trimmed.len() - content.len());
+                let dollar1 = content.find('$').unwrap_or(0);
+                emit(open_content_start + dollar1, "");
+                emit(open_content_start + dollar1 + 1, "");
+
+                // Join all content lines into a single string so environments
+                // like \begin{cases}...\end{cases} span correctly. Track each
+                // line's start offset in the joined string → document byte map.
+                let mut joined = String::new();
+                let mut offset_map: Vec<(usize, usize)> = Vec::new(); // (joined_offset, doc_byte_offset)
+
+                for &(k_byte_start, k_line) in lines.iter().take(close).skip(open_line + 1) {
+                    let k_trimmed = k_line.trim_end_matches('\n').trim_end_matches('\r');
+                    if let Some(k_content) = k_trimmed.strip_prefix("# ") {
+                        let k_content_start = k_byte_start + (k_trimmed.len() - k_content.len());
+                        offset_map.push((joined.len(), k_content_start));
+                        joined.push_str(k_content);
+                        joined.push('\n');
+                    }
+                }
+
+                // Scan the joined block as a single math unit
+                for (overlay_offset, replacement) in scan_to_vec(&joined) {
+                    // Map overlay offset in joined string → document byte offset
+                    let doc_offset = map_joined_offset(&offset_map, overlay_offset);
+                    emit(doc_offset, &replacement);
+                }
+
+                // Hide the closing $$ line
+                let (close_byte_start, close_line_text) = lines[close];
+                let close_trimmed = close_line_text
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r');
+                if let Some(close_content) = close_trimmed.strip_prefix("# ") {
+                    let close_content_start =
+                        close_byte_start + (close_trimmed.len() - close_content.len());
+                    let d = close_content.find('$').unwrap_or(0);
+                    emit(close_content_start + d, "");
+                    emit(close_content_start + d + 1, "");
+                }
+
+                i = close + 1;
+                continue;
+            }
+            // No closing $$ found — fall through to single-line processing
+        }
+
+        // Single-line processing: inline $...$ and \(...\)
         if content.is_empty() {
+            i += 1;
             continue;
         }
 
         let content_byte_start = line_byte_start + (trimmed.len() - content.len());
         let regions = find_math_regions(content);
-
         let content_bytes = content.as_bytes();
-        for (region_start, region_end) in regions {
+
+        for &(region_start, region_end) in &regions {
             if region_end <= region_start {
                 continue;
             }
 
-            // Helper: emit one overlay (byte offset in doc → char offset).
-            let mut emit = |byte_off_in_content: usize, repl: &str| {
-                let byte_offset = content_byte_start + byte_off_in_content;
-                let char_offset = byte_to_char.get(byte_offset).copied().unwrap_or_else(|| {
-                    text[..byte_offset.min(text.len())].chars().count()
-                });
-                if char_offset < doc_char_len {
-                    out.push_str(&char_offset.to_string());
-                    out.push('\t');
-                    out.push_str(repl);
-                    out.push('\n');
-                }
-            };
-
-            // Hide opening delimiter.
+            // Hide opening delimiter (\( or $$ or $).
             if region_start >= 2
-                && content_bytes[region_start - 2] == b'\\'
-                && content_bytes[region_start - 1] == b'('
+                && matches!(
+                    (content_bytes[region_start - 2], content_bytes[region_start - 1]),
+                    (b'\\', b'(') | (b'$', b'$')
+                )
             {
-                emit(region_start - 2, "");
-                emit(region_start - 1, "");
-            } else if region_start >= 2
-                && content_bytes[region_start - 2] == b'$'
-                && content_bytes[region_start - 1] == b'$'
-            {
-                emit(region_start - 2, "");
-                emit(region_start - 1, "");
+                emit(content_byte_start + region_start - 2, "");
+                emit(content_byte_start + region_start - 1, "");
             } else if region_start >= 1 && content_bytes[region_start - 1] == b'$' {
-                emit(region_start - 1, "");
+                emit(content_byte_start + region_start - 1, "");
             }
 
-            // Hide closing delimiter.
+            // Hide closing delimiter (\) or $$ or $).
             if region_end + 1 < content_bytes.len()
-                && content_bytes[region_end] == b'\\'
-                && content_bytes[region_end + 1] == b')'
+                && matches!(
+                    (content_bytes[region_end], content_bytes[region_end + 1]),
+                    (b'\\', b')') | (b'$', b'$')
+                )
             {
-                emit(region_end, "");
-                emit(region_end + 1, "");
-            } else if region_end + 1 < content_bytes.len()
-                && content_bytes[region_end] == b'$'
-                && content_bytes[region_end + 1] == b'$'
-            {
-                emit(region_end, "");
-                emit(region_end + 1, "");
+                emit(content_byte_start + region_end, "");
+                emit(content_byte_start + region_end + 1, "");
             } else if region_end < content_bytes.len() && content_bytes[region_end] == b'$' {
-                emit(region_end, "");
+                emit(content_byte_start + region_end, "");
             }
 
             // Emit overlays for the math content.
             let math_text = &content[region_start..region_end];
             for (offset, replacement) in scan_to_vec(math_text) {
-                emit(region_start + offset, &replacement);
+                emit(content_byte_start + region_start + offset, &replacement);
             }
         }
+
+        // Hide markdown escape backslashes OUTSIDE math regions.
+        // \(a\) → (a), \[2 marks\] → [2 marks], etc.
+        {
+            let mut j = 0;
+            while j + 1 < content_bytes.len() {
+                if content_bytes[j] == b'\\' && matches!(content_bytes[j + 1], b'(' | b')' | b'[' | b']') {
+                    let inside_math = regions.iter().any(|&(start, end)| {
+                        let region_open = start.saturating_sub(2);
+                        let region_close = (end + 2).min(content_bytes.len());
+                        j >= region_open && j < region_close
+                    });
+                    if !inside_math {
+                        emit(content_byte_start + j, "");
+                        j += 2;
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+        }
+
+        i += 1;
     }
 
     out
 }
 
+
 /// Build a lookup table from byte offset → char offset. Every byte
 /// position maps to the char index of the character that contains that
 /// byte (so mid-character bytes map correctly too).
-fn build_byte_to_char_map(text: &str) -> Vec<usize> {
+/// Map an offset in the joined $$ block string back to a document byte offset.
+/// `offset_map` is (joined_offset, doc_byte_offset) for each line start.
+fn map_joined_offset(offset_map: &[(usize, usize)], joined_offset: usize) -> usize {
+    // Find the last line whose joined_offset <= the target
+    let mut best_joined = 0;
+    let mut best_doc = 0;
+    for &(jo, doc) in offset_map {
+        if jo <= joined_offset {
+            best_joined = jo;
+            best_doc = doc;
+        } else {
+            break;
+        }
+    }
+    best_doc + (joined_offset - best_joined)
+}
+
+pub(super) fn build_byte_to_char_map(text: &str) -> Vec<usize> {
     let mut map = vec![0usize; text.len() + 1];
     let mut char_idx = 0;
     for (byte_idx, ch) in text.char_indices() {
-        for b in byte_idx..byte_idx + ch.len_utf8() {
-            map[b] = char_idx;
+        for slot in &mut map[byte_idx..byte_idx + ch.len_utf8()] {
+            *slot = char_idx;
         }
         char_idx += 1;
     }

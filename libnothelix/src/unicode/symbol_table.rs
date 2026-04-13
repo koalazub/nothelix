@@ -1817,7 +1817,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("nlesssim", "≴"),
     ("nmid", "∤"),
     ("nni", "∌"),
-    ("nolinebreak", "⁠"),
+    ("nolinebreak", "\u{2060}"),
     ("nor", "⊽"),
     ("not", "̸"),
     ("notbackslash", "⍀"),
@@ -2563,8 +2563,6 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
 // These maps used to be defined inline inside `latex_overlays`, once for each
 // of the four sub/super handlers. They're module-level constants now so all
 // four code paths share the same source of truth.
-
-/// Characters that have a Unicode superscript form. Handles digits,
 
 // ─── FFI functions ────────────────────────────────────────────────────────────
 

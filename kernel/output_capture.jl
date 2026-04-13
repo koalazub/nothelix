@@ -2,11 +2,20 @@ module OutputCapture
 
 using Base64
 using Dates
+using ..CellRegistry
 
-export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, extract_plot_data, set_log_file
+export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, extract_plot_data, set_log_file, set_kernel_dir
 
 # Log to kernel directory if available (set by runner.jl)
 const CAPTURE_LOG_FILE = Ref{Union{String, Nothing}}(nothing)
+
+# Kernel directory for writing sidecar image files (set by runner.jl)
+const KERNEL_DIR = Ref{Union{String, Nothing}}(nothing)
+const IMAGE_COUNTER = Ref{Int}(0)
+
+function set_kernel_dir(path::String)
+    KERNEL_DIR[] = path
+end
 
 function capture_log(msg::String)
     log_file = CAPTURE_LOG_FILE[]
@@ -34,6 +43,28 @@ mutable struct CapturedOutput
 end
 
 CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing, nothing, nothing)
+
+"""
+Extract line and column from a ParseError message.
+Scans for "Error @ file:LINE:COL" pattern.
+Returns (line, col) tuple or nothing.
+"""
+function extract_parse_error_location(msg::String)
+    for line in split(msg, '\n')
+        stripped = lstrip(lstrip(strip(line), '#'))
+        idx = findfirst("Error @ ", stripped)
+        idx === nothing && continue
+        after_at = stripped[idx[end]+1:end]
+        # Split from the right on ':' to get file:line:col
+        parts = split(after_at, ':')
+        length(parts) < 3 && continue
+        col_str = strip(parts[end])
+        line_str = strip(parts[end-1])
+        all(isdigit, col_str) && all(isdigit, line_str) || continue
+        return (parse(Int, line_str), parse(Int, col_str))
+    end
+    nothing
+end
 
 """
 Extract structured error metadata for the Rust error formatter.
@@ -73,7 +104,20 @@ function extract_structured_error(error, stacktrace, code::String, cell_index::I
         end
     end
 
-    Dict{String,Any}(
+    # For ParseError: extract line/col from the error message since the
+    # stacktrace won't contain a useful user-code frame.
+    if source_line == "" && error isa Base.Meta.ParseError
+        parse_loc = extract_parse_error_location(sprint(showerror, error))
+        if parse_loc !== nothing
+            parse_line, parse_col = parse_loc
+            if 1 <= parse_line <= length(code_lines)
+                source_line = code_lines[parse_line]
+                cell_line = parse_line
+            end
+        end
+    end
+
+    result = Dict{String,Any}(
         "error_type" => string(typeof(error)),
         "message" => sprint(showerror, error),
         "frames" => frames,
@@ -81,6 +125,23 @@ function extract_structured_error(error, stacktrace, code::String, cell_index::I
         "cell_index" => cell_index,
         "cell_line" => cell_line
     )
+
+    # Cross-cell context: for UndefVarError, show which cell defines the variable
+    if error isa UndefVarError
+        var_sym = error.var
+        cell_context = CellRegistry.lookup_variable_context(Set([var_sym]))
+        if !isempty(cell_context)
+            result["cell_context"] = cell_context
+        end
+    end
+
+    # For any error: check if the current cell has unexecuted dependencies
+    unexec = CellRegistry.unexecuted_dependencies(cell_index)
+    if !isempty(unexec)
+        result["unexecuted_deps"] = unexec
+    end
+
+    result
 end
 
 function capture_execution(f)
@@ -171,21 +232,18 @@ function capture_execution(f)
     result
 end
 
+const PLOT_TYPE_PATTERNS = ("Plot", "Figure", "Scene", "FigureAxis", "Chart", "Canvas", "Drawing", "GtkCanvas")
+
 # Check if a value is a displayable plot
 function is_displayable_plot(x)
     x === nothing && return false
-    t = string(typeof(x))
-    patterns = [
-        "Plot",       # Plots.jl
-        "Figure",     # Makie, PyPlot, Gadfly
-        "Scene",      # Makie
-        "FigureAxis", # Makie
-        "Chart",      # VegaLite
-        "Canvas",     # UnicodePlots
-        "Drawing",    # Luxor
-        "GtkCanvas",  # Gtk plots
-    ]
-    any(p -> occursin(p, t), patterns)
+    T = typeof(x)
+    # Fast path: check by module name
+    mod_name = nameof(parentmodule(T))
+    mod_name in (:Plots, :Makie, :CairoMakie, :GLMakie, :WGLMakie) && return true
+    # Fallback: string match on type name
+    t = string(nameof(T))
+    any(p -> occursin(p, t), PLOT_TYPE_PATTERNS)
 end
 
 # Capture a plot as PNG base64
@@ -206,7 +264,15 @@ function capture_plot_png(p)
                 data = read(tmpfile)
                 capture_log("savefig succeeded, file size: $(length(data)) bytes")
                 rm(tmpfile)
-                return base64encode(data)
+                if KERNEL_DIR[] !== nothing
+                    IMAGE_COUNTER[] += 1
+                    filename = "image_$(IMAGE_COUNTER[]).png"
+                    filepath = joinpath(KERNEL_DIR[], filename)
+                    write(filepath, data)
+                    return "file:$filename"
+                else
+                    return base64encode(data)
+                end
             else
                 capture_log("savefig: file not created")
             end
@@ -223,7 +289,15 @@ function capture_plot_png(p)
         data = take!(io)
         if !isempty(data)
             capture_log("MIME show succeeded, size: $(length(data)) bytes")
-            return base64encode(data)
+            if KERNEL_DIR[] !== nothing
+                IMAGE_COUNTER[] += 1
+                filename = "image_$(IMAGE_COUNTER[]).png"
+                filepath = joinpath(KERNEL_DIR[], filename)
+                write(filepath, data)
+                return "file:$filename"
+            else
+                return base64encode(data)
+            end
         else
             capture_log("MIME show: empty data")
         end
@@ -245,7 +319,15 @@ function capture_plot_png(p)
                 data = read(tmpfile)
                 capture_log("Makie save succeeded, size: $(length(data)) bytes")
                 rm(tmpfile)
-                return base64encode(data)
+                if KERNEL_DIR[] !== nothing
+                    IMAGE_COUNTER[] += 1
+                    filename = "image_$(IMAGE_COUNTER[]).png"
+                    filepath = joinpath(KERNEL_DIR[], filename)
+                    write(filepath, data)
+                    return "file:$filename"
+                else
+                    return base64encode(data)
+                end
             end
         catch e
             capture_log("Makie save failed: $e")

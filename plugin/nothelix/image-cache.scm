@@ -245,8 +245,8 @@
            (cond
              [(and cell-index (> (string-length image-b64) 0))
               (define image-id (cell-index->image-id cell-index))
-              (define image-cols 40)
-              (define max-image-rows 12)
+              (define image-cols *plot-cols*)
+              (define max-image-rows *plot-rows*)
               ;; Count how many blank lines follow this `# @image`
               ;; line before we hit the next content. That tells us
               ;; how many real buffer rows the grid actually has to

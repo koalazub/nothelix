@@ -11,6 +11,7 @@ mod kernel;
 mod kitty_placeholder;
 mod lsp;
 mod notebook;
+mod typst_export;
 mod unicode;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -49,6 +50,8 @@ fn build_module() -> FFIModule {
     m.register_fn("get-cell-code-from-jl", notebook::get_cell_code_from_jl);
     m.register_fn("list-jl-code-cells", notebook::list_jl_code_cells);
     m.register_fn("convert-to-ipynb", notebook::convert_to_ipynb);
+    m.register_fn("export-to-markdown", notebook::export_to_markdown);
+    m.register_fn("export-to-typst", notebook::export_to_typst);
 
     // ── Execution ─────────────────────────────────────────────────────────────
     m.register_fn(
@@ -61,7 +64,16 @@ fn build_module() -> FFIModule {
     // ── JSON utilities ────────────────────────────────────────────────────────
     m.register_fn("json-get", json_utils::json_get);
     m.register_fn("json-get-bool", json_utils::json_get_bool);
+    m.register_fn("json-get-many", json_utils::json_get_many);
     m.register_fn("json-get-first-image", json_utils::json_get_first_image);
+    m.register_fn(
+        "json-get-first-image-with-dir",
+        json_utils::json_get_first_image_with_dir,
+    );
+    m.register_fn(
+        "json-get-first-image-bytes",
+        json_utils::json_get_first_image_bytes,
+    );
     m.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
 
     // ── Graphics ──────────────────────────────────────────────────────────────
@@ -82,6 +94,10 @@ fn build_module() -> FFIModule {
     m.register_fn(
         "kitty-placeholder-payload",
         kitty_placeholder::kitty_placeholder_payload,
+    );
+    m.register_fn(
+        "kitty-placeholder-payload-bytes",
+        kitty_placeholder::kitty_placeholder_payload_bytes,
     );
     m.register_fn(
         "kitty-placeholder-rows",
@@ -120,6 +136,10 @@ fn build_module() -> FFIModule {
     m.register_fn(
         "compute-conceal-overlays-for-comments",
         unicode::compute_conceal_overlays_for_comments,
+    );
+    m.register_fn(
+        "compute-conceal-overlays-for-typst",
+        unicode::typst_conceal::typst_overlays_to_tsv,
     );
 
     // ── Error formatting ─────────────────────────────────────────────
@@ -169,9 +189,9 @@ fn read_file_tail(path: String, n: isize) -> String {
 }
 
 fn resolve_symlink_dir(path: String) -> String {
-    let expanded = if path.starts_with('~') {
+    let expanded = if let Some(rest) = path.strip_prefix('~') {
         if let Ok(home) = std::env::var("HOME") {
-            format!("{home}{}", &path[1..])
+            format!("{home}{rest}")
         } else {
             path
         }

@@ -17,10 +17,14 @@
                           notebook-convert-sync
                           notebook-cell-count
                           convert-to-ipynb
+                          export-to-markdown
+                          export-to-typst
                           write-string-to-file))
 
 (provide convert-notebook
-         sync-to-ipynb)
+         sync-to-ipynb
+         export-markdown
+         export-typst)
 
 ;;@doc
 ;; Convert the current .ipynb to the Nothelix .jl cell format.
@@ -88,3 +92,43 @@
      (if (string-starts-with? result "ERROR:")
          (set-status! result)
          (set-status! "Synced changes back to .ipynb"))]))
+
+;;@doc
+;; Export the current .jl notebook to Markdown (.md).
+;; Markdown cells have # prefix stripped. Code cells become fenced blocks.
+(define (export-markdown)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+
+  (cond
+    [(not path)
+     (set-status! "Error: No file path")]
+    [(not (string-suffix? path ".jl"))
+     (set-status! "Error: Not a .jl file")]
+    [else
+     (set-status! "Exporting to Markdown...")
+     (define result (export-to-markdown path))
+     (if (string-starts-with? result "ERROR:")
+         (set-status! result)
+         (set-status! result))]))
+
+;;@doc
+;; Export the current .jl notebook to Typst (.typ).
+;; Markdown headings become = headings. Math and code preserved.
+(define (export-typst)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+
+  (cond
+    [(not path)
+     (set-status! "Error: No file path")]
+    [(not (string-suffix? path ".jl"))
+     (set-status! "Error: Not a .jl file")]
+    [else
+     (set-status! "Exporting to Typst...")
+     (define result (export-to-typst path))
+     (if (string-starts-with? result "ERROR:")
+         (set-status! result)
+         (set-status! result))]))

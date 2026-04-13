@@ -27,9 +27,9 @@
 ;; FFI imports for output processing
 (#%require-dylib "libnothelix"
                  (only-in nothelix
-                          json-get
-                          json-get-bool
+                          json-get-many
                           json-get-first-image
+                          json-get-first-image-with-dir
                           json-get-plot-data
                           kitty-placeholder-payload
                           kitty-placeholder-rows
@@ -115,7 +115,13 @@
 ;; stays clean between "start execution" and "result available".
 ;; This function locates the cell's `# --- Output ---` header and
 ;; inserts the result content right below it.
-(define (update-cell-output result-json jl-path cell-index)
+(define (update-cell-output result-json jl-path cell-index . rest)
+  ;; kernel-dir is passed explicitly by callers that have it.
+  ;; Falls back to the global *executing-kernel-dir* for compat.
+  (define saved-kernel-dir
+    (if (and (not (null? rest)) (string? (car rest)))
+        (car rest)
+        *executing-kernel-dir*))
   (set! *executing-kernel-dir* #false)
 
   ;; Stash raw plot data for the interactive chart viewer (:view-plot).
@@ -142,13 +148,16 @@
 
   ;; Rust kernel_poll_result flattens the response:
   ;; {"status": "ok", "stdout": "...", "output_repr": "...", ...}
-  ;; Using Rust FFI json-get for proper serde parsing
-  (define err (json-get result-json "error"))
+  ;; Parse all fields once via json-get-many (single serde parse)
+  (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
+  (define field-list (string-split all-fields "\t"))
+  (define (field-at n) (if (< n (length field-list)) (list-ref field-list n) ""))
+  (define err (field-at 0))
   (cond
     [(> (string-length err) 0)
      ;; Try the Rust formatter for a guided error message.
      ;; Falls back to the raw error if structured_error is absent.
-     (define structured (json-get result-json "structured_error"))
+     (define structured (field-at 1))
      (define formatted (format-julia-error (or structured "") err))
      (helix.static.insert_string (commentify formatted))
      (helix.static.insert_string "# ─────────────\n")
@@ -156,10 +165,10 @@
      (helix.static.commit-changes-to-history)
      (set-status! (string-append "✗ " err))]
     [else
-     (define output-repr (json-get result-json "output_repr"))
-     (define stdout-text (json-get result-json "stdout"))
-     (define stderr-text (json-get result-json "stderr"))
-     (define has-error (equal? (json-get-bool result-json "has_error") "true"))
+     (define output-repr (field-at 2))
+     (define stdout-text (field-at 3))
+     (define stderr-text (field-at 4))
+     (define has-error (equal? (field-at 5) "true"))
 
      ;; Insert stdout if present, line-commented so it can't pollute
      ;; the buffer with raw Julia tokens. A `display(A)` call that
@@ -180,12 +189,20 @@
      ;; insert transaction (Assoc::After), which accumulates drift and
      ;; pushes the image line past the footer and beyond. Deferring
      ;; keeps the anchor at exactly the line we want.
-     (define image-b64 (json-get-first-image result-json))
+     ;; Resolve image data. When kernel-dir is available, use the sidecar
+     ;; path (reads raw PNG from file, base64-encodes in Rust). Otherwise
+     ;; fall back to extracting base64 directly from the JSON.
+     ;; NOTE: Phase 3 bytes path (kitty-placeholder-payload-bytes) is
+     ;; deferred until the Steel ByteVector FFI patch is deployed upstream.
+     (define image-b64
+       (if (and saved-kernel-dir (string? saved-kernel-dir))
+           (json-get-first-image-with-dir result-json saved-kernel-dir)
+           (json-get-first-image result-json)))
      (define image-ready #false)
      (define image-error-msg "")
      (define image-id 0)
-     (define image-rows 12)
-     (define image-cols 40)
+     (define image-rows *plot-rows*)
+     (define image-cols *plot-cols*)
      (define image-payload "")
      (define image-placeholder-rows "")
 

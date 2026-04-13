@@ -4,6 +4,13 @@
 using Dates
 using JSON3
 
+const HAS_MSGPACK = try
+    @eval using MsgPack
+    true
+catch
+    false
+end
+
 # Get kernel directory from command line
 const KERNEL_DIR = length(ARGS) >= 1 ? ARGS[1] : "/tmp/helix-kernel-test"
 const INPUT_FILE = joinpath(KERNEL_DIR, "input.json")
@@ -12,12 +19,20 @@ const LOG_FILE = joinpath(KERNEL_DIR, "kernel.log")
 const READY_FILE = joinpath(KERNEL_DIR, "ready")
 
 # Logging - only write to log file, NOT stdout (stdout gets captured during cell execution)
-function log_msg(level::Symbol, msg::String)
-    timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
-    log_line = "[$timestamp] [$level] $msg"
-    open(LOG_FILE, "a") do io
-        println(io, log_line)
+const LOG_IO = Ref{Union{IOStream, Nothing}}(nothing)
+
+function ensure_log_io()
+    if LOG_IO[] === nothing || !isopen(LOG_IO[])
+        LOG_IO[] = open(LOG_FILE, "a")
     end
+    LOG_IO[]
+end
+
+function log_msg(level::Symbol, msg::String)
+    io = ensure_log_io()
+    timestamp = Dates.format(now(), "yyyy-mm-dd HH:MM:SS.sss")
+    println(io, "[$timestamp] [$level] $msg")
+    flush(io)
 end
 
 log_info(msg) = log_msg(:INFO, msg)
@@ -25,6 +40,11 @@ log_error(msg) = log_msg(:ERROR, msg)
 log_debug(msg) = log_msg(:DEBUG, msg)
 
 log_info("Kernel starting in $KERNEL_DIR")
+
+atexit() do
+    io = LOG_IO[]
+    io !== nothing && isopen(io) && close(io)
+end
 
 # Load modules
 const KERNEL_ROOT = @__DIR__
@@ -43,6 +63,9 @@ using .CellMacros
 # Set log file for OutputCapture module
 OutputCapture.set_log_file(LOG_FILE)
 
+# Tell OutputCapture where to write sidecar image files
+OutputCapture.set_kernel_dir(KERNEL_DIR)
+
 log_info("Modules loaded successfully")
 
 # Export macros to Main module so they're available in cell execution
@@ -51,12 +74,21 @@ Core.eval(Main, :(using ..CellRegistry))
 
 # Write output response
 function write_response(data::Dict)
-    json_str = JSON3.write(data)
-    log_debug("Writing response: $(length(json_str)) bytes")
-    open(OUTPUT_FILE, "w") do io
-        write(io, json_str)
+    if HAS_MSGPACK
+        bytes = MsgPack.pack(data)
+        log_debug("Writing msgpack response: $(length(bytes)) bytes")
+        open(joinpath(KERNEL_DIR, "output.msgpack"), "w") do io
+            write(io, bytes)
+        end
+        touch(joinpath(KERNEL_DIR, "output.done"))
+    else
+        json_str = JSON3.write(data)
+        log_debug("Writing JSON response: $(length(json_str)) bytes")
+        open(OUTPUT_FILE, "w") do io
+            write(io, json_str)
+        end
+        touch(OUTPUT_FILE * ".done")
     end
-    touch(OUTPUT_FILE * ".done")
 end
 
 # Command handlers

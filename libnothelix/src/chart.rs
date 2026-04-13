@@ -200,11 +200,9 @@ fn render_to_canvas(series: &[Series], vp: &Viewport, cols: usize, rows: usize) 
     };
 
     for s in series {
-        let n = s.x.len().min(s.y.len());
         let mut prev: Option<(isize, isize)> = None;
 
-        for i in 0..n {
-            let (x, y) = (s.x[i], s.y[i]);
+        for (&x, &y) in s.x.iter().zip(s.y.iter()) {
             if !x.is_finite() || !y.is_finite() {
                 prev = None;
                 continue;

@@ -937,7 +937,7 @@ dependencies = [
  "base64",
  "image",
  "nix",
- "regex",
+ "rmp-serde",
  "serde",
  "serde_json",
  "steel-core",
@@ -1335,6 +1335,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1510,7 +1529,6 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "steel-core"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=605d490c07ae6937d532d5a994920b4dab3016ad#605d490c07ae6937d532d5a994920b4dab3016ad"
 dependencies = [
  "abi_stable",
  "arc-swap",
@@ -1565,7 +1583,6 @@ dependencies = [
 [[package]]
 name = "steel-derive"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=605d490c07ae6937d532d5a994920b4dab3016ad#605d490c07ae6937d532d5a994920b4dab3016ad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1575,7 +1592,6 @@ dependencies = [
 [[package]]
 name = "steel-gen"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=605d490c07ae6937d532d5a994920b4dab3016ad#605d490c07ae6937d532d5a994920b4dab3016ad"
 dependencies = [
  "codegen",
  "serde",
@@ -1584,7 +1600,6 @@ dependencies = [
 [[package]]
 name = "steel-parser"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=605d490c07ae6937d532d5a994920b4dab3016ad#605d490c07ae6937d532d5a994920b4dab3016ad"
 dependencies = [
  "compact_str",
  "dashmap",
@@ -1605,7 +1620,6 @@ dependencies = [
 [[package]]
 name = "steel-quickscope"
 version = "0.3.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=605d490c07ae6937d532d5a994920b4dab3016ad#605d490c07ae6937d532d5a994920b4dab3016ad"
 dependencies = [
  "indexmap 2.13.0",
  "smallvec",

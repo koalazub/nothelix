@@ -37,9 +37,25 @@ pub struct JlCell {
     pub kind: CellKind,
     pub code: String,
     pub start_line: usize,
+    /// Trailing comment from the marker line, e.g. "# Q1" from "@markdown 3 # Q1".
+    /// Prepended to cell code during export so it appears in the ipynb.
+    pub marker_comment: String,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Extract the trailing comment from a marker line's "rest" portion.
+/// Input: "3 # Q1" or "5 :julia # answer" or "0" → "# Q1", "# answer", ""
+fn extract_marker_comment(rest: &str) -> String {
+    if let Some(hash_pos) = rest.find(" #") {
+        // Everything from " #" onward, trimmed
+        let comment = rest[hash_pos + 1..].trim();
+        if comment.starts_with('#') {
+            return comment.to_string();
+        }
+    }
+    String::new()
+}
 
 /// Read and parse an `.ipynb` file.
 pub fn read_notebook(path: &str) -> Result<Value, String> {
@@ -100,12 +116,10 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 kind: CellKind::Code,
                 code: String::new(),
                 start_line: i,
+                marker_comment: String::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@cell ") {
             let rest = rest.trim();
-            // Parse the first whitespace-separated token. If it's
-            // numeric, use it as the index; if it's a colon-prefixed
-            // language tag (`:julia`), assume index 0 for now.
             let first = rest.split_whitespace().next().unwrap_or("");
             let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
@@ -113,6 +127,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 kind: CellKind::Code,
                 code: String::new(),
                 start_line: i,
+                marker_comment: extract_marker_comment(rest),
             });
         } else if line.trim_end() == "@markdown" {
             cells.push(JlCell {
@@ -120,15 +135,17 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 kind: CellKind::Markdown,
                 code: String::new(),
                 start_line: i,
+                marker_comment: String::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@markdown ") {
-            let first = rest.trim().split_whitespace().next().unwrap_or("");
+            let first = rest.split_whitespace().next().unwrap_or("");
             let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Markdown,
                 code: String::new(),
                 start_line: i,
+                marker_comment: extract_marker_comment(rest),
             });
         } else if line.trim_end() == "@typst" {
             cells.push(JlCell {
@@ -136,15 +153,17 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 kind: CellKind::Typst,
                 code: String::new(),
                 start_line: i,
+                marker_comment: String::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@typst ") {
-            let first = rest.trim().split_whitespace().next().unwrap_or("");
+            let first = rest.split_whitespace().next().unwrap_or("");
             let idx: isize = first.parse().unwrap_or(0);
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Typst,
                 code: String::new(),
                 start_line: i,
+                marker_comment: extract_marker_comment(rest),
             });
         }
     }
@@ -171,6 +190,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                     kind: CellKind::Code,
                     code: preamble,
                     start_line: 0,
+                    marker_comment: String::new(),
                 },
             );
         }
@@ -183,13 +203,18 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     // expansion — without it those lines would be forwarded to the
     // Julia kernel, which would then choke on `@cell` as a malformed
     // macro invocation.
-    let n = cells.len();
-    for ci in 0..n {
-        let code_start = cells[ci].start_line + 1;
-        let code_end = cells
-            .get(ci + 1)
-            .map(|c| c.start_line)
-            .unwrap_or(lines.len());
+    // Collect boundaries first so we can mutate cells below.
+    let boundaries: Vec<(usize, usize)> = cells
+        .iter()
+        .enumerate()
+        .map(|(ci, cell)| {
+            let code_start = cell.start_line + 1;
+            let code_end = cells.get(ci + 1).map_or(lines.len(), |c| c.start_line);
+            (code_start, code_end)
+        })
+        .collect();
+
+    for (ci, (code_start, code_end)) in boundaries.into_iter().enumerate() {
 
         let is_marker_line = |line: &str| -> bool {
             let t = line.trim_end();
@@ -232,7 +257,26 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             filtered.pop();
         }
 
-        cells[ci].code = filtered.join("\n");
+        let mut code = filtered.join("\n");
+
+        // Prepend marker-line comment as the first line of cell content.
+        // For "@markdown 3 # Q1", this makes "# Q1" appear as "# # Q1"
+        // in the cell body (a markdown heading when the # prefix is stripped).
+        if !cells[ci].marker_comment.is_empty() {
+            let comment = &cells[ci].marker_comment;
+            let prefix_line = if cells[ci].kind == CellKind::Markdown || cells[ci].kind == CellKind::Typst {
+                format!("# {comment}")
+            } else {
+                comment.to_string()
+            };
+            if code.is_empty() {
+                code = prefix_line;
+            } else {
+                code = format!("{prefix_line}\n{code}");
+            }
+        }
+
+        cells[ci].code = code;
     }
 
     Ok((cells, source_path))
@@ -466,6 +510,91 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
         serde_json::to_string_pretty(&original).unwrap_or_default(),
     ) {
         Ok(_) => format!("Synced to {out_path}"),
+        Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
+    }
+}
+
+/// Export a `.jl` notebook to Markdown (`.md`).
+///
+/// Markdown cells have their `# ` prefix stripped and are emitted as-is.
+/// Code cells are wrapped in ```julia fenced code blocks.
+/// Output sections are stripped.
+pub fn export_to_markdown(jl_path: String) -> String {
+    let (cells, _) = match parse_jl_file(&jl_path) {
+        Err(e) => return format!("ERROR: {e}"),
+        Ok(v) => v,
+    };
+
+    let mut out = String::new();
+
+    for cell in &cells {
+        match cell.kind {
+            CellKind::Markdown | CellKind::Typst => {
+                for line in cell.code.lines() {
+                    out.push_str(line.strip_prefix("# ").unwrap_or(line));
+                    out.push('\n');
+                }
+                out.push('\n');
+            }
+            CellKind::Code => {
+                if cell.code.trim().is_empty() {
+                    continue;
+                }
+                out.push_str("```julia\n");
+                out.push_str(&cell.code);
+                if !cell.code.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("```\n\n");
+            }
+        }
+    }
+
+    let out_path = jl_path.replace(".jl", ".md");
+    match fs::write(&out_path, &out) {
+        Ok(_) => format!("Exported to {out_path}"),
+        Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
+    }
+}
+
+/// Export a `.jl` notebook to Typst (`.typ`).
+pub fn export_to_typst(jl_path: String) -> String {
+    let (cells, _) = match parse_jl_file(&jl_path) {
+        Err(e) => return format!("ERROR: {e}"),
+        Ok(v) => v,
+    };
+
+    let mut out = String::new();
+
+    for cell in &cells {
+        match cell.kind {
+            CellKind::Markdown | CellKind::Typst => {
+                let stripped: String = cell
+                    .code
+                    .lines()
+                    .map(|l| l.strip_prefix("# ").unwrap_or(l))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.push_str(&crate::typst_export::md_to_typst(&stripped));
+                out.push('\n');
+            }
+            CellKind::Code => {
+                if cell.code.trim().is_empty() {
+                    continue;
+                }
+                out.push_str("```julia\n");
+                out.push_str(&cell.code);
+                if !cell.code.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("```\n\n");
+            }
+        }
+    }
+
+    let out_path = jl_path.replace(".jl", ".typ");
+    match fs::write(&out_path, &out) {
+        Ok(_) => format!("Exported to {out_path}"),
         Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
     }
 }

@@ -54,6 +54,8 @@
 //! defined by the spec. The `DIACRITICS` table below is that ordering,
 //! lifted verbatim from the upstream Kitty implementation.
 
+use std::fmt::Write;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::graphics::ensure_png;
@@ -126,6 +128,15 @@ pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
     build_virtual_transmission(&b64, image_id as u32)
 }
 
+/// Like `kitty_placeholder_payload` but accepts raw image bytes directly,
+/// skipping the base64 decode round-trip. Used when image data comes from
+/// a sidecar file rather than a JSON string.
+pub fn kitty_placeholder_payload_bytes(raw_data: Vec<u8>, image_id: isize) -> String {
+    let png_data = ensure_png(&raw_data);
+    let b64 = BASE64.encode(&png_data);
+    build_virtual_transmission(&b64, image_id as u32)
+}
+
 /// Chunked APC transmission with `U=1` set and no `r=`/`c=` parameters.
 /// Kitty will size the image to the number of placeholder cells the
 /// terminal ends up rendering, so we don't need to pre-commit dimensions
@@ -133,11 +144,10 @@ pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
 fn build_virtual_transmission(b64: &str, image_id: u32) -> String {
     let bytes = b64.as_bytes();
     let chunk_size = 4096;
-    let chunks: Vec<&[u8]> = bytes.chunks(chunk_size).collect();
-    let total = chunks.len();
+    let total = bytes.len().div_ceil(chunk_size);
     let mut out = String::with_capacity(b64.len() + total * 64);
 
-    for (i, chunk) in chunks.iter().enumerate() {
+    for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
         let s = std::str::from_utf8(chunk).unwrap_or("");
         let more = if i < total - 1 { 1 } else { 0 };
 
@@ -148,11 +158,9 @@ fn build_virtual_transmission(b64: &str, image_id: u32) -> String {
             // q=2  suppress OK/ERROR responses
             // U=1  virtual placement via Unicode placeholders
             // i=   image id (low 24 bits carry through the SGR colour encoding)
-            out.push_str(&format!(
-                "\x1b_Ga=T,f=100,t=d,q=2,U=1,i={image_id},m={more};{s}\x1b\\"
-            ));
+            let _ = write!(out, "\x1b_Ga=T,f=100,t=d,q=2,U=1,i={image_id},m={more};{s}\x1b\\");
         } else {
-            out.push_str(&format!("\x1b_Gm={more};{s}\x1b\\"));
+            let _ = write!(out, "\x1b_Gm={more};{s}\x1b\\");
         }
     }
 
@@ -199,10 +207,10 @@ pub fn kitty_placeholder_rows(image_id: isize, cols: isize, rows: isize) -> Stri
     // generously.
     let mut out = String::with_capacity(rows * (cols * 4 + 4 + 1));
 
-    for row in 0..rows {
+    for (row, &dia) in DIACRITICS.iter().enumerate().take(rows) {
         // First cell carries both diacritics so Kitty knows the start
         // of a new row run.
-        let row_diacritic = char::from_u32(DIACRITICS[row]).unwrap_or(' ');
+        let row_diacritic = char::from_u32(dia).unwrap_or(' ');
         let col0_diacritic = char::from_u32(DIACRITICS[0]).unwrap_or(' ');
         out.push(PLACEHOLDER);
         out.push(row_diacritic);

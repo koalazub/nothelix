@@ -19,7 +19,8 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           compute-conceal-overlays-ffi
-                          compute-conceal-overlays-for-comments))
+                          compute-conceal-overlays-for-comments
+                          compute-conceal-overlays-for-typst))
 
 (provide compute-conceal-overlays compute-and-apply-conceal-async
          parse-overlay-json
@@ -41,11 +42,16 @@
   (define rope (editor->text doc-id))
   (define text (text.rope->string rope))
   (define path (editor-document->path doc-id))
-  (if (and path (ends-with-jl? path))
-      ;; .jl: per-line comment scanning, returns tab-separated format
-      (parse-tsv-overlays (compute-conceal-overlays-for-comments text))
-      ;; Other files: full-document scan, returns JSON
-      (parse-overlay-json (compute-conceal-overlays-ffi text))))
+  (cond
+    [(and path (ends-with-jl? path))
+     ;; .jl: per-line comment scanning, returns tab-separated format
+     (parse-tsv-overlays (compute-conceal-overlays-for-comments text))]
+    [(and path (string-suffix? path ".typ"))
+     ;; .typ: Typst math scanning, returns tab-separated format
+     (parse-tsv-overlays (compute-conceal-overlays-for-typst text))]
+    [else
+     ;; Other files: full-document LaTeX scan, returns JSON
+     (parse-overlay-json (compute-conceal-overlays-ffi text))]))
 
 ;;;@doc
 ;;; Parse tab-separated overlay format: "offset\\treplacement\\n..."
@@ -146,7 +152,7 @@
 ;;; it validates the document fingerprint and fails closed rather than
 ;;; apply stale char offsets.
 
-(define *conceal-extensions* '("md" "markdown" "tex" "jl" "qmd" "rmd"))
+(define *conceal-extensions* '("md" "markdown" "tex" "jl" "typ" "qmd" "rmd"))
 
 (define (ends-with? str suffix)
   (define slen (string-length suffix))
