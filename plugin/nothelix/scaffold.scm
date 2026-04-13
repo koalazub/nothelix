@@ -567,10 +567,6 @@
                "[deps]\n"
                "CellMarkers = \"019d8495-069e-72c6-9285-251bb2f95da1\"\n"
                "LinearAlgebra = \"37e2e46d-f89d-539d-b4ee-838fcccc9c8e\"\n"))]
-          [else
-           ;; Existing Project.toml — check if CellMarkers is declared.
-           (define contents (read-file-tail project-toml 0))
-           (when (not (string-contains? contents "CellMarkers"))
-             (set-status! "tip: run Pkg.add(\"CellMarkers\") to suppress @cell/@markdown LSP warnings"))])
+          [else #true])
         (helix.open path)
         (set-status! (string-append "nothelix: created " path))])]))

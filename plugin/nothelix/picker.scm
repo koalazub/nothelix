@@ -39,28 +39,27 @@
 ;; is the integer parsed from the marker. Falls back to (0, kind)
 ;; when the header is malformed so the picker still renders
 ;; something rather than crashing.
-;; Extract a label from the tail of a marker line.
-;; Everything after the lang tag (`:julia`, `:python`, etc.) is the label.
-;; For markdown: everything after the index number is the label.
-;; No quoting — just plain words.
-(define (extract-label-from-parts parts start-idx)
-  (if (>= start-idx (length parts))
+;; Extract label from `# comment` portion of a marker line.
+;; `@cell 2 :julia # sampling operator` → "sampling operator"
+;; Uses # so labels are invisible to Julia's parser and StaticLint.
+(define (extract-comment-label str)
+  (define parts (string-split str "#"))
+  (if (< (length parts) 2)
       ""
-      (string-join (list-tail parts start-idx) " ")))
+      (string-trim (list-ref parts 1))))
 
 (define (parse-cell-header line)
   (define (strip-trailing-newline s)
     (if (string-suffix? s "\n")
         (substring s 0 (- (string-length s) 1))
         s))
-  ;; Parse `@cell N :lang label words` or `@markdown N label words`.
-  ;; Label = everything after the lang tag (code) or after the index (markdown).
-  ;; No quoting — just plain words separated by spaces.
   (cond
     [(string-starts-with? line "@cell ")
      (define rest (strip-trailing-newline
                     (substring line (string-length "@cell ") (string-length line))))
-     (define parts (string-split (string-trim rest) " "))
+     (define label (extract-comment-label rest))
+     (define before-hash (string-trim (car (string-split rest "#"))))
+     (define parts (string-split before-hash " "))
      (define first (if (null? parts) "" (car parts)))
      (define maybe-num (string->number first))
      (define idx (if maybe-num maybe-num 0))
@@ -74,25 +73,20 @@
           (substring lang-tok 1 (string-length lang-tok))]
          [(> (string-length lang-tok) 0) lang-tok]
          [else "julia"]))
-     ;; Label = everything after index + lang tag
-     (define label-start (if maybe-num (min 2 (length parts)) 1))
-     (define label (extract-label-from-parts parts label-start))
      (list (string-append "code (" lang ")") idx label)]
     [(string-starts-with? line "@markdown ")
      (define rest (strip-trailing-newline
                     (substring line (string-length "@markdown ") (string-length line))))
-     (define parts (string-split (string-trim rest) " "))
-     (define first (if (null? parts) "" (car parts)))
-     (define idx (or (string->number first) 0))
-     (define label (extract-label-from-parts parts 1))
+     (define label (extract-comment-label rest))
+     (define before-hash (string-trim (car (string-split rest "#"))))
+     (define idx (or (string->number before-hash) 0))
      (list "markdown" idx label)]
     [(string-starts-with? line "@typst ")
      (define rest (strip-trailing-newline
                     (substring line (string-length "@typst ") (string-length line))))
-     (define parts (string-split (string-trim rest) " "))
-     (define first (if (null? parts) "" (car parts)))
-     (define idx (or (string->number first) 0))
-     (define label (extract-label-from-parts parts 1))
+     (define label (extract-comment-label rest))
+     (define before-hash (string-trim (car (string-split rest "#"))))
+     (define idx (or (string->number before-hash) 0))
      (list "typst" idx label)]
     [else (list "unknown" 0 "")]))
 
