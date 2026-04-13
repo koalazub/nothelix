@@ -540,6 +540,7 @@
          "# # New notebook\n"
          "#\n"
          "# <space>nr  run cell  |  <space>nn  new cell  |  <space>nj  jump\n"
+         "# <space>ni  select code | <space>na  select all | <space>no  select output\n"
          "# ]l / [l    next/prev |  dd on marker line to delete a cell\n"
          "#\n"
          "# :new-notebook        create a notebook\n"

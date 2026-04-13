@@ -174,8 +174,8 @@
       (space ("n" ("r" ":execute-cell")
                   ("n" ":new-cell")
                   ("j" ":cell-picker")
-                  ("c" ":select-cell")
-                  ("s" ":select-cell-code")
+                  ("a" ":select-cell")
+                  ("i" ":select-cell-code")
                   ("o" ":select-output"))))))
 
 ;; ─── Plugin command documentation ─────────────────────────────────────────────
@@ -213,9 +213,9 @@
     "previous-cell"    "Jump to the previous cell."
     "cell-picker"      "Open the interactive cell navigator."
     "new-cell"         "Insert a new cell (code or markdown) at the cursor."
-    "select-cell"      "Select the entire current cell (header + code + output)."
-    "select-cell-code" "Select just the code portion of the current cell."
-    "select-output"    "Select the output section of the current cell."
+    "select-cell"      "Select around cell (header + code + output)."
+    "select-cell-code" "Select inside cell (code only)."
+    "select-output"    "Select output block."
 
     ;; Chart viewer
     "view-chart" "Open the last-executed plot in the interactive chart viewer."
