@@ -73,7 +73,9 @@
          conceal-math clear-conceal
          new-notebook renumber-cells new-cell
          nothelix-debug-on nothelix-debug-off nothelix-debug-toggle
-         run-all-tests run-cell-tests run-kernel-tests run-execution-tests)
+         run-all-tests run-cell-tests run-kernel-tests run-execution-tests
+         ;; Shorthands
+         xc xca nc)
 
 ;;; ============================================================================
 ;;; CONCEAL — thin shim for backwards-compatible provided names
@@ -90,6 +92,14 @@
 ;;@doc
 ;; Remove LaTeX unicode concealment overlays from the current buffer.
 (define (clear-conceal) (clear-conceal!))
+
+;;; ============================================================================
+;;; COMMAND SHORTHANDS
+;;; ============================================================================
+
+(define (xc) (execute-cell))          ;; :xc   = :execute-cell
+(define (xca) (execute-all-cells))    ;; :xca  = :execute-all-cells
+(define (nc) (next-cell))             ;; :nc   = :next-cell
 
 ;;; ============================================================================
 ;;; DEBUG MODE — thin command shims for the `nothelix/debug.scm` module
