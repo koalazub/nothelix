@@ -16,11 +16,12 @@ mutable struct Cell
     images::Vector{Tuple{String, String}}  # (format, base64_data) for inline rendering
     plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
     error::Union{Exception, Nothing}
+    stacktrace::Union{Vector, Nothing}
     status::Symbol  # :pending, :running, :done, :error
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], nothing, nothing, :pending)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], nothing, nothing, nothing, :pending)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()

@@ -4,6 +4,7 @@
 //! utility functions that don't warrant their own module.
 
 mod chart;
+pub mod error_format;
 mod graphics;
 mod json_utils;
 mod kernel;
@@ -121,6 +122,9 @@ fn build_module() -> FFIModule {
         unicode::compute_conceal_overlays_for_comments,
     );
 
+    // ── Error formatting ─────────────────────────────────────────────
+    m.register_fn("format-julia-error", format_julia_error);
+
     // ── LSP environment ───────────────────────────────────────────────
     m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
     m.register_fn("lsp-environment-ready", lsp::lsp_environment_ready);
@@ -128,6 +132,12 @@ fn build_module() -> FFIModule {
     m.register_fn("lsp-depot-dir", lsp::lsp_depot_dir);
 
     m
+}
+
+// ─── Error formatting ─────────────────────────────────────────────────────────
+
+fn format_julia_error(error_json: String, raw_error: String) -> String {
+    error_format::format_error(&error_json, &raw_error)
 }
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────

@@ -33,7 +33,8 @@
                           json-get-plot-data
                           kitty-placeholder-payload
                           kitty-placeholder-rows
-                          save-image-to-cache))
+                          save-image-to-cache
+                          format-julia-error))
 
 (provide update-cell-output
          commentify
@@ -145,7 +146,11 @@
   (define err (json-get result-json "error"))
   (cond
     [(> (string-length err) 0)
-     (helix.static.insert_string (string-append "# ERROR: " err "\n"))
+     ;; Try the Rust formatter for a guided error message.
+     ;; Falls back to the raw error if structured_error is absent.
+     (define structured (json-get result-json "structured_error"))
+     (define formatted (format-julia-error (or structured "") err))
+     (helix.static.insert_string (commentify formatted))
      (helix.static.insert_string "# ─────────────\n")
      (helix.static.collapse_selection)
      (helix.static.commit-changes-to-history)

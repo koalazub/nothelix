@@ -49,6 +49,7 @@ macro cell(index, exec_count, body)
         cell.stdout = captured.stdout
         cell.stderr = captured.stderr
         cell.error = captured.error
+        cell.stacktrace = captured.stacktrace
         cell.status = captured.error === nothing ? :done : :error
 
         # Return the captured output (for REPL display)
@@ -139,6 +140,10 @@ function get_cell_result_json(cell_idx::Int)
 
     if cell.error !== nothing
         result["error"] = sprint(showerror, cell.error)
+        try
+            result["structured_error"] = OutputCapture.extract_structured_error(
+                cell.error, cell.stacktrace, cell.code_string, cell_idx)
+        catch end
     end
 
     # Output representation

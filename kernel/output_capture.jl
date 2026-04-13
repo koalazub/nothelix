@@ -26,13 +26,62 @@ mutable struct CapturedOutput
     return_value::Any
     stdout::String
     stderr::String
-    images::Vector{Tuple{String, String}}  # (format, base64_data)
-    plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
+    images::Vector{Tuple{String, String}}
+    plot_data::Union{Vector{Dict{String,Any}}, Nothing}
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
+    structured_error::Union{Dict{String,Any}, Nothing}
 end
 
-CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing, nothing)
+CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing, nothing, nothing)
+
+"""
+Extract structured error metadata for the Rust error formatter.
+Returns a Dict with: error_type, message, frames, source_line,
+cell_index, cell_line. Returns nothing if no error.
+"""
+function extract_structured_error(error, stacktrace, code::String, cell_index::Int)
+    error === nothing && return nothing
+    frames = Dict{String,Any}[]
+    code_lines = split(code, '\n')
+
+    if stacktrace !== nothing
+        for (i, frame) in enumerate(stacktrace)
+            file = string(frame.file)
+            is_user = occursin("<cell>", file) || occursin("none", file) ||
+                      startswith(file, "REPL") || file == "none"
+            push!(frames, Dict{String,Any}(
+                "file" => file,
+                "line" => frame.line,
+                "func" => string(frame.func),
+                "is_user_code" => is_user
+            ))
+        end
+    end
+
+    # Find the source line from the stacktrace
+    source_line = ""
+    cell_line = 0
+    for f in frames
+        if f["is_user_code"] && f["line"] > 0
+            line_idx = f["line"]
+            if 1 <= line_idx <= length(code_lines)
+                source_line = code_lines[line_idx]
+                cell_line = line_idx
+            end
+            break
+        end
+    end
+
+    Dict{String,Any}(
+        "error_type" => string(typeof(error)),
+        "message" => sprint(showerror, error),
+        "frames" => frames,
+        "source_line" => source_line,
+        "cell_index" => cell_index,
+        "cell_line" => cell_line
+    )
+end
 
 function capture_execution(f)
     result = CapturedOutput()
@@ -456,6 +505,14 @@ function capture_toplevel(mod::Module, code::String)
 
     result.stdout = String(take!(stdout_buf))
     result.stderr = String(take!(stderr_buf))
+
+    # Extract structured error for the Rust formatter
+    if code_error !== nothing
+        try
+            result.structured_error = extract_structured_error(
+                code_error, code_stacktrace, code, 0)
+        catch end
+    end
 
     # Check for displayable plot
     if result.error === nothing && is_displayable_plot(result.return_value)
