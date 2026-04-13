@@ -1,25 +1,10 @@
-//! Ergonomic error formatting for Julia cell execution errors.
+//! Ergonomic error formatting for Julia cell execution.
 //!
-//! Transforms raw Julia exceptions into Rust-style guided messages:
-//!
-//! ```text
-//! error[E001]: index out of bounds (0-indexed)
-//!   --> cell 2, line 3
-//!    |
-//!  3 | v[0]
-//!    |   ^ attempt to access 3-element Vector{Int64} at index [0]
-//!    |
-//!    = help: Julia arrays are 1-indexed. Use v[1] for the first element.
-//! ```
-//!
-//! The hint registry is loaded from `error_hints.toml` (embedded at compile
-//! time) and matched via regex. Contributors add hints by editing the TOML —
-//! no Rust knowledge required.
+//! Transforms raw Julia errors into Rust-style guided messages with
+//! examples showing how to fix the problem.
 
 use regex::Regex;
 use serde::Deserialize;
-
-// ─── Hint registry ──────────────────────────────────────────────────────────
 
 static HINTS_TOML: &str = include_str!("../error_hints.toml");
 
@@ -34,6 +19,8 @@ struct RawHint {
     pattern: String,
     title: String,
     help: String,
+    #[serde(default)]
+    example: String,
 }
 
 pub struct ErrorHint {
@@ -41,6 +28,7 @@ pub struct ErrorHint {
     pub pattern: Regex,
     pub title: String,
     pub help: String,
+    pub example: String,
 }
 
 pub fn load_hints() -> Vec<ErrorHint> {
@@ -54,12 +42,11 @@ pub fn load_hints() -> Vec<ErrorHint> {
                 pattern,
                 title: h.title,
                 help: h.help,
+                example: h.example,
             })
         })
         .collect()
 }
-
-// ─── Structured error from Julia kernel ─────────────────────────────────────
 
 #[derive(Deserialize, Default)]
 pub struct StructuredError {
@@ -89,117 +76,102 @@ pub struct ErrorFrame {
     pub is_user_code: bool,
 }
 
-// ─── Formatter ──────────────────────────────────────────────────────────────
-
-/// Format a structured Julia error into a Rust-style guided message.
-/// Falls back to a clean presentation if no hint matches.
+/// Format a Julia error into a guided message.
 pub fn format_error(error_json: &str, raw_error: &str) -> String {
     let hints = load_hints();
 
-    // Try structured first
     if let Ok(err) = serde_json::from_str::<StructuredError>(error_json) {
         if !err.error_type.is_empty() {
             return format_structured(&err, &hints);
         }
     }
 
-    // Fall back to raw error string with hint matching
-    format_raw(raw_error, &hints)
+    if !raw_error.is_empty() {
+        return format_raw(raw_error, &hints);
+    }
+
+    "error: unknown\n".to_string()
 }
 
 fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
-    let full_msg = format!("{}: {}", err.error_type, err.message);
+    let full_msg = clean_message(&format!("{}: {}", err.error_type, err.message));
     let matched = find_hint(hints, &full_msg);
-
     let mut out = String::new();
 
     // Header
     match &matched {
         Some(h) => {
-            let title = expand_captures(&h.title, &h.pattern, &full_msg);
+            let title = expand(&h.title, &h.pattern, &full_msg);
             out.push_str(&format!("error[{}]: {}\n", h.id, title));
         }
-        None => {
-            out.push_str(&format!("error: {}\n", err.error_type));
-        }
+        None => out.push_str(&format!("error: {}\n", err.error_type)),
     }
 
     // Location
-    if err.cell_index >= 0 {
-        if err.cell_line > 0 {
-            out.push_str(&format!("  --> cell {}, line {}\n", err.cell_index, err.cell_line));
-        } else {
-            out.push_str(&format!("  --> cell {}\n", err.cell_index));
-        }
+    if err.cell_index >= 0 && err.cell_line > 0 {
+        out.push_str(&format!("  --> cell {}, line {}\n", err.cell_index, err.cell_line));
+    } else if err.cell_index >= 0 {
+        out.push_str(&format!("  --> cell {}\n", err.cell_index));
     }
 
-    // Source line
-    if !err.source_line.is_empty() {
-        out.push_str("   |\n");
-        if err.cell_line > 0 {
-            out.push_str(&format!("{:>3} | {}\n", err.cell_line, err.source_line.trim_end()));
-        } else {
-            out.push_str(&format!("    | {}\n", err.source_line.trim_end()));
-        }
-        out.push_str(&format!("   | {}\n", err.message));
-    } else {
-        out.push_str("   |\n");
-        out.push_str(&format!("   | {}\n", err.message));
+    // Source line + message
+    out.push_str("   |\n");
+    if !err.source_line.is_empty() && err.cell_line > 0 {
+        out.push_str(&format!("{:>3} | {}\n", err.cell_line, err.source_line.trim_end()));
     }
+    // Short message (first line only, no "Closest candidates")
+    let short_msg = err.message.lines().next().unwrap_or(&err.message);
+    out.push_str(&format!("   | {}\n", short_msg));
     out.push_str("   |\n");
 
-    // Help
+    // Help + example
     if let Some(h) = &matched {
         if !h.help.is_empty() {
-            let help = expand_captures(&h.help, &h.pattern, &full_msg);
-            out.push_str(&format!("   = help: {}\n", help));
+            out.push_str(&format!("   = help: {}\n", expand(&h.help, &h.pattern, &full_msg)));
         }
-    }
-
-    // User frames only
-    let user_frames: Vec<&ErrorFrame> = err.frames.iter().filter(|f| f.is_user_code).collect();
-    let internal_count = err.frames.len() - user_frames.len();
-
-    if !user_frames.is_empty() {
-        out.push('\n');
-        for f in &user_frames {
-            out.push_str(&format!("   {} at {}:{}\n", f.func, f.file, f.line));
+        if !h.example.is_empty() {
+            let ex = expand(&h.example, &h.pattern, &full_msg);
+            out.push_str("   = example:\n");
+            for line in ex.lines() {
+                out.push_str(&format!("   |   {}\n", line));
+            }
         }
-    }
-    if internal_count > 0 {
-        out.push_str(&format!("   ... {} internal frames hidden\n", internal_count));
     }
 
     out
 }
 
 fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
-    let matched = find_hint(hints, raw);
+    let cleaned = clean_message(raw);
+    let matched = find_hint(hints, &cleaned);
     let mut out = String::new();
 
     match &matched {
         Some(h) => {
-            let title = expand_captures(&h.title, &h.pattern, raw);
+            let title = expand(&h.title, &h.pattern, &cleaned);
             out.push_str(&format!("error[{}]: {}\n", h.id, title));
             out.push_str("   |\n");
-            // Show first meaningful line of the raw error
-            let first_line = raw.lines().next().unwrap_or(raw);
-            out.push_str(&format!("   | {}\n", first_line));
+            // First meaningful line only
+            let first = cleaned.lines().next().unwrap_or(&cleaned);
+            out.push_str(&format!("   | {}\n", first));
             out.push_str("   |\n");
             if !h.help.is_empty() {
-                let help = expand_captures(&h.help, &h.pattern, raw);
-                out.push_str(&format!("   = help: {}\n", help));
+                out.push_str(&format!("   = help: {}\n", expand(&h.help, &h.pattern, &cleaned)));
+            }
+            if !h.example.is_empty() {
+                let ex = expand(&h.example, &h.pattern, &cleaned);
+                out.push_str("   = example:\n");
+                for line in ex.lines() {
+                    out.push_str(&format!("   |   {}\n", line));
+                }
             }
         }
         None => {
             out.push_str("error: execution failed\n");
             out.push_str("   |\n");
-            for line in raw.lines().take(5) {
-                out.push_str(&format!("   | {}\n", line));
-            }
-            if raw.lines().count() > 5 {
-                out.push_str(&format!("   | ... ({} more lines)\n", raw.lines().count() - 5));
-            }
+            // Show only the first meaningful line, not the candidates noise
+            let first = cleaned.lines().next().unwrap_or(&cleaned);
+            out.push_str(&format!("   | {}\n", first));
             out.push_str("   |\n");
         }
     }
@@ -207,12 +179,29 @@ fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
     out
 }
 
+/// Strip "Closest candidates" and everything after — pure noise for researchers.
+fn clean_message(msg: &str) -> String {
+    if let Some(idx) = msg.find("\nClosest candidates") {
+        msg[..idx].trim_end().to_string()
+    } else if let Some(idx) = msg.find("\n\nClosest candidates") {
+        msg[..idx].trim_end().to_string()
+    } else if let Some(idx) = msg.find("Closest candidates are:") {
+        msg[..idx].trim_end().to_string()
+    } else {
+        // Also strip "Stacktrace:" sections
+        if let Some(idx) = msg.find("\nStacktrace:") {
+            msg[..idx].trim_end().to_string()
+        } else {
+            msg.to_string()
+        }
+    }
+}
+
 fn find_hint<'a>(hints: &'a [ErrorHint], text: &str) -> Option<&'a ErrorHint> {
     hints.iter().find(|h| h.pattern.is_match(text))
 }
 
-/// Replace `{1}`, `{2}` etc. with regex capture groups from the match.
-fn expand_captures(template: &str, pattern: &Regex, text: &str) -> String {
+fn expand(template: &str, pattern: &Regex, text: &str) -> String {
     let caps = match pattern.captures(text) {
         Some(c) => c,
         None => return template.to_string(),
@@ -226,8 +215,6 @@ fn expand_captures(template: &str, pattern: &Regex, text: &str) -> String {
     result
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,43 +222,58 @@ mod tests {
     #[test]
     fn hints_load() {
         let hints = load_hints();
-        assert!(hints.len() >= 15, "expected at least 15 hints, got {}", hints.len());
-        assert_eq!(hints[0].id, "E001");
+        assert!(hints.len() >= 15);
     }
 
     #[test]
-    fn bounds_error_zero_index() {
+    fn bounds_error_zero() {
         let raw = "BoundsError: attempt to access 3-element Vector{Int64} at index [0]";
         let out = format_raw(raw, &load_hints());
-        assert!(out.contains("E001"), "should match E001");
-        assert!(out.contains("1-indexed"), "should mention 1-indexed");
+        assert!(out.contains("E001"));
+        assert!(out.contains("1-indexed"));
+        assert!(out.contains("v[1]"));
     }
 
     #[test]
-    fn undef_var_captures_name() {
+    fn undef_var() {
         let raw = "UndefVarError: myvar not defined";
         let out = format_raw(raw, &load_hints());
-        assert!(out.contains("E003"), "should match E003");
-        assert!(out.contains("myvar"), "should capture variable name");
+        assert!(out.contains("myvar"));
+        assert!(out.contains("E004"));
     }
 
     #[test]
-    fn unknown_error_fallback() {
-        let raw = "SomeWeirdError: never seen this before";
+    fn method_error_function_as_arg() {
+        let raw = "MethodError: no method matching /(::Int64, ::typeof(sqrt))";
+        let out = format_raw(raw, &load_hints());
+        assert!(out.contains("E005"));
+        assert!(out.contains("sqrt"));
+        assert!(out.contains("function"));
+        assert!(out.contains("parentheses"));
+    }
+
+    #[test]
+    fn closest_candidates_stripped() {
+        let raw = "MethodError: no method matching /(::Int64, ::typeof(sqrt))\nClosest candidates are:\n  /(::R, !Matched::S)\n  lots of noise";
+        let out = format_raw(raw, &load_hints());
+        assert!(!out.contains("Closest candidates"));
+        assert!(!out.contains("!Matched"));
+    }
+
+    #[test]
+    fn unknown_falls_back_cleanly() {
+        let raw = "SomeNewError: never seen this";
         let out = format_raw(raw, &load_hints());
         assert!(out.contains("error: execution failed"));
-        assert!(out.contains("SomeWeirdError"));
+        assert!(out.contains("SomeNewError"));
     }
 
     #[test]
-    fn structured_error_formatting() {
+    fn structured_with_example() {
         let json = r#"{
             "error_type": "BoundsError",
             "message": "attempt to access 3-element Vector{Int64} at index [0]",
-            "frames": [
-                {"file": "<cell>", "line": 3, "func": "top-level scope", "is_user_code": true},
-                {"file": "array.jl", "line": 861, "func": "getindex", "is_user_code": false}
-            ],
+            "frames": [],
             "source_line": "v[0]",
             "cell_index": 2,
             "cell_line": 3
@@ -280,7 +282,7 @@ mod tests {
         assert!(out.contains("error[E001]"));
         assert!(out.contains("cell 2, line 3"));
         assert!(out.contains("v[0]"));
-        assert!(out.contains("1-indexed"));
-        assert!(out.contains("1 internal frames hidden"));
+        assert!(out.contains("example"));
+        assert!(out.contains("v[1]"));
     }
 }

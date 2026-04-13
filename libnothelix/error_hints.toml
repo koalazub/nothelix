@@ -1,89 +1,139 @@
 [[hint]]
 id = "E001"
 pattern = "BoundsError.*index \\[0\\]"
-title = "index out of bounds (0-indexed)"
-help = "Julia arrays are 1-indexed. Use v[1] for the first element."
+title = "index out of bounds — Julia is 1-indexed"
+help = "Use v[1] for the first element, not v[0]."
+example = "before: v[0]\nafter:  v[1]"
 
 [[hint]]
 id = "E002"
-pattern = "BoundsError"
-title = "index out of bounds"
-help = "Check array length with length(). Valid indices: 1 to length(arr)."
+pattern = "BoundsError.*index \\[(\\d+)\\].*?(\\d+)-element"
+title = "index {1} out of range for {2}-element array"
+help = "Valid indices: 1 to {2}. Check with length()."
+example = ""
 
 [[hint]]
 id = "E003"
-pattern = "UndefVarError: (\\w+) not defined"
-title = "undefined variable: {1}"
-help = "Check spelling, or define it in an earlier cell."
+pattern = "BoundsError"
+title = "index out of bounds"
+help = "Check array length with length(). Valid indices: 1 to length(arr)."
+example = "before: arr[i]\nafter:  1 <= i <= length(arr) && arr[i]"
 
 [[hint]]
 id = "E004"
-pattern = "MethodError: no method matching (\\w+)\\("
-title = "no method `{1}` for these argument types"
-help = "Check argument types with typeof(). See methods({1}) for available signatures."
+pattern = "UndefVarError: (\\w+) not defined"
+title = "undefined variable `{1}`"
+help = "Check spelling, or define it in an earlier cell. If it's from a package, add `using PackageName`."
+example = ""
 
 [[hint]]
 id = "E005"
-pattern = "MethodError.*\\+\\(::String"
-title = "cannot add string and number"
-help = "Use string() to convert, or * to concatenate strings."
+pattern = "MethodError.*/(.*::typeof\\((\\w+)\\))"
+title = "dividing by a function, not a number"
+help = "`{2}` is a function — you're dividing by the function itself, not its result. Call it with parentheses."
+example = "before: x / {2}\nafter:  x / {2}(value)"
 
 [[hint]]
 id = "E006"
-pattern = "DimensionMismatch"
-title = "matrix dimension mismatch"
-help = "Check sizes with size(A) and size(B). Inner dimensions must match for A*B."
+pattern = "MethodError.*\\*(.*::typeof\\((\\w+)\\))"
+title = "multiplying by a function, not a number"
+help = "`{2}` is a function — call it first, then multiply."
+example = "before: x * {2}\nafter:  x * {2}(value)"
 
 [[hint]]
 id = "E007"
-pattern = "SingularException"
-title = "matrix is singular"
-help = "Matrix is not invertible. Check with det() or rank()."
+pattern = "MethodError: no method matching \\+(::String"
+title = "cannot add string and number with +"
+help = "Julia uses * for string concatenation, or string() to convert."
+example = "before: \"hello\" + 42\nafter:  \"hello\" * string(42)\nafter:  \"hello$(42)\""
 
 [[hint]]
 id = "E008"
-pattern = "DomainError"
-title = "math domain error"
-help = "Argument outside valid domain (e.g. sqrt of negative, log of zero)."
+pattern = "MethodError: no method matching (\\w+)\\("
+title = "no method `{1}` for these argument types"
+help = "Check argument types with typeof(). The function exists but doesn't accept these types."
+example = ""
 
 [[hint]]
 id = "E009"
-pattern = "ArgumentError: Package (\\w+) not found"
-title = "package {1} not installed"
-help = "Run: using Pkg; Pkg.add(\"{1}\")"
+pattern = "DimensionMismatch"
+title = "matrix dimensions don't match"
+help = "For A*B, inner dimensions must agree: size(A,2) == size(B,1). Check with size()."
+example = "size(A)  # → (m, n)\nsize(B)  # → (p, q)  — need n == p for A*B"
 
 [[hint]]
 id = "E010"
-pattern = "StackOverflowError"
-title = "infinite recursion"
-help = "Check base case in recursive function."
+pattern = "SingularException"
+title = "matrix is singular (not invertible)"
+help = "The matrix has no inverse. Check with det() — singular matrices have det ≈ 0."
+example = "det(A)    # → 0.0 means singular\nrank(A)   # if rank < size, it's singular"
 
 [[hint]]
 id = "E011"
-pattern = "TypeError: non-boolean.*if"
-title = "non-boolean in if condition"
-help = "Condition must evaluate to true/false, not a number or string."
+pattern = "DomainError.*(\\w+)"
+title = "domain error in `{1}`"
+help = "Argument is outside the valid domain. Common: sqrt of negative, log of zero."
+example = "before: sqrt(-1)\nafter:  sqrt(complex(-1))  # or sqrt(abs(x))"
 
 [[hint]]
 id = "E012"
-pattern = "InexactError"
-title = "cannot convert to target type without loss"
-help = "Use round(), floor(), or ceil() for explicit conversion."
+pattern = "ArgumentError: Package (\\w+) not found"
+title = "package `{1}` not installed"
+help = "Install it first, then import."
+example = "using Pkg; Pkg.add(\"{1}\")\nusing {1}"
 
 [[hint]]
 id = "E013"
-pattern = "AssertionError"
-title = "assertion failed"
-help = "An @assert condition evaluated to false."
+pattern = "StackOverflowError"
+title = "infinite recursion (stack overflow)"
+help = "Your function calls itself without reaching a base case."
+example = "# Add a base case:\nfunction f(n)\n    n <= 0 && return 1  # ← base case\n    return f(n-1)\nend"
 
 [[hint]]
 id = "E014"
-pattern = "KeyError: key (.*) not found"
-title = "key {1} not found in dictionary"
-help = "Check available keys with keys(dict). Use get(dict, key, default) for safe access."
+pattern = "TypeError: non-boolean.*if"
+title = "non-boolean used as if condition"
+help = "Julia requires true/false in if conditions, not numbers. Use an explicit comparison."
+example = "before: if length(arr)  # number, not bool\nafter:  if length(arr) > 0"
 
 [[hint]]
 id = "E015"
+pattern = "InexactError"
+title = "cannot convert without losing precision"
+help = "The value doesn't fit the target type exactly. Use round(), floor(), or ceil()."
+example = "before: Int(2.5)\nafter:  round(Int, 2.5)  # → 2"
+
+[[hint]]
+id = "E016"
+pattern = "KeyError: key (.*) not found"
+title = "key `{1}` not found in dictionary"
+help = "The dictionary doesn't have this key. Use get() for safe access with a default."
+example = "before: dict[key]           # throws if missing\nafter:  get(dict, key, 0)   # returns 0 if missing"
+
+[[hint]]
+id = "E017"
 pattern = "ParseError"
 title = "syntax error"
-help = "Check for missing parentheses, brackets, or commas."
+help = "Check for missing parentheses, brackets, quotes, or commas."
+example = ""
+
+[[hint]]
+id = "E018"
+pattern = "LoadError.*syntax"
+title = "syntax error in loaded code"
+help = "Check the line number in the error for mismatched brackets or missing commas."
+example = ""
+
+[[hint]]
+id = "E019"
+pattern = "MethodError.*convert\\(.*String.*Int"
+title = "cannot convert String to Int"
+help = "Use parse() to convert a string to a number."
+example = "before: Int(\"42\")\nafter:  parse(Int, \"42\")"
+
+[[hint]]
+id = "E020"
+pattern = "AssertionError"
+title = "assertion failed"
+help = "An @assert condition evaluated to false. Check your assumptions."
+example = ""
