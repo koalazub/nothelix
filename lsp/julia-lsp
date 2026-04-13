@@ -31,19 +31,20 @@ export JULIA_DEPOT_PATH="$NOXDIR/depot:$HOME/.julia"
 #    "Missing reference: julia" on every cell header. Returning `nothing`
 #    emits no AST nodes for StaticLint to chase.
 #
-# 2. Disables StaticLint's missing-reference warnings (`lint_missingrefs =
-#    :none`). These are false positives for notebook-style code because
-#    the LSP analyses one file at a time with no awareness of runtime
-#    state from prior cells. The actual compile errors come from the
-#    Julia kernel during execution, which is the source of truth here.
+# 2. Enables StaticLint's missing-reference warnings (`lint_missingrefs =
+#    :all`). This was previously set to `:none` because the old macro
+#    expansion produced bare identifiers that tripped false positives.
+#    Now that the macros return `nothing`, there are no false positives
+#    and real undefined-name errors show up as squiggles in the editor.
+#    Cross-cell references work because StaticLint analyses the whole
+#    .jl file as one module — `A` defined in cell 0 is visible in cell 5.
 #
 # 3. Monkey-patches `LanguageServer.request_julia_config` to a no-op.
 #    That function normally pulls `julia.lint.missingrefs` from the
 #    LSP client config and RESETS `server.lint_missingrefs` to whatever
-#    the client returned (defaulting to `:all` if unset). Helix doesn't
-#    expose a way to pass this key, so the post-init config refresh
-#    silently undoes our `:none` setting. Overriding it as a no-op
-#    keeps our initial configuration sticky.
+#    the client returned. Helix doesn't expose a way to pass this key,
+#    so the post-init config refresh could override our setting.
+#    Overriding it as a no-op keeps our initial configuration sticky.
 #
 # 4. Picks the env to ANALYSE explicitly instead of letting
 #    `LanguageServer.choose_env()` fall back to the bootstrap
@@ -82,6 +83,6 @@ exec julia \
       end
       let env_path = pick_user_env()
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
-          server.lint_missingrefs = :none
+          server.lint_missingrefs = :all
           run(server)
       end'
