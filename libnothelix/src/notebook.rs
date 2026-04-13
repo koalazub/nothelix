@@ -149,6 +149,33 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         }
     }
 
+    // If there's non-empty code before the first cell marker, insert
+    // an implicit preamble cell at index -1. This handles `using X`
+    // lines at the top of the file that need to execute before any cell.
+    let first_marker_line = cells.first().map(|c| c.start_line).unwrap_or(lines.len());
+    if first_marker_line > 0 {
+        let preamble: String = lines[..first_marker_line]
+            .iter()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !preamble.trim().is_empty() {
+            cells.insert(
+                0,
+                JlCell {
+                    index: -1,
+                    kind: CellKind::Code,
+                    code: preamble,
+                    start_line: 0,
+                },
+            );
+        }
+    }
+
     // Collect code for each cell (strip output sections *and* any
     // stray marker-shaped lines that slipped into the cell body).
     // The stray-marker strip is a defense against users typing a new

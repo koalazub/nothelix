@@ -29,6 +29,6 @@ exec julia \
       end
       let env_path = LanguageServer.choose_env()
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
-          server.lint_missingrefs = :all
+          server.lint_missingrefs = :none
           run(server)
       end'

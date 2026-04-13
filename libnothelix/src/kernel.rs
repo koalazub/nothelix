@@ -150,19 +150,13 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
         Err(_) => (std::process::Stdio::null(), std::process::Stdio::null()),
     };
 
-    // Include the nothelix LSP dir in JULIA_LOAD_PATH so the kernel
-    // can resolve `using NothelixMacros` without polluting the user's
-    // Project.toml. The LSP dir has NothelixMacros via Pkg.develop.
-    let lsp_dir = home_dir().join(".local/share/nothelix/lsp");
-    let load_path = format!(
-        "{}:@:@v#.#:@stdlib",
-        lsp_dir.display()
-    );
-
+    // Don't set JULIA_LOAD_PATH — the kernel uses the user's default
+    // env (where Pkg, LinearAlgebra, etc. live). NothelixMacros is only
+    // needed by the LSP, and the kernel has its own CellMacros module
+    // that defines @cell/@markdown for runtime execution.
     match Command::new(&julia)
         .arg(&runner)
         .arg(&kernel_dir)
-        .env("JULIA_LOAD_PATH", &load_path)
         // Headless graphics backends: prevent GR/Plots.jl from opening GUI windows
         .env("GKSwstype", "nul")
         .env("MPLBACKEND", "Agg")
