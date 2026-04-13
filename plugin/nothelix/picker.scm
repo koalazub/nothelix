@@ -42,17 +42,12 @@
 ;; Extract a quoted label from the tail of a marker line.
 ;; If the string contains `"…"` at the end, return the contents
 ;; between the first and last quote; otherwise return "".
+;; Uses string-split on `"` because Steel doesn't have string-index-of.
 (define (extract-label str)
-  (define q-start (string-index-of str "\""))
-  (cond
-    [(not q-start) ""]
-    [else
-     (define after (substring str (+ q-start 1) (string-length str)))
-     (define q-end (string-index-of after "\""))
-     (if q-end
-         (substring after 0 q-end)
-         ;; Unterminated quote — take rest as label anyway
-         after)]))
+  (define parts (string-split str "\""))
+  (if (< (length parts) 2)
+      ""
+      (list-ref parts 1)))
 
 (define (parse-cell-header line)
   (define (strip-trailing-newline s)
@@ -91,10 +86,10 @@
                                (string-length "@markdown ")
                                (string-length line))))
      (define label (extract-label rest))
-     ;; Strip the label from rest before parsing index
+     ;; Strip the label from rest before parsing index — take only the
+     ;; part before the first `"` (if any) via string-split.
      (define before-label
-       (let ([q (string-index-of rest "\"")])
-         (if q (string-trim (substring rest 0 q)) (string-trim rest))))
+       (string-trim (car (string-split rest "\""))))
      (define idx (or (string->number before-label) 0))
      (list "markdown" idx label)]
     [else (list "unknown" 0 "")]))
