@@ -39,58 +39,53 @@
 ;; is the integer parsed from the marker. Falls back to (0, kind)
 ;; when the header is malformed so the picker still renders
 ;; something rather than crashing.
-;; Extract a quoted label from the tail of a marker line.
-;; If the string contains `"…"` at the end, return the contents
-;; between the first and last quote; otherwise return "".
-;; Uses string-split on `"` because Steel doesn't have string-index-of.
-(define (extract-label str)
-  (define parts (string-split str "\""))
-  (if (< (length parts) 2)
+;; Extract a label from the tail of a marker line.
+;; Everything after the lang tag (`:julia`, `:python`, etc.) is the label.
+;; For markdown: everything after the index number is the label.
+;; No quoting — just plain words.
+(define (extract-label-from-parts parts start-idx)
+  (if (>= start-idx (length parts))
       ""
-      (list-ref parts 1)))
+      (string-join (list-tail parts start-idx) " ")))
 
 (define (parse-cell-header line)
   (define (strip-trailing-newline s)
     (if (string-suffix? s "\n")
         (substring s 0 (- (string-length s) 1))
         s))
+  ;; Parse `@cell N :lang label words` or `@markdown N label words`.
+  ;; Label = everything after the lang tag (code) or after the index (markdown).
+  ;; No quoting — just plain words separated by spaces.
   (cond
     [(string-starts-with? line "@cell ")
      (define rest (strip-trailing-newline
-                    (substring line
-                               (string-length "@cell ")
-                               (string-length line))))
-     (define trimmed (string-trim rest))
-     (define label (extract-label trimmed))
-     ;; `N :lang` or `N :lang "label"` or `N` or `:lang`
-     (define parts (string-split trimmed " "))
+                    (substring line (string-length "@cell ") (string-length line))))
+     (define parts (string-split (string-trim rest) " "))
      (define first (if (null? parts) "" (car parts)))
      (define maybe-num (string->number first))
      (define idx (if maybe-num maybe-num 0))
      (define lang-tok
        (cond
-         [maybe-num
-          (if (> (length parts) 1) (cadr parts) ":julia")]
+         [maybe-num (if (> (length parts) 1) (cadr parts) ":julia")]
          [else first]))
      (define lang
        (cond
-         [(and (> (string-length lang-tok) 0)
-               (char=? (string-ref lang-tok 0) #\:))
+         [(and (> (string-length lang-tok) 0) (char=? (string-ref lang-tok 0) #\:))
           (substring lang-tok 1 (string-length lang-tok))]
          [(> (string-length lang-tok) 0) lang-tok]
          [else "julia"]))
+     ;; Label = everything after index + lang tag
+     (define label-start (if maybe-num (min 2 (length parts)) 1))
+     (define label (extract-label-from-parts parts label-start))
      (list (string-append "code (" lang ")") idx label)]
     [(string-starts-with? line "@markdown ")
      (define rest (strip-trailing-newline
-                    (substring line
-                               (string-length "@markdown ")
-                               (string-length line))))
-     (define label (extract-label rest))
-     ;; Strip the label from rest before parsing index — take only the
-     ;; part before the first `"` (if any) via string-split.
-     (define before-label
-       (string-trim (car (string-split rest "\""))))
-     (define idx (or (string->number before-label) 0))
+                    (substring line (string-length "@markdown ") (string-length line))))
+     (define parts (string-split (string-trim rest) " "))
+     (define first (if (null? parts) "" (car parts)))
+     (define idx (or (string->number first) 0))
+     ;; Label = everything after the index
+     (define label (extract-label-from-parts parts 1))
      (list "markdown" idx label)]
     [else (list "unknown" 0 "")]))
 
