@@ -49,6 +49,19 @@ log_info("Modules loaded successfully")
 Core.eval(Main, :(using ..CellMacros: @cell, @markdown))
 Core.eval(Main, :(using ..CellRegistry))
 
+# Define NothelixMacros in Main so `using NothelixMacros` in notebooks
+# is a no-op at runtime (the real macros come from CellMacros above).
+# This exists so the LSP wrapper can resolve @cell/@markdown via the
+# NothelixMacros package without the kernel choking on the import.
+Core.eval(Main, quote
+    module NothelixMacros
+        export var"@cell", var"@markdown"
+        macro cell(args...) nothing end
+        macro markdown(args...) nothing end
+    end
+end)
+Core.eval(Main, :(using .NothelixMacros))
+
 # Write output response
 function write_response(data::Dict)
     json_str = JSON3.write(data)
