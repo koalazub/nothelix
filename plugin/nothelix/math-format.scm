@@ -13,18 +13,13 @@
 (require "helix/ext.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix.static. "helix/static.scm"))
+(require "string-utils.scm")
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           format-math))
 
 (provide format-math-buffer)
-
-(define (string-suffix? suffix s)
-  (let ([slen (string-length s)]
-        [xlen (string-length suffix)])
-    (and (>= slen xlen)
-         (equal? (substring s (- slen xlen) slen) suffix))))
 
 ;;@doc
 ;; Rewrite single-line math environments in the current buffer into their
@@ -40,7 +35,7 @@
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
   (cond
-    [(not (and path (string-suffix? ".jl" path)))
+    [(not (and path (string-suffix? path ".jl")))
      (unless silent?
        (set-status! "format-math: only runs on .jl notebook files"))]
     [else

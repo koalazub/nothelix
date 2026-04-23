@@ -30,6 +30,33 @@
          math-render-clear)
 
 ;;@doc
+;; The fork-side FFI bindings (`set-math-lines-above!`,
+;; `set-math-lines-below!`, `clear-math-lines!`, `clear-all-math-lines!`)
+;; only exist when the user is running the koalazub/helix fork tip that
+;; has the Phase 2/3 LineAnnotation + Decoration work merged. On a stock
+;; or older `hx` binary they're `FreeIdentifier` errors at load time —
+;; same story the image-cache module solved for `clear-raw-content!`.
+;;
+;; Deferred-lookup wrappers via `eval` + `with-handler` let the plugin
+;; load clean regardless. If the binding is missing the call is a silent
+;; no-op; once you darwin-rebuild onto the new fork SHA they start
+;; working without any plugin edit.
+(define (try-set-math-lines-above! line-idx lines)
+  (with-handler
+    (lambda (_) #false)
+    (eval `(helix.static.set-math-lines-above! ,line-idx ',lines))))
+
+(define (try-set-math-lines-below! line-idx lines)
+  (with-handler
+    (lambda (_) #false)
+    (eval `(helix.static.set-math-lines-below! ,line-idx ',lines))))
+
+(define (try-clear-all-math-lines!)
+  (with-handler
+    (lambda (_) #false)
+    (eval '(helix.static.clear-all-math-lines!))))
+
+;;@doc
 ;; Map of LaTeX big-operator names to the glyph we render them as. Only
 ;; commands that take stacked `_{sub}^{sup}` limits live here — `\cos`
 ;; etc. are handled by the concealer's operator path.
@@ -262,14 +289,23 @@
                 [else (loop name-end entries)]))]))])))
 
 ;;@doc
-;; Bytewise scan past `\cmd` alphabetic chars starting at `i`, returning
-;; the position past the last letter. If `s[i]` isn't alphabetic we
-;; return `i` unchanged so the caller can detect no-match.
+;; True for ASCII letters. Steel's base env doesn't ship
+;; `char-alphabetic?`, so we do the range check ourselves — good enough
+;; for LaTeX command names, which are ASCII by convention.
+(define (ascii-letter? ch)
+  (let ([code (char->integer ch)])
+    (or (and (>= code 65) (<= code 90))       ; A-Z
+        (and (>= code 97) (<= code 122)))))   ; a-z
+
+;;@doc
+;; Bytewise scan past `\cmd` ASCII letters starting at `i`, returning
+;; the position past the last letter. If `s[i]` isn't a letter we return
+;; `i` unchanged so the caller can detect no-match.
 (define (scan-backslash-name s i)
   (let loop ([j i])
     (cond
       [(>= j (string-length s)) j]
-      [(char-alphabetic? (string-ref s j)) (loop (+ j 1))]
+      [(ascii-letter? (string-ref s j)) (loop (+ j 1))]
       [else j])))
 
 ;;@doc
@@ -277,7 +313,7 @@
 ;; each `# `-prefixed line looking for big-operator patterns inside
 ;; math delimiters and stage the above/below strings.
 (define (math-render-buffer)
-  (helix.static.clear-all-math-lines!)
+  (try-clear-all-math-lines!)
   ;; Flip the scanner into "hide inline limits + \\frac" mode so the
   ;; concealer doesn't paint redundant inline renderings alongside the
   ;; stacked virtual rows we're about to register.
@@ -291,7 +327,7 @@
     (when (< line-idx total-lines)
       (define line (text.rope->string (text.rope->line rope line-idx)))
       (define trimmed
-        (if (string-suffix? "\n" line)
+        (if (string-suffix? line "\n")
             (substring line 0 (- (string-length line) 1))
             line))
       ;; Only scan comment lines — the converter produces `# `-prefixed
@@ -318,19 +354,14 @@
       (when b (set! below-lines (cons b below-lines))))
     entries)
   (when (not (null? above-lines))
-    (helix.static.set-math-lines-above! line-idx (reverse above-lines)))
+    (try-set-math-lines-above! line-idx (reverse above-lines)))
   (when (not (null? below-lines))
-    (helix.static.set-math-lines-below! line-idx (reverse below-lines))))
+    (try-set-math-lines-below! line-idx (reverse below-lines))))
 
 ;;@doc
 ;; Drop every math annotation on the current document — used when the
 ;; user wants to revert to raw source display.
 (define (math-render-clear)
-  (helix.static.clear-all-math-lines!)
+  (try-clear-all-math-lines!)
   (set-math-layout-hide #false))
 
-(define (string-suffix? suffix s)
-  (let ([slen (string-length s)]
-        [xlen (string-length suffix)])
-    (and (>= slen xlen)
-         (equal? (substring s (- slen xlen) slen) suffix))))

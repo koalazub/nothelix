@@ -137,33 +137,39 @@ fn split_block_content(content: &str) -> Vec<String> {
     };
 
     while i < bytes.len() {
-        // \text{...} — isolate prose annotations on their own line.
-        if content[i..].starts_with("\\text{") {
-            push(&mut pieces, &content[cursor..i]);
-            let end = match_brace_after(bytes, i + 6);
-            push(&mut pieces, &content[i..end]);
-            cursor = end;
-            i = end;
-            continue;
-        }
-        // \\ — keep the separator with the preceding row.
-        if i + 1 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'\\' {
-            push(&mut pieces, &content[cursor..i + 2]);
-            cursor = i + 2;
-            i = i + 2;
-            continue;
-        }
-        // \begin{env} / \end{env} — put the wrapper on its own line.
-        let is_begin = content[i..].starts_with("\\begin{");
-        let is_end = content[i..].starts_with("\\end{");
-        if is_begin || is_end {
-            push(&mut pieces, &content[cursor..i]);
-            let brace_open = i + if is_begin { 7 } else { 5 };
-            let close = match_brace_after(bytes, brace_open);
-            push(&mut pieces, &content[i..close]);
-            cursor = close;
-            i = close;
-            continue;
+        // All patterns of interest start with an ASCII `\`. Gating on the
+        // byte first keeps us from ever calling `content[i..]` inside a
+        // multi-byte codepoint (the content can contain UTF-8 like `≤`,
+        // `ω`, `π` directly — a naive slice mid-char panics).
+        if bytes[i] == b'\\' {
+            // \text{...} — isolate prose annotations on their own line.
+            if content[i..].starts_with("\\text{") {
+                push(&mut pieces, &content[cursor..i]);
+                let end = match_brace_after(bytes, i + 6);
+                push(&mut pieces, &content[i..end]);
+                cursor = end;
+                i = end;
+                continue;
+            }
+            // \\ — keep the separator with the preceding row.
+            if i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                push(&mut pieces, &content[cursor..i + 2]);
+                cursor = i + 2;
+                i += 2;
+                continue;
+            }
+            // \begin{env} / \end{env} — put the wrapper on its own line.
+            let is_begin = content[i..].starts_with("\\begin{");
+            let is_end = content[i..].starts_with("\\end{");
+            if is_begin || is_end {
+                push(&mut pieces, &content[cursor..i]);
+                let brace_open = i + if is_begin { 7 } else { 5 };
+                let close = match_brace_after(bytes, brace_open);
+                push(&mut pieces, &content[i..close]);
+                cursor = close;
+                i = close;
+                continue;
+            }
         }
         i += 1;
     }
@@ -248,7 +254,10 @@ fn find_single_line_block_env(math: &str) -> Option<BlockEnv<'_>> {
     let bytes = math.as_bytes();
     let mut i = 0;
     while i + 6 < bytes.len() {
-        if !math[i..].starts_with("\\begin{") {
+        // Gate the slice on the ASCII backslash byte first — `math` can
+        // contain multi-byte UTF-8 (≤, ω, π …) and slicing mid-codepoint
+        // panics. `\` being ASCII guarantees a char boundary.
+        if bytes[i] != b'\\' || !math[i..].starts_with("\\begin{") {
             i += 1;
             continue;
         }
@@ -496,6 +505,24 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines.iter().any(|l| l.trim() == "# \\begin{aligned}"), "out:\n{out}");
         assert!(lines.iter().any(|l| l.trim() == "# \\end{aligned}"), "out:\n{out}");
+    }
+
+    #[test]
+    fn handles_multibyte_utf8_in_content() {
+        // Regression: `≤` is 3 bytes — stepping `i += 1` lands inside it,
+        // and `content[i..]` panicked on `is not a char boundary`.
+        let input = "# $$X(\\omega) = \\begin{cases} 1 & |\\omega| \\leq \\omega_0 \\\\ 0 & \\text{otherwise} \\end{cases}$$";
+        let out = format_math(input.to_string());
+        assert!(out.contains("\\begin{cases}"), "out:\n{out}");
+        assert!(out.contains("\\end{cases}"), "out:\n{out}");
+        assert!(out.contains("\\text{otherwise}"), "out:\n{out}");
+    }
+
+    #[test]
+    fn reflows_dollar_block_with_multibyte_content() {
+        let input = "# $$\n# x = 5 ≤ y \\text{ and } ω ∈ ℝ\n# $$";
+        let out = format_math(input.to_string());
+        assert!(out.contains("\\text{ and }"), "out:\n{out}");
     }
 
     #[test]
