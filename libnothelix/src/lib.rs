@@ -131,6 +131,7 @@ fn build_module() -> FFIModule {
         unicode::unicode_completions_for_prefix,
     );
     m.register_fn("latex-overlays", unicode::latex_overlays);
+    m.register_fn("set-math-layout-hide", unicode::set_math_layout_hide);
     m.register_fn(
         "compute-conceal-overlays-ffi",
         unicode::compute_conceal_overlays,

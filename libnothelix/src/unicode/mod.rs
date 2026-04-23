@@ -31,7 +31,7 @@ mod sub_super;
 mod symbol_table;
 
 pub use conceal::{compute_conceal_overlays, compute_conceal_overlays_for_comments};
-pub use scanner::latex_overlays;
+pub use scanner::{latex_overlays, set_math_layout_hide};
 pub use symbol_table::{unicode_completions_for_prefix, unicode_lookup};
 
 #[cfg(test)]

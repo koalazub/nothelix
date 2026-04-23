@@ -366,7 +366,14 @@ pub fn notebook_convert_sync(path: String) -> String {
         out.push('\n');
     }
 
-    out
+    // Run math formatting across every markdown cell in one pass so newly
+    // converted notebooks arrive already-normalized: single-line
+    // \begin{cases}/pmatrix/aligned get expanded, and `$$`-block content
+    // that was crammed onto one line gets split at \text{…}, \\, and env
+    // boundaries. Idempotent — a second convert on the same source is a
+    // no-op, and this is cheaper than forcing the user to `:w` the fresh
+    // file just to trigger the save-hook formatter.
+    crate::math_format::format_math(out)
 }
 
 pub fn get_cell_at_line(path: String, line: isize) -> String {

@@ -10,11 +10,34 @@
 //! coupling where one arm could silently leak state into another.
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::fence::{close_fence, mid_fence, open_fence};
 use super::overlay::Overlay;
 use super::sub_super::{latex_font_to_julia, map_lookup, SUB_MAP, SUPER_MAP};
 use super::symbol_table::unicode_lookup;
+
+/// When `true`, big-operator limits (`_{a}^{b}` after `\sum`, `\int`, …)
+/// and `\frac{num}{den}` wrappers are fully hidden by the scanner so the
+/// nothelix math-render plugin's stacked virtual rows don't collide with
+/// a redundant inline rendering.
+///
+/// The Scheme plugin flips this to `true` just before running
+/// `math-render-buffer` (staging the virtual rows) and back to `false` on
+/// `math-render-clear`. Default `false` = inline limits stay visible, so
+/// users without math-render active see the familiar `∑_a^b f(k)` layout.
+static HIDE_MATH_LAYOUT: AtomicBool = AtomicBool::new(false);
+
+/// Public FFI surface for the flag. Registered in `lib.rs` as
+/// `set-math-layout-hide`.
+pub fn set_math_layout_hide(hide: bool) {
+    HIDE_MATH_LAYOUT.store(hide, Ordering::Relaxed);
+}
+
+#[inline]
+fn math_layout_hidden() -> bool {
+    HIDE_MATH_LAYOUT.load(Ordering::Relaxed)
+}
 
 /// Track which environment we're inside and which row we're on within it.
 /// This lets the scanner emit the right Unicode fence character on each row
@@ -444,19 +467,33 @@ impl<'a> Scanner<'a> {
         let num_start = j;
 
         let num_close = Self::find_matching_brace(self.bytes, j);
+
+        // Locate denominator `{…}` so we know the full span of the frac.
+        let mut den_open = num_close;
+        while den_open < self.bytes.len() && self.bytes[den_open] == b' ' {
+            den_open += 1;
+        }
+        let den_close = if den_open < self.bytes.len() && self.bytes[den_open] == b'{' {
+            let after_brace = den_open + 1;
+            Self::find_matching_brace(self.bytes, after_brace)
+        } else {
+            num_close
+        };
+
+        if math_layout_hidden() {
+            // The math-render plugin is painting numerator above /
+            // denominator below — hide the entire `\frac{..}{..}` so
+            // both representations don't fight over the same row.
+            Overlay::hide_range(&mut self.overlays, cmd_start, den_close);
+            return den_close;
+        }
+
         if num_close > j {
             self.overlays.push(Overlay::at(num_close - 1, "⁄"));
         }
-
-        let mut k = num_close;
-        while k < self.bytes.len() && self.bytes[k] == b' ' {
-            k += 1;
-        }
-        if k < self.bytes.len() && self.bytes[k] == b'{' {
-            self.overlays.push(Overlay::hide(k));
-            k += 1;
-            let den_close = Self::find_matching_brace(self.bytes, k);
-            if den_close > k {
+        if den_open < self.bytes.len() && self.bytes[den_open] == b'{' {
+            self.overlays.push(Overlay::hide(den_open));
+            if den_close > den_open + 1 {
                 self.overlays.push(Overlay::hide(den_close - 1));
             }
         }
@@ -696,11 +733,18 @@ impl<'a> Scanner<'a> {
         let past_close = j + 1;
 
         if self.pending_limits > 0 {
-            // Big-operator limit. Hide only the braces so `^{...}` becomes
-            // `^...`; keep the `^` itself visible so the reader can still
-            // tell sub from super. Return `content_start` so the main loop
-            // scans the content for `\in`, `\mathbb`, Greek, etc.
             self.pending_limits -= 1;
+            if math_layout_hidden() {
+                // The math-render plugin is painting this limit above/
+                // below the operator glyph — hide the whole inline form
+                // including content so we don't render both.
+                Overlay::hide_range(&mut self.overlays, caret_pos, past_close);
+                return past_close;
+            }
+            // Default: keep limits inline but hide only the braces so
+            // `^{...}` reads as `^...`, preserving the `^` as a visual
+            // cue for sub-vs-super. Return `content_start` so the main
+            // loop scans content for `\in`, `\mathbb`, Greek, etc.
             self.overlays.push(Overlay::hide(caret_pos + 1));
             self.overlays.push(Overlay::hide(past_close - 1));
             return content_start;
@@ -730,9 +774,14 @@ impl<'a> Scanner<'a> {
     /// `^x` single-character superscript.
     fn scan_inline_superscript(&mut self, i: usize) -> usize {
         if self.pending_limits > 0 {
-            // Big-op limit with a single char — keep `^x` entirely visible
-            // at normal size; no overlay.
             self.pending_limits -= 1;
+            if math_layout_hidden() {
+                // Hide `^x` entirely so only the stacked virtual-line
+                // version is visible.
+                self.overlays.push(Overlay::hide(i));
+                self.overlays.push(Overlay::hide(i + 1));
+                return i + 2;
+            }
             return i + 1;
         }
         let ch = self.bytes[i + 1] as char;
@@ -765,11 +814,11 @@ impl<'a> Scanner<'a> {
         let past_close = j + 1;
 
         if self.pending_limits > 0 {
-            // Big-op limit. Hide only the braces so `_{...}` becomes `_...`;
-            // keep the `_` itself visible so the reader can tell sub from
-            // super at a glance. Return `content_start` so the main loop
-            // scans the content for `\in`, `\mathbb`, Greek, etc.
             self.pending_limits -= 1;
+            if math_layout_hidden() {
+                Overlay::hide_range(&mut self.overlays, underscore_pos, past_close);
+                return past_close;
+            }
             self.overlays.push(Overlay::hide(underscore_pos + 1));
             self.overlays.push(Overlay::hide(past_close - 1));
             return content_start;
@@ -803,9 +852,12 @@ impl<'a> Scanner<'a> {
     /// combining-mark characters in the table.)
     fn scan_inline_subscript(&mut self, i: usize) -> usize {
         if self.pending_limits > 0 {
-            // Big-op limit with a single char — keep `_x` entirely visible
-            // at normal size; no overlay.
             self.pending_limits -= 1;
+            if math_layout_hidden() {
+                self.overlays.push(Overlay::hide(i));
+                self.overlays.push(Overlay::hide(i + 1));
+                return i + 2;
+            }
             return i + 1;
         }
         let ch = self.bytes[i + 1] as char;
