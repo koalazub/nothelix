@@ -1,8 +1,9 @@
 name: helix-fork-bump
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
+  # Trigger only on explicit demand — the daily 03:00 UTC cron was noisy
+  # enough to drown the inbox in bump PRs. Re-enable by restoring the
+  # `schedule:` block if you ever want it back.
   workflow_dispatch:
   repository_dispatch:
     types: [helix-fork-updated]
