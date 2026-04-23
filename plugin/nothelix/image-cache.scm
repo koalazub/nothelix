@@ -26,12 +26,14 @@
                           load-image-from-cache))
 
 (provide cell-index->image-id
+         path->image-id
          maybe-clear-raw-content!
          count-image-markers
          sync-images-to-markers!
          sync-images-if-markers-changed!
          extract-cell-index-from-path
-         render-cached-images)
+         render-cached-images
+         insert-image)
 
 ;;; ============================================================================
 ;;; IMAGE DEDUP STATE
@@ -74,6 +76,33 @@
 ;; rather than accumulate duplicates across re-execution and buffer switches.
 (define (cell-index->image-id cell-index)
   (+ 1000 cell-index))
+
+;;@doc
+;; djb2 string hash — used to derive a stable kitty image id for arbitrary
+;; image paths that don't follow the `cell-N.png` convention. Result is
+;; kept below 2^31 so it fits the 32-bit id space the protocol uses.
+(define (djb2-hash s)
+  (let loop ([i 0] [h 5381])
+    (if (>= i (string-length s))
+        h
+        (loop (+ i 1)
+              (modulo (+ (* h 33) (char->integer (string-ref s i)))
+                      2147483647)))))
+
+;;@doc
+;; Derive a stable kitty image id for any image path.
+;;
+;; For paths matching `.nothelix/images/cell-N.png`, returns the same id as
+;; `(cell-index->image-id N)` so kernel-produced outputs keep their existing
+;; id → in-place replacement behavior. For arbitrary paths (user-inserted
+;; images, converter-emitted paths that don't round-trip through the kernel),
+;; hashes the path into a disjoint id range (>= 2_000_000) so it can't
+;; collide with the cell-index range.
+(define (path->image-id rel-path)
+  (define cell-idx (extract-cell-index-from-path rel-path))
+  (if cell-idx
+      (cell-index->image-id cell-idx)
+      (+ 2000000 (modulo (djb2-hash rel-path) 100000000))))
 
 ;;@doc
 ;; Best-effort `clear-raw-content!` wrapper.
@@ -240,11 +269,10 @@
           [(string-starts-with? line "# @image ")
            (define rel-path (string-trim
                              (substring line 9 (string-length line))))
-           (define cell-index (extract-cell-index-from-path rel-path))
            (define image-b64 (load-image-from-cache path rel-path))
            (cond
-             [(and cell-index (> (string-length image-b64) 0))
-              (define image-id (cell-index->image-id cell-index))
+             [(> (string-length image-b64) 0)
+              (define image-id (path->image-id rel-path))
               (define image-cols *plot-cols*)
               (define max-image-rows *plot-rows*)
               ;; Count how many blank lines follow this `# @image`
@@ -285,22 +313,22 @@
                 [(string-starts-with? payload "ERROR:")
                  (debug-log
                    (string-append "image-cache.render: SKIP cell="
-                                  (number->string cell-index)
+                                  (number->string image-id)
                                   " reason=payload-error path=" rel-path))]
                 [(= (string-length placeholder-rows) 0)
                  (debug-log
                    (string-append "image-cache.render: SKIP cell="
-                                  (number->string cell-index)
+                                  (number->string image-id)
                                   " reason=grid-too-large"))]
                 [(< image-rows 1)
                  (debug-log
                    (string-append "image-cache.render: SKIP cell="
-                                  (number->string cell-index)
+                                  (number->string image-id)
                                   " reason=no-padding"))]
                 [else
                  (debug-log
                    (string-append "image-cache.render: REGISTER cell="
-                                  (number->string cell-index)
+                                  (number->string image-id)
                                   " id=" (number->string image-id)
                                   " marker-line=" (number->string line-idx)
                                   " rows=" (number->string image-rows)
@@ -316,7 +344,7 @@
               (debug-log
                 (string-append "image-cache.render: SKIP marker-line="
                                (number->string line-idx)
-                               " reason=" (if cell-index "cache-empty" "no-cell-index")
+                               " reason=cache-empty"
                                " rel-path=" rel-path))
               (loop (+ line-idx 1))])]
           [else (loop (+ line-idx 1))])))
@@ -324,3 +352,28 @@
     (debug-log
       (string-append "image-cache.render: done path=" path
                      " registered=" (number->string registered-count)))))
+
+;;@doc
+;; Insert a `# @image <path>` marker at the current cursor position,
+;; followed by `*plot-rows*` truly-blank lines that serve as the image's
+;; render canvas. The path is taken verbatim — arbitrary paths work
+;; (e.g. `diagrams/foo.png`, `../shared/bar.jpg`), and the FFI
+;; `load-image-from-cache` resolves the path relative to the notebook
+;; file's directory. A buffer-level re-sync runs via the usual
+;; post-command hook, so the image paints in place on the next redraw.
+(define (insert-image img-path)
+  (cond
+    [(or (not img-path) (equal? img-path ""))
+     (set-status! "insert-image: provide an image path")]
+    [else
+     (define trimmed (string-trim img-path))
+     (helix.static.insert_string (string-append "# @image " trimmed "\n"))
+     ;; Pad with bare blank lines (not `# ` comment lines — the
+     ;; placeholder canvas detector in `render-cached-images` counts
+     ;; length-zero lines as blank, and `# ` would register as content
+     ;; and truncate the image height.
+     (let loop ([i 1])
+       (when (< i *plot-rows*)
+         (helix.static.insert_string "\n")
+         (loop (+ i 1))))
+     (set-status! (string-append "Inserted @image marker: " trimmed))]))

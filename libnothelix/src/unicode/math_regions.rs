@@ -10,7 +10,7 @@
 ///
 /// Regions are non-overlapping and in source order. Nested math is not
 /// supported — the first closing delimiter wins.
-pub(super) fn find_math_regions(text: &str) -> Vec<(usize, usize)> {
+pub(crate) fn find_math_regions(text: &str) -> Vec<(usize, usize)> {
     let bytes = text.as_bytes();
     let len = bytes.len();
     let mut regions = Vec::new();

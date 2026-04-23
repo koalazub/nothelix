@@ -124,7 +124,13 @@ pub fn compute_conceal_overlays_for_comments(text: String) -> String {
             }
 
             if let Some(close) = close_line {
-                // Hide the opening $$ line
+                // Hide the opening "# $$" line entirely (both the `#`, the
+                // following space, and the two `$` chars) so the delimiter
+                // line renders as visually empty and the display-math block
+                // sits between two blank lines — matches how Jupyter renders
+                // $$...$$ with vertical breathing room around the equation.
+                emit(line_byte_start, "");
+                emit(line_byte_start + 1, "");
                 let open_content_start = line_byte_start + (trimmed.len() - content.len());
                 let dollar1 = content.find('$').unwrap_or(0);
                 emit(open_content_start + dollar1, "");
@@ -140,6 +146,16 @@ pub fn compute_conceal_overlays_for_comments(text: String) -> String {
                     let k_trimmed = k_line.trim_end_matches('\n').trim_end_matches('\r');
                     if let Some(k_content) = k_trimmed.strip_prefix("# ") {
                         let k_content_start = k_byte_start + (k_trimmed.len() - k_content.len());
+
+                        // Indent display-math content so it stands out from
+                        // surrounding prose. Replace the single space after
+                        // `#` with a wider run of spaces; this is the one
+                        // position inside a comment line no scanner overlay
+                        // ever targets, so there's no conflict.
+                        if !k_content.is_empty() {
+                            emit(k_content_start - 1, "      ");
+                        }
+
                         offset_map.push((joined.len(), k_content_start));
                         joined.push_str(k_content);
                         joined.push('\n');
@@ -153,12 +169,14 @@ pub fn compute_conceal_overlays_for_comments(text: String) -> String {
                     emit(doc_offset, &replacement);
                 }
 
-                // Hide the closing $$ line
+                // Hide the closing "# $$" line the same way as the opener.
                 let (close_byte_start, close_line_text) = lines[close];
                 let close_trimmed = close_line_text
                     .trim_end_matches('\n')
                     .trim_end_matches('\r');
                 if let Some(close_content) = close_trimmed.strip_prefix("# ") {
+                    emit(close_byte_start, "");
+                    emit(close_byte_start + 1, "");
                     let close_content_start =
                         close_byte_start + (close_trimmed.len() - close_content.len());
                     let d = close_content.find('$').unwrap_or(0);

@@ -10,6 +10,7 @@ mod json_utils;
 mod kernel;
 mod kitty_placeholder;
 mod lsp;
+mod math_format;
 mod notebook;
 mod typst_export;
 mod unicode;
@@ -52,6 +53,7 @@ fn build_module() -> FFIModule {
     m.register_fn("convert-to-ipynb", notebook::convert_to_ipynb);
     m.register_fn("export-to-markdown", notebook::export_to_markdown);
     m.register_fn("export-to-typst", notebook::export_to_typst);
+    m.register_fn("format-math", math_format::format_math);
 
     // ── Execution ─────────────────────────────────────────────────────────────
     m.register_fn(

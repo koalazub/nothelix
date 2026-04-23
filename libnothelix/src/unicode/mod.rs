@@ -24,7 +24,7 @@
 mod conceal;
 mod fence;
 pub(crate) mod typst_conceal;
-mod math_regions;
+pub(crate) mod math_regions;
 mod overlay;
 mod scanner;
 mod sub_super;
@@ -168,20 +168,19 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        // Should have ⎧ (open fence) and ⎩ (close fence) and ⎨ (mid fence)
+        // All fences are prepended to the first grapheme of the row they
+        // apply to (e.g. "⎧1"), so the `{`, `⎨`, `⎩` chars live inside
+        // multi-char replacement strings rather than as standalone entries.
+        // For a 2-row env the last separator emits `⎩` (not `⎨`) so `\end`
+        // doesn't need to burn an extra row on a lone closing glyph.
         assert!(
-            replacements.contains(&"⎧"),
-            "Expected ⎧ in {:?}",
+            replacements.iter().any(|r| r.starts_with('⎧')),
+            "Expected ⎧ prefix in {:?}",
             replacements
         );
         assert!(
-            replacements.contains(&"⎩"),
-            "Expected ⎩ in {:?}",
-            replacements
-        );
-        assert!(
-            replacements.contains(&"⎨"),
-            "Expected ⎨ in {:?}",
+            replacements.iter().any(|r| r.starts_with('⎩')),
+            "Expected ⎩ prefix in {:?}",
             replacements
         );
         // Should have ≤ from \leq
@@ -199,6 +198,30 @@ mod tests {
     }
 
     #[test]
+    fn latex_overlays_cases_env_three_rows_has_mid_fence() {
+        // A 3-row env has one non-terminal separator that should use the
+        // mid-fence `⎨`, plus a last separator that uses `⎩`.
+        let input = r"\begin{cases} 1 & a \\ 2 & b \\ 3 & c \end{cases}";
+        let result = latex_overlays(input.to_string());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(
+            replacements.iter().any(|r| r.starts_with('⎨')),
+            "Expected ⎨ prefix for middle row in {:?}",
+            replacements
+        );
+        assert!(
+            replacements.iter().any(|r| r.starts_with('⎩')),
+            "Expected ⎩ prefix for last row in {:?}",
+            replacements
+        );
+    }
+
+    #[test]
     fn latex_overlays_pmatrix_env() {
         let input = r"\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}";
         let result = latex_overlays(input.to_string());
@@ -208,9 +231,16 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        assert!(replacements.contains(&"⎛"));
-        assert!(replacements.contains(&"⎜"));
-        assert!(replacements.contains(&"⎞"));
+        assert!(
+            replacements.iter().any(|r| r.starts_with('⎛')),
+            "Expected ⎛ prefix in {:?}",
+            replacements
+        );
+        assert!(
+            replacements.iter().any(|r| r.starts_with('⎞')),
+            "Expected ⎞ prefix in {:?} (2-row env: last separator emits ⎞, not ⎜)",
+            replacements
+        );
     }
 
     #[test]
@@ -261,18 +291,13 @@ mod tests {
             replacements
         );
         assert!(
-            replacements.contains(&"⎧"),
-            "Expected ⎧ in {:?}",
+            replacements.iter().any(|r| r.starts_with('⎧')),
+            "Expected ⎧ prefix in {:?}",
             replacements
         );
         assert!(
-            replacements.contains(&"⎨"),
-            "Expected ⎨ in {:?}",
-            replacements
-        );
-        assert!(
-            replacements.contains(&"⎩"),
-            "Expected ⎩ in {:?}",
+            replacements.iter().any(|r| r.starts_with('⎩')),
+            "Expected ⎩ prefix in {:?}",
             replacements
         );
         assert!(

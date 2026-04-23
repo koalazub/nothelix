@@ -59,6 +59,8 @@
 (require "nothelix/conceal-state.scm")
 (require "nothelix/conceal.scm")
 (require "nothelix/scaffold.scm")
+(require "nothelix/math-format.scm")
+(require "nothelix/math-render.scm")
 
 ;; Test modules are loaded dynamically (see test commands below).
 
@@ -67,6 +69,10 @@
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
          view-chart
+         insert-image
+         format-math-buffer
+         math-render-buffer
+         math-render-clear
          kernel-shutdown kernel-shutdown-all
          graphics-protocol graphics-check nothelix-status
          julia-tab-complete
@@ -232,6 +238,14 @@
     ;; Chart viewer
     "view-chart" "Open the last-executed plot in the interactive chart viewer."
 
+    ;; Image insertion
+    "insert-image" "Insert a `# @image <path>` marker + blank canvas at the cursor."
+
+    ;; Math formatting
+    "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
+    "math-render-buffer" "Stack big-operator limits (\\int / \\sum / \\prod …) above/below their glyph via virtual rows."
+    "math-render-clear"  "Remove every virtual-row math annotation from the current buffer."
+
     ;; Kernel lifecycle
     "kernel-shutdown"     "Stop the kernel for the current document."
     "kernel-shutdown-all" "Stop every running kernel."
@@ -320,7 +334,8 @@
 ;; asynchronously inside update-cell-output, which calls schedule-reconceal
 ;; directly at the end of that callback.
 (define *mutating-commands*
-  '("convert-notebook" "sync-to-ipynb" "export-markdown" "export-typst"))
+  '("convert-notebook" "sync-to-ipynb" "export-markdown" "export-typst"
+    "insert-image" "format-math-buffer" "math-render-buffer" "math-render-clear"))
 
 ;; Commands that write the buffer to disk. We hook these to run the
 ;; cell renumber pass so holes that accumulate during editing (from
@@ -362,13 +377,21 @@
          (when (= my-gen *conceal-generation*)
            (maybe-conceal-current-buffer))))]
     [(member command-name *save-commands*)
-     ;; Renumber cells to a contiguous 0-indexed sequence whenever
-     ;; the user saves. Holes from mid-file deletion/rearrangement
-     ;; get swept up here so the file on disk stays tidy between
-     ;; sessions. `:sync-to-ipynb` also drops into this branch
-     ;; indirectly because `renumber-cells!` is idempotent.
-     ;; `renumber-cells!` itself now saves and restores the cursor
-     ;; so `:w` no longer flings the view to the top of the file.
+     ;; On save we do two passes against the buffer:
+     ;;   (1) expand any single-line `\begin{cases}...\end{cases}`
+     ;;       (or pmatrix/aligned/...) into multi-line `$$` blocks so
+     ;;       the concealer can render them properly. Runs in `silent?`
+     ;;       mode so Helix's own "wrote N bytes" message isn't stomped.
+     ;;   (2) Renumber cells to a contiguous 0-indexed sequence. Holes
+     ;;       from mid-file deletion/rearrangement get swept up here so
+     ;;       the file on disk stays tidy between sessions.
+     ;;
+     ;; Both run *after* the write, so the on-disk copy lags by one
+     ;; save; the next `:w` syncs the tidied form. Practically
+     ;; invisible since the only change between saves is whitespace /
+     ;; integers in markers.
+     (format-math-buffer #true)
+     (math-render-buffer)
      (renumber-cells!)]
     [(member command-name *mutating-commands*)
      ;; Cache is stale from the moment the command started running.
