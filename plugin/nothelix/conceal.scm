@@ -20,6 +20,7 @@
                  (only-in nothelix
                           compute-conceal-overlays-ffi
                           compute-conceal-overlays-for-comments
+                          compute-conceal-overlays-for-comments-with-options
                           compute-conceal-overlays-for-typst))
 
 (provide compute-conceal-overlays compute-and-apply-conceal-async
@@ -28,7 +29,15 @@
          conceal-math!
          clear-conceal!
          apply-conceal-for-cursor!
-         schedule-reconceal)
+         schedule-reconceal
+         *math-render-active*)
+
+;; Flag flipped by the math-render plugin when it stages virtual above/
+;; below rows for big operators and `\frac`. When on, the scanner hides
+;; the inline form of those groups so both representations don't
+;; collide. Lives here (not in math-render.scm) so the concealer can
+;; read it at each scan without a circular require.
+(define *math-render-active* (box #false))
 
 ;;; ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -44,8 +53,13 @@
   (define path (editor-document->path doc-id))
   (cond
     [(and path (ends-with-jl? path))
-     ;; .jl: per-line comment scanning, returns tab-separated format
-     (parse-tsv-overlays (compute-conceal-overlays-for-comments text))]
+     ;; .jl: per-line comment scanning, returns tab-separated format.
+     ;; Pass hide_math_layout when the math-render plugin is active so
+     ;; the concealer suppresses inline `_{…}^{…}` / `\frac{…}{…}` that
+     ;; math-render is already painting as virtual above/below rows.
+     (parse-tsv-overlays
+       (compute-conceal-overlays-for-comments-with-options
+         text (unbox *math-render-active*)))]
     [(and path (string-suffix? path ".typ"))
      ;; .typ: Typst math scanning, returns tab-separated format
      (parse-tsv-overlays (compute-conceal-overlays-for-typst text))]
@@ -121,7 +135,8 @@
     (lambda ()
       (define json-str
         (if is-jl
-            (compute-conceal-overlays-for-comments text)
+            (compute-conceal-overlays-for-comments-with-options
+              text (unbox *math-render-active*))
             (compute-conceal-overlays-ffi text)))
 
       ;; Parse overlays on the background thread too (no editor access needed).

@@ -46,8 +46,8 @@ pub fn format_math(text: String) -> String {
         if let Some(close_idx) = find_dollar_block(&lines, idx) {
             out.push_str(line);
             out.push('\n');
-            for k in (idx + 1)..close_idx {
-                emit_reformatted_block_line(lines[k], &mut out);
+            for inner in &lines[idx + 1..close_idx] {
+                emit_reformatted_block_line(inner, &mut out);
             }
             // Closing "# $$" line.
             out.push_str(lines[close_idx]);
@@ -80,8 +80,8 @@ fn find_dollar_block(lines: &[&str], start: usize) -> Option<usize> {
     if content.trim() != "$$" {
         return None;
     }
-    for j in (start + 1)..lines.len() {
-        let jl = lines[j].trim_end_matches('\r');
+    for (j, candidate) in lines.iter().enumerate().skip(start + 1) {
+        let jl = candidate.trim_end_matches('\r');
         if let Some(jc) = jl.strip_prefix("# ") {
             if jc.trim() == "$$" {
                 return Some(j);

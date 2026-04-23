@@ -14,12 +14,12 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           notebook-validate
-                          notebook-convert-sync
+                          notebook-convert-sync!
                           notebook-cell-count
-                          convert-to-ipynb
-                          export-to-markdown
-                          export-to-typst
-                          write-string-to-file))
+                          convert-to-ipynb!
+                          export-to-markdown!
+                          export-to-typst!
+                          write-string-to-file!))
 
 (provide convert-notebook
          sync-to-ipynb
@@ -51,7 +51,7 @@
            (set-status! "Converting...")
            (spawn-native-thread
              (lambda ()
-               (define result (notebook-convert-sync path))
+               (define result (notebook-convert-sync! path))
                (define cell-count (notebook-cell-count path))
                (hx.with-context
                  (lambda ()
@@ -62,7 +62,7 @@
                            (string-append
                              (substring path 0 (- (string-length path) 6))
                              ".jl"))
-                         (define write-err (write-string-to-file output-path result))
+                         (define write-err (write-string-to-file! output-path result))
                          (when (not (equal? write-err ""))
                            (set-status! write-err))
                          (set-status!
@@ -88,7 +88,7 @@
 
     [else
      (set-status! "Syncing to .ipynb...")
-     (define result (convert-to-ipynb path))
+     (define result (convert-to-ipynb! path))
      (if (string-starts-with? result "ERROR:")
          (set-status! result)
          (set-status! "Synced changes back to .ipynb"))]))
@@ -108,7 +108,7 @@
      (set-status! "Error: Not a .jl file")]
     [else
      (set-status! "Exporting to Markdown...")
-     (define result (export-to-markdown path))
+     (define result (export-to-markdown! path))
      (if (string-starts-with? result "ERROR:")
          (set-status! result)
          (set-status! result))]))
@@ -128,7 +128,7 @@
      (set-status! "Error: Not a .jl file")]
     [else
      (set-status! "Exporting to Typst...")
-     (define result (export-to-typst path))
+     (define result (export-to-typst! path))
      (if (string-starts-with? result "ERROR:")
          (set-status! result)
          (set-status! result))]))

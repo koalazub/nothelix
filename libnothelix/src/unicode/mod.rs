@@ -25,13 +25,18 @@ mod conceal;
 mod fence;
 pub(crate) mod typst_conceal;
 pub(crate) mod math_regions;
+pub(crate) mod math_spans;
 mod overlay;
 mod scanner;
 mod sub_super;
 mod symbol_table;
 
-pub use conceal::{compute_conceal_overlays, compute_conceal_overlays_for_comments};
-pub use scanner::{latex_overlays, set_math_layout_hide};
+pub use conceal::{
+    compute_conceal_overlays, compute_conceal_overlays_for_comments,
+    compute_conceal_overlays_for_comments_with_options,
+};
+pub use math_spans::parse_math_spans_json;
+pub use scanner::{latex_overlays, latex_overlays_with_options};
 pub use symbol_table::{unicode_completions_for_prefix, unicode_lookup};
 
 #[cfg(test)]

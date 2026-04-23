@@ -33,8 +33,9 @@
                           json-get-plot-data
                           kitty-placeholder-payload
                           kitty-placeholder-rows
-                          save-image-to-cache
-                          format-julia-error))
+                          save-image-to-cache!
+                          format-julia-error
+                          format-julia-error-with-notebook))
 
 (provide update-cell-output
          commentify
@@ -158,7 +159,15 @@
      ;; Try the Rust formatter for a guided error message.
      ;; Falls back to the raw error if structured_error is absent.
      (define structured (field-at 1))
-     (define formatted (format-julia-error (or structured "") err))
+     ;; If we have a notebook path, use the notebook-aware formatter so
+     ;; UndefVarError can point at the cell where the variable IS defined
+     ;; (even in cells that haven't run yet) instead of the generic
+     ;; "check spelling / add using PackageName" hint.
+     (define jl-path (editor-document->path doc-id))
+     (define formatted
+       (if (and jl-path (string-suffix? jl-path ".jl"))
+           (format-julia-error-with-notebook (or structured "") err jl-path)
+           (format-julia-error (or structured "") err)))
      (helix.static.insert_string (commentify formatted))
      (helix.static.insert_string "# ─────────────\n")
      (helix.static.collapse_selection)
@@ -243,7 +252,7 @@
      (define image-marker-line -1)
      (when image-ready
        (set! image-marker-line (current-line-number))
-       (define cache-path (save-image-to-cache jl-path cell-index image-b64))
+       (define cache-path (save-image-to-cache! jl-path cell-index image-b64))
        (if (string-starts-with? cache-path "ERROR:")
            (helix.static.insert_string "# @image [render only]\n")
            (helix.static.insert_string (string-append "# @image " cache-path "\n")))

@@ -22,7 +22,7 @@
                  (only-in nothelix
                           kitty-placeholder-payload
                           kitty-placeholder-rows
-                          save-image-to-cache
+                          save-image-to-cache!
                           load-image-from-cache))
 
 (provide cell-index->image-id

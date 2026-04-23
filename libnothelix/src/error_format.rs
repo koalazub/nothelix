@@ -32,39 +32,147 @@ struct RawHint {
     match_tokens: Vec<String>,
     #[serde(default)]
     exclude_tokens: Vec<String>,
+    /// Optional nested-form selector. When present it supersedes
+    /// `match_tokens`/`exclude_tokens`. Shape:
+    ///   match = { all = ["a"], any = ["b","c"], none = ["d"] }
+    /// Empty `all`/`any` means "no requirement" on that axis.
+    #[serde(default)]
+    r#match: Option<RawSelector>,
     title: String,
     help: String,
     #[serde(default)]
     example: String,
+    /// Explicit tie-breaker when multiple hints would match. Higher
+    /// `priority` wins; within equal priority the rule with more
+    /// `match_tokens` (more specific) wins; among equals, first in
+    /// file order wins.
+    #[serde(default)]
+    priority: i32,
+}
+
+/// Nested selector that replaces the flat `match_tokens`/`exclude_tokens`
+/// split. Each axis is independent:
+///   `all`   — every listed token MUST appear in the error message
+///   `any`   — at least ONE listed token must appear (empty = ignored)
+///   `none`  — NONE of the listed tokens may appear
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+struct RawSelector {
+    #[serde(default)]
+    all: Vec<String>,
+    #[serde(default)]
+    any: Vec<String>,
+    #[serde(default)]
+    none: Vec<String>,
 }
 
 pub struct ErrorHint {
     pub id: String,
     pub match_type: String,
-    pub match_tokens: Vec<String>,
-    pub exclude_tokens: Vec<String>,
+    /// Normalised selector. `flat_tokens(&self.selector)` / similar can
+    /// rebuild the old flat view for hints that need it; match_hint
+    /// below consults the selector directly.
+    pub selector: Selector,
     pub title: String,
     pub help: String,
     pub example: String,
+    pub priority: i32,
+}
+
+/// The in-memory, validated form of `RawSelector`. Collapses the old
+/// flat `match_tokens` + `exclude_tokens` fields into the same shape
+/// as nested `match = { ... }`, so the matcher only has to walk one
+/// structure regardless of how the hint was spelled in TOML.
+#[derive(Debug, Clone, Default)]
+pub struct Selector {
+    pub all: Vec<String>,
+    pub any: Vec<String>,
+    pub none: Vec<String>,
+}
+
+impl Selector {
+    /// Derive from the raw TOML. If `nested` is present it wins;
+    /// otherwise fold the legacy flat fields in (`match_tokens` → `all`,
+    /// `exclude_tokens` → `none`).
+    fn from_raw(
+        nested: Option<RawSelector>,
+        flat_all: Vec<String>,
+        flat_none: Vec<String>,
+    ) -> Self {
+        match nested {
+            Some(s) => Self { all: s.all, any: s.any, none: s.none },
+            None => Self { all: flat_all, any: Vec::new(), none: flat_none },
+        }
+    }
+
+    /// Constraint count — used by the specificity score in `find_hint`.
+    fn specificity(&self) -> usize {
+        self.all.len() + self.any.len() + self.none.len()
+    }
+
+    fn matches(&self, full_text: &str) -> bool {
+        if !self.all.iter().all(|t| full_text.contains(t.as_str())) {
+            return false;
+        }
+        if !self.any.is_empty() && !self.any.iter().any(|t| full_text.contains(t.as_str())) {
+            return false;
+        }
+        if self.none.iter().any(|t| full_text.contains(t.as_str())) {
+            return false;
+        }
+        true
+    }
 }
 
 static HINTS: OnceLock<Vec<ErrorHint>> = OnceLock::new();
 
 fn hints() -> &'static [ErrorHint] {
     HINTS.get_or_init(|| {
-        let file: HintsFile = toml::from_str(HINTS_TOML).unwrap_or(HintsFile { hint: vec![] });
-        file.hint
+        let file: HintsFile =
+            toml::from_str(HINTS_TOML).unwrap_or(HintsFile { hint: vec![] });
+
+        let mut loaded: Vec<ErrorHint> = file
+            .hint
             .into_iter()
-            .map(|h| ErrorHint {
-                id: h.id,
-                match_type: h.match_type,
-                match_tokens: h.match_tokens,
-                exclude_tokens: h.exclude_tokens,
-                title: h.title,
-                help: h.help,
-                example: h.example,
+            .map(|h| {
+                let selector =
+                    Selector::from_raw(h.r#match, h.match_tokens, h.exclude_tokens);
+                ErrorHint {
+                    id: h.id,
+                    match_type: h.match_type,
+                    selector,
+                    title: h.title,
+                    help: h.help,
+                    example: h.example,
+                    priority: h.priority,
+                }
             })
-            .collect()
+            .collect();
+
+        // Priority-dominant ordering — more-specific selectors break
+        // priority ties. Sort is stable so equal keys keep file order.
+        loaded.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| b.selector.specificity().cmp(&a.selector.specificity()))
+        });
+
+        // Drop duplicate ids. The table is under 100 entries so a
+        // linear scan via `any`+`==` is cheaper than allocating a
+        // HashSet. Keeps the first occurrence (highest priority, most
+        // specific) after the sort above.
+        let mut out: Vec<ErrorHint> = Vec::with_capacity(loaded.len());
+        for hint in loaded {
+            if out.iter().any(|existing| existing.id == hint.id) {
+                eprintln!(
+                    "error_hints.toml: duplicate hint id `{}` — dropping shadowed entry",
+                    hint.id
+                );
+                continue;
+            }
+            out.push(hint);
+        }
+        out
     })
 }
 
@@ -90,14 +198,43 @@ pub struct StructuredError {
     pub unexecuted_deps: Vec<i64>,
 }
 
-#[derive(Deserialize, Default)]
-pub struct VarContext {
-    #[serde(default)]
-    pub defined_in_cell: i64,
-    #[serde(default)]
-    pub cell_status: String,
-    #[serde(default)]
-    pub was_executed: bool,
+/// Where the formatter learned about a variable's defining cell. Each
+/// variant carries exactly the fields meaningful for its provenance.
+/// Serialized form uses a `source` tag — kernel must emit one of:
+///   {"source":"executed","defined_in_cell":N,"status":"done"}
+///   {"source":"pending_registered","defined_in_cell":N}
+///   {"source":"static_source","defined_in_cell":N,"line_in_cell":L,"line_text":"…"}
+#[derive(Debug, Deserialize)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum VarContext {
+    /// Cell ran (success or error) — kernel `VARIABLE_SOURCES` had the
+    /// binding. `status` is `"done"` or `"error"`.
+    Executed {
+        defined_in_cell: i64,
+        status: String,
+    },
+    /// Cell is in the kernel's `CELLS` registry (source parsed by
+    /// `@cell`) but hasn't executed — AST says it would define the var.
+    PendingRegistered {
+        defined_in_cell: i64,
+    },
+    /// Static `.jl` scan found an assignment in a cell the kernel hasn't
+    /// seen yet. Carries the exact line for user navigation.
+    StaticSource {
+        defined_in_cell: i64,
+        line_in_cell: i64,
+        line_text: String,
+    },
+}
+
+impl VarContext {
+    pub fn defined_in_cell(&self) -> i64 {
+        match self {
+            Self::Executed { defined_in_cell, .. }
+            | Self::PendingRegistered { defined_in_cell }
+            | Self::StaticSource { defined_in_cell, .. } => *defined_in_cell,
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -293,34 +430,21 @@ fn scan_type_name(msg: &str, i: &mut usize) -> String {
 /// Scores by specificity: more matching constraints = higher score.
 fn find_hint<'a>(hints: &'a [ErrorHint], tokens: &ErrorTokens) -> Option<&'a ErrorHint> {
     let full_text = format!("{}: {}", tokens.error_type, tokens.message);
-
-    let mut best: Option<(usize, &ErrorHint)> = None;
+    let mut best: Option<(isize, &ErrorHint)> = None;
 
     for hint in hints {
-        // Check error type match
         if !hint.match_type.is_empty() && !tokens.error_type.contains(&hint.match_type) {
             continue;
         }
-
-        // Check all required tokens present
-        let all_match = hint.match_tokens.iter().all(|tok| full_text.contains(tok.as_str()));
-        if !all_match {
+        if !hint.selector.matches(&full_text) {
             continue;
         }
 
-        // Check no excluded tokens present
-        let any_excluded = hint
-            .exclude_tokens
-            .iter()
-            .any(|tok| full_text.contains(tok.as_str()));
-        if any_excluded {
-            continue;
-        }
-
-        // Score: match_type presence (10) + required tokens + exclusions
-        let score = if hint.match_type.is_empty() { 0 } else { 10 }
-            + hint.match_tokens.len()
-            + hint.exclude_tokens.len();
+        // Priority dominates (×1000) → match_type presence (+10) →
+        // constraint count as specificity.
+        let score = hint.priority as isize * 1000
+            + if hint.match_type.is_empty() { 0 } else { 10 }
+            + hint.selector.specificity() as isize;
 
         if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, hint));
@@ -751,20 +875,125 @@ fn scan_indexed_var(source: &str) -> Option<String> {
 // ─── Public entry point ──────────────────────────────────────────────────────
 
 /// Format a Julia error into a guided message.
-pub fn format_error(error_json: &str, raw_error: &str) -> String {
+/// Inputs for a single error-formatting pass. All optional context that
+/// enrichers might consume lives here — adding new enrichers means
+/// threading a new field, not forking a new entry point.
+pub struct FormatContext<'a> {
+    pub error_json: &'a str,
+    pub raw_error: &'a str,
+    pub notebook_path: Option<&'a str>,
+}
+
+/// An enricher inspects the parsed error + the surrounding context and
+/// may mutate the error in place (e.g. adding `cell_context` entries
+/// discovered via notebook static scan, annotating frames, …).
+trait Enricher: Send + Sync {
+    fn enrich(&self, err: &mut StructuredError, ctx: &FormatContext<'_>);
+}
+
+fn enrichers() -> &'static [Box<dyn Enricher + Send + Sync>] {
+    static ENRICHERS: OnceLock<Vec<Box<dyn Enricher + Send + Sync>>> = OnceLock::new();
+    ENRICHERS
+        .get_or_init(|| -> Vec<Box<dyn Enricher + Send + Sync>> {
+            vec![Box::new(StaticCellScanEnricher)]
+        })
+        .as_slice()
+}
+
+/// Unified formatter: deserialize the structured payload if present,
+/// run every registered enricher against it, then format; otherwise
+/// fall back to the raw-error path. Replaces the old pair of
+/// `format_error` / `format_error_with_notebook` fork.
+pub fn format_error(ctx: &FormatContext<'_>) -> String {
     let hints = hints();
 
-    if let Ok(err) = serde_json::from_str::<StructuredError>(error_json) {
+    if let Ok(mut err) = serde_json::from_str::<StructuredError>(ctx.error_json) {
         if !err.error_type.is_empty() {
+            for enricher in enrichers() {
+                enricher.enrich(&mut err, ctx);
+            }
             return format_structured(&err, hints);
         }
     }
 
-    if !raw_error.is_empty() {
-        return format_raw(raw_error, hints);
+    if !ctx.raw_error.is_empty() {
+        return format_raw(ctx.raw_error, hints);
     }
 
     "error: unknown\n".to_string()
+}
+
+/// Populates `cell_context` for UndefVarError by scanning the notebook
+/// `.jl` source for an assignment to the missing variable. Only fires
+/// when the kernel supplied no context of its own.
+struct StaticCellScanEnricher;
+
+impl Enricher for StaticCellScanEnricher {
+    fn enrich(&self, err: &mut StructuredError, ctx: &FormatContext<'_>) {
+        if err.error_type != "UndefVarError" || !err.cell_context.is_empty() {
+            return;
+        }
+        let Some(path) = ctx.notebook_path else { return };
+        if path.is_empty() {
+            return;
+        }
+        let var = extract_undef_var(&err.message);
+        if var.is_empty() {
+            return;
+        }
+
+        let json = crate::notebook::scan_variable_definition(path.to_string(), var.clone());
+        if json == "null" {
+            return;
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Scanned {
+            cell_index: i64,
+            #[serde(default)]
+            line_in_cell: i64,
+            #[serde(default)]
+            line_text: String,
+        }
+        if let Ok(hit) = serde_json::from_str::<Scanned>(&json) {
+            if hit.cell_index == err.cell_index {
+                return;
+            }
+            err.cell_context.insert(
+                var,
+                VarContext::StaticSource {
+                    defined_in_cell: hit.cell_index,
+                    line_in_cell: hit.line_in_cell,
+                    line_text: hit.line_text,
+                },
+            );
+        }
+    }
+}
+
+fn extract_undef_var(msg: &str) -> String {
+    // Prefer a backticked identifier.
+    if let Some(start) = msg.find('`') {
+        if let Some(end) = msg[start + 1..].find('`') {
+            let cand = &msg[start + 1..start + 1 + end];
+            if is_identifier(cand) {
+                return cand.to_string();
+            }
+        }
+    }
+    // Fallback: first whitespace-delimited word that looks like an ident.
+    for word in msg.split_whitespace() {
+        if is_identifier(word) {
+            return word.to_string();
+        }
+    }
+    String::new()
+}
+
+fn is_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // ─── Structured formatting ───────────────────────────────────────────────────
@@ -846,25 +1075,7 @@ fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
     if !err.cell_context.is_empty() {
         out.push_str("   |\n");
         for (var, ctx) in &err.cell_context {
-            if ctx.was_executed {
-                let _ = writeln!(
-                    out,
-                    "   = note: `{var}` is defined in @cell {} (status: {})",
-                    ctx.defined_in_cell, ctx.cell_status
-                );
-                out.push_str("   = note: the cell ran but the variable may have been overwritten or errored\n");
-            } else {
-                let _ = writeln!(
-                    out,
-                    "   = note: `{var}` is defined in @cell {} — not yet executed",
-                    ctx.defined_in_cell
-                );
-                let _ = writeln!(
-                    out,
-                    "   = help: run @cell {} first, or use :execute-cells-above",
-                    ctx.defined_in_cell
-                );
-            }
+            format_var_context(&mut out, var, ctx, err.cell_index);
         }
     }
 
@@ -892,6 +1103,59 @@ fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
 
     out
 }
+
+/// Render one `VarContext` entry as user-facing `   = note` / `   = help`
+/// lines. Pulled out so the main structured-format body stays readable
+/// and so future variant additions stay isolated.
+fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell: i64) {
+    match ctx {
+        VarContext::StaticSource { defined_in_cell, line_text, .. } => {
+            let relation = match defined_in_cell.cmp(&error_cell) {
+                std::cmp::Ordering::Greater => "later in the notebook",
+                std::cmp::Ordering::Less => "earlier in the notebook",
+                std::cmp::Ordering::Equal => "in this cell",
+            };
+            let _ = writeln!(
+                out,
+                "   = note: `{var}` is defined in @cell {defined_in_cell} ({relation}) — that cell hasn't been executed yet"
+            );
+            if !line_text.is_empty() {
+                let _ = writeln!(out, "   = note: look for:  {}", line_text.trim());
+            }
+            if *defined_in_cell > error_cell {
+                let _ = writeln!(
+                    out,
+                    "   = help: move the `{var} = …` line above @cell {error_cell}, or run @cell {defined_in_cell} first"
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "   = help: run @cell {defined_in_cell} first, or use :execute-cells-above"
+                );
+            }
+        }
+        VarContext::Executed { defined_in_cell, status } => {
+            let _ = writeln!(
+                out,
+                "   = note: `{var}` is defined in @cell {defined_in_cell} (status: {status})"
+            );
+            out.push_str(
+                "   = note: the cell ran but the variable may have been overwritten or errored\n",
+            );
+        }
+        VarContext::PendingRegistered { defined_in_cell } => {
+            let _ = writeln!(
+                out,
+                "   = note: `{var}` is defined in @cell {defined_in_cell} — not yet executed"
+            );
+            let _ = writeln!(
+                out,
+                "   = help: run @cell {defined_in_cell} first, or use :execute-cells-above"
+            );
+        }
+    }
+}
+
 
 // ─── Raw formatting ──────────────────────────────────────────────────────────
 
@@ -1300,7 +1564,7 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("E021"), "got:\n{}", out);
         assert!(out.contains("^^^"));
         assert!(out.contains("stdlib:LinearAlgebra"));
@@ -1338,13 +1602,12 @@ mod tests {
             "cell_line": 3,
             "cell_context": {
                 "data": {
-                    "defined_in_cell": 2,
-                    "cell_status": "pending",
-                    "was_executed": false
+                    "source": "pending_registered",
+                    "defined_in_cell": 2
                 }
             }
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("@cell 2"), "should reference defining cell, got:\n{out}");
         assert!(out.contains("not yet executed"), "should say not executed, got:\n{out}");
         assert!(out.contains("run @cell 2 first"), "should suggest running it, got:\n{out}");
@@ -1361,13 +1624,13 @@ mod tests {
             "cell_line": 1,
             "cell_context": {
                 "x": {
+                    "source": "executed",
                     "defined_in_cell": 1,
-                    "cell_status": "error",
-                    "was_executed": true
+                    "status": "error"
                 }
             }
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("@cell 1"), "got:\n{out}");
         assert!(out.contains("status: error"), "got:\n{out}");
     }
@@ -1383,7 +1646,7 @@ mod tests {
             "cell_line": 1,
             "unexecuted_deps": [1, 2]
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("@cell 1"), "got:\n{out}");
         assert!(out.contains("@cell 2"), "got:\n{out}");
         assert!(out.contains("haven't been executed"), "got:\n{out}");
@@ -1399,7 +1662,7 @@ mod tests {
             "cell_index": 1,
             "cell_line": 1
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(!out.contains("@cell"), "should have no cell context, got:\n{out}");
         assert!(!out.contains("haven't been executed"), "got:\n{out}");
     }
@@ -1416,7 +1679,7 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("S_hat"), "should use actual var name, got:\n{out}");
         assert!(out.contains("(8, 8)"), "should show dimensions, got:\n{out}");
         assert!(out.contains("K"), "should use actual var name, got:\n{out}");
@@ -1434,7 +1697,7 @@ mod tests {
             "cell_index": 2,
             "cell_line": 1
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("`A`"), "got:\n{out}");
         assert!(out.contains("`b`"), "got:\n{out}");
     }
@@ -1449,7 +1712,7 @@ mod tests {
             "cell_index": 1,
             "cell_line": 3
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("prices"), "should name the array, got:\n{out}");
         assert!(out.contains("5 elements"), "should show count, got:\n{out}");
     }
@@ -1482,7 +1745,7 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("`n`"), "should show actual arg name, got:\n{out}");
         assert!(out.contains("Int64"), "should show type, got:\n{out}");
         assert!(out.contains("typeof(n)"), "should suggest typeof check, got:\n{out}");
@@ -1498,7 +1761,7 @@ mod tests {
             "cell_index": 1,
             "cell_line": 2
         }"#;
-        let out = format_error(json, "");
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
         assert!(out.contains("`data`"), "got:\n{out}");
         assert!(out.contains("`label`"), "got:\n{out}");
         assert!(out.contains("typeof(data)"), "got:\n{out}");

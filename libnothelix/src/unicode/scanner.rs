@@ -10,33 +10,23 @@
 //! coupling where one arm could silently leak state into another.
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::fence::{close_fence, mid_fence, open_fence};
 use super::overlay::Overlay;
 use super::sub_super::{latex_font_to_julia, map_lookup, SUB_MAP, SUPER_MAP};
 use super::symbol_table::unicode_lookup;
 
-/// When `true`, big-operator limits (`_{a}^{b}` after `\sum`, `\int`, …)
-/// and `\frac{num}{den}` wrappers are fully hidden by the scanner so the
-/// nothelix math-render plugin's stacked virtual rows don't collide with
-/// a redundant inline rendering.
-///
-/// The Scheme plugin flips this to `true` just before running
-/// `math-render-buffer` (staging the virtual rows) and back to `false` on
-/// `math-render-clear`. Default `false` = inline limits stay visible, so
-/// users without math-render active see the familiar `∑_a^b f(k)` layout.
-static HIDE_MATH_LAYOUT: AtomicBool = AtomicBool::new(false);
-
-/// Public FFI surface for the flag. Registered in `lib.rs` as
-/// `set-math-layout-hide`.
-pub fn set_math_layout_hide(hide: bool) {
-    HIDE_MATH_LAYOUT.store(hide, Ordering::Relaxed);
-}
-
-#[inline]
-fn math_layout_hidden() -> bool {
-    HIDE_MATH_LAYOUT.load(Ordering::Relaxed)
+/// Per-scan options. Passed by the caller instead of pulled from a
+/// process-global atomic — the previous design meant any two documents
+/// open in parallel would fight over the toggle, and the flag was
+/// spooky-action-at-a-distance from the Scheme plugin's perspective.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScannerOptions {
+    /// When `true`, big-operator limits (`_{a}^{b}` after `\sum`, `\int`,
+    /// …) and `\frac{num}{den}` wrappers are fully hidden so the
+    /// math-render plugin's stacked virtual rows don't collide with a
+    /// redundant inline rendering. Default: keep inline limits visible.
+    pub hide_math_layout: bool,
 }
 
 /// Track which environment we're inside and which row we're on within it.
@@ -133,16 +123,18 @@ struct Scanner<'a> {
     overlays: Vec<Overlay>,
     pending_limits: u8,
     env_stack: Vec<EnvState>,
+    options: ScannerOptions,
 }
 
 impl<'a> Scanner<'a> {
-    fn new(text: &'a str) -> Self {
+    fn new(text: &'a str, options: ScannerOptions) -> Self {
         Self {
             text,
             bytes: text.as_bytes(),
             overlays: Vec::new(),
             env_stack: Vec::new(),
             pending_limits: 0,
+            options,
         }
     }
 
@@ -480,7 +472,7 @@ impl<'a> Scanner<'a> {
             num_close
         };
 
-        if math_layout_hidden() {
+        if self.options.hide_math_layout {
             // The math-render plugin is painting numerator above /
             // denominator below — hide the entire `\frac{..}{..}` so
             // both representations don't fight over the same row.
@@ -734,7 +726,7 @@ impl<'a> Scanner<'a> {
 
         if self.pending_limits > 0 {
             self.pending_limits -= 1;
-            if math_layout_hidden() {
+            if self.options.hide_math_layout {
                 // The math-render plugin is painting this limit above/
                 // below the operator glyph — hide the whole inline form
                 // including content so we don't render both.
@@ -767,22 +759,39 @@ impl<'a> Scanner<'a> {
                 char_offset += ch.len_utf8();
             }
             self.overlays.push(Overlay::hide(past_close - 1));
+            return past_close;
         }
-        past_close
+
+        // Content isn't simple enough for in-place unicode super substitution
+        // (contains backslash commands like `\pi`, nested braces, etc.). Keep
+        // the `^` as a visual cue, hide only the braces, and return
+        // `content_start` so the main scan loop walks the body — that way
+        // `\pi` → π, `\in` → ∈, etc. still get concealed inside the exponent,
+        // even though the result can't be shrunk to unicode superscript.
+        self.overlays.push(Overlay::hide(caret_pos + 1));
+        self.overlays.push(Overlay::hide(past_close - 1));
+        content_start
     }
 
     /// `^x` single-character superscript.
     fn scan_inline_superscript(&mut self, i: usize) -> usize {
         if self.pending_limits > 0 {
             self.pending_limits -= 1;
-            if math_layout_hidden() {
+            if self.options.hide_math_layout {
                 // Hide `^x` entirely so only the stacked virtual-line
                 // version is visible.
                 self.overlays.push(Overlay::hide(i));
                 self.overlays.push(Overlay::hide(i + 1));
                 return i + 2;
             }
-            return i + 1;
+            // Keep `^x` visible but return i+2 (skip past both the caret
+            // and the char) — otherwise the main loop re-visits the char,
+            // fails the pending-limits whitelist, and zeroes the counter,
+            // which means the *next* limit (`^` after `_0`) falls through
+            // to the regular-super path and gets converted to unicode.
+            // That produced the asymmetric `∫_0¹` rendering: sub at
+            // normal size, super shrunk.
+            return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
         if let Some(rep) = map_lookup(SUPER_MAP, ch) {
@@ -815,7 +824,7 @@ impl<'a> Scanner<'a> {
 
         if self.pending_limits > 0 {
             self.pending_limits -= 1;
-            if math_layout_hidden() {
+            if self.options.hide_math_layout {
                 Overlay::hide_range(&mut self.overlays, underscore_pos, past_close);
                 return past_close;
             }
@@ -841,8 +850,16 @@ impl<'a> Scanner<'a> {
                 char_offset += ch.len_utf8();
             }
             self.overlays.push(Overlay::hide(past_close - 1));
+            return past_close;
         }
-        past_close
+
+        // Complex content — keep `_` visible as a visual cue, hide braces,
+        // and recurse so inner backslash commands (`\in`, `\pi`, `\mathbb`)
+        // still get concealed even though we can't shrink them to unicode
+        // subscript forms.
+        self.overlays.push(Overlay::hide(underscore_pos + 1));
+        self.overlays.push(Overlay::hide(past_close - 1));
+        content_start
     }
 
     /// `_x` single-character subscript. Leaves the source raw when `x` has
@@ -853,12 +870,15 @@ impl<'a> Scanner<'a> {
     fn scan_inline_subscript(&mut self, i: usize) -> usize {
         if self.pending_limits > 0 {
             self.pending_limits -= 1;
-            if math_layout_hidden() {
+            if self.options.hide_math_layout {
                 self.overlays.push(Overlay::hide(i));
                 self.overlays.push(Overlay::hide(i + 1));
                 return i + 2;
             }
-            return i + 1;
+            // Skip past both `_` and the limit char so pending_limits
+            // stays for the paired `^` — see matching note in
+            // scan_inline_superscript.
+            return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
         if let Some(rep) = map_lookup(SUB_MAP, ch) {
@@ -872,16 +892,27 @@ impl<'a> Scanner<'a> {
 }
 
 /// Public FFI entry point. Scans one math region's worth of text and returns
-/// a JSON array of `{"offset": N, "replacement": "X"}` entries.
+/// a JSON array of `{"offset": N, "replacement": "X"}` entries. Uses
+/// default options — callers that need `hide_math_layout` go through
+/// [`latex_overlays_with_options`] or [`scan_to_vec_opts`].
 pub fn latex_overlays(text: String) -> String {
-    let overlays = Scanner::new(&text).scan();
+    latex_overlays_with_options(text, false)
+}
+
+/// FFI entry point with explicit `hide_math_layout`. `true` hides big-op
+/// limits and `\frac` bodies so the math-render virtual-row plugin can
+/// paint them instead.
+pub fn latex_overlays_with_options(text: String, hide_math_layout: bool) -> String {
+    let opts = ScannerOptions { hide_math_layout };
+    let overlays = Scanner::new(&text, opts).scan();
     serde_json::to_string(&overlays).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Scan a math region and return overlays as `(byte_offset, replacement)`
-/// tuples. Used by the conceal code path to avoid a JSON round-trip.
-pub(super) fn scan_to_vec(text: &str) -> Vec<(usize, String)> {
-    Scanner::new(text)
+/// tuples. Used by the conceal pipeline; every caller threads options
+/// through explicitly so there's no default-variant wrapper anymore.
+pub(super) fn scan_to_vec_opts(text: &str, options: ScannerOptions) -> Vec<(usize, String)> {
+    Scanner::new(text, options)
         .scan()
         .into_iter()
         .map(|o| (o.offset, o.replacement.into_owned()))

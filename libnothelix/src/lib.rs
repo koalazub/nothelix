@@ -44,15 +44,16 @@ fn build_module() -> FFIModule {
 
     // ── Notebook operations ───────────────────────────────────────────────────
     m.register_fn("notebook-validate", notebook::notebook_validate);
-    m.register_fn("notebook-convert-sync", notebook::notebook_convert_sync);
+    m.register_fn("notebook-convert-sync!", notebook::notebook_convert_sync);
     m.register_fn("notebook-cell-count", notebook::notebook_cell_count);
     m.register_fn("notebook-get-cell-code", notebook::notebook_get_cell_code);
     m.register_fn("get-cell-at-line", notebook::get_cell_at_line);
     m.register_fn("get-cell-code-from-jl", notebook::get_cell_code_from_jl);
     m.register_fn("list-jl-code-cells", notebook::list_jl_code_cells);
-    m.register_fn("convert-to-ipynb", notebook::convert_to_ipynb);
-    m.register_fn("export-to-markdown", notebook::export_to_markdown);
-    m.register_fn("export-to-typst", notebook::export_to_typst);
+    m.register_fn("scan-variable-definition", notebook::scan_variable_definition);
+    m.register_fn("convert-to-ipynb!", notebook::convert_to_ipynb);
+    m.register_fn("export-to-markdown!", notebook::export_to_markdown);
+    m.register_fn("export-to-typst!", notebook::export_to_typst);
     m.register_fn("format-math", math_format::format_math);
 
     // ── Execution ─────────────────────────────────────────────────────────────
@@ -111,14 +112,14 @@ fn build_module() -> FFIModule {
     );
 
     // ── File I/O & utilities ─────────────────────────────────────────────────
-    m.register_fn("write-string-to-file", write_string_to_file);
+    m.register_fn("write-string-to-file!", write_string_to_file);
     m.register_fn("path-exists", path_exists);
     m.register_fn("read-file-tail", read_file_tail);
     m.register_fn("resolve-symlink-dir", resolve_symlink_dir);
     m.register_fn("sleep-ms", sleep_ms);
 
     // ── Image cache persistence ──────────────────────────────────────────────
-    m.register_fn("save-image-to-cache", save_image_to_cache);
+    m.register_fn("save-image-to-cache!", save_image_to_cache);
     m.register_fn("load-image-from-cache", load_image_from_cache);
 
     // ── Braille chart rendering ───────────────────────────────────────────
@@ -131,7 +132,11 @@ fn build_module() -> FFIModule {
         unicode::unicode_completions_for_prefix,
     );
     m.register_fn("latex-overlays", unicode::latex_overlays);
-    m.register_fn("set-math-layout-hide", unicode::set_math_layout_hide);
+    m.register_fn(
+        "latex-overlays-with-options",
+        unicode::latex_overlays_with_options,
+    );
+    m.register_fn("parse-math-spans", unicode::parse_math_spans_json);
     m.register_fn(
         "compute-conceal-overlays-ffi",
         unicode::compute_conceal_overlays,
@@ -141,12 +146,17 @@ fn build_module() -> FFIModule {
         unicode::compute_conceal_overlays_for_comments,
     );
     m.register_fn(
+        "compute-conceal-overlays-for-comments-with-options",
+        unicode::compute_conceal_overlays_for_comments_with_options,
+    );
+    m.register_fn(
         "compute-conceal-overlays-for-typst",
         unicode::typst_conceal::typst_overlays_to_tsv,
     );
 
     // ── Error formatting ─────────────────────────────────────────────
     m.register_fn("format-julia-error", format_julia_error);
+    m.register_fn("format-julia-error-with-notebook", format_julia_error_with_notebook);
 
     // ── LSP environment ───────────────────────────────────────────────
     m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
@@ -160,7 +170,27 @@ fn build_module() -> FFIModule {
 // ─── Error formatting ─────────────────────────────────────────────────────────
 
 fn format_julia_error(error_json: String, raw_error: String) -> String {
-    error_format::format_error(&error_json, &raw_error)
+    error_format::format_error(&error_format::FormatContext {
+        error_json: &error_json,
+        raw_error: &raw_error,
+        notebook_path: None,
+    })
+}
+
+/// Like `format_julia_error` but also takes the notebook `.jl` path so
+/// UndefVarError messages can be enriched by the static-scan enricher
+/// — "variable `t` is defined in @cell N (later in the notebook), move
+/// it up" instead of the generic "check spelling" hint.
+fn format_julia_error_with_notebook(
+    error_json: String,
+    raw_error: String,
+    jl_path: String,
+) -> String {
+    error_format::format_error(&error_format::FormatContext {
+        error_json: &error_json,
+        raw_error: &raw_error,
+        notebook_path: if jl_path.is_empty() { None } else { Some(&jl_path) },
+    })
 }
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────

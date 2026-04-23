@@ -95,11 +95,24 @@ function lookup_variable_context(var_names)::Dict{String, Any}
             src_idx = VARIABLE_SOURCES[sym]
             if haskey(CELLS, src_idx)
                 src_cell = CELLS[src_idx]
-                context[string(sym)] = Dict{String, Any}(
-                    "defined_in_cell" => src_idx,
-                    "cell_status" => string(src_cell.status),
-                    "was_executed" => src_cell.status in (:done, :error),
-                )
+                # Wire format matches the Rust `VarContext` enum's
+                # `#[serde(tag = "source")]` discriminator. Cells in
+                # :done/:error status carry `status`; pending cells
+                # (shouldn't normally land here since VARIABLE_SOURCES
+                # is populated on execute, but handle defensively) use
+                # the pending_registered variant.
+                context[string(sym)] = if src_cell.status in (:done, :error)
+                    Dict{String, Any}(
+                        "source" => "executed",
+                        "defined_in_cell" => src_idx,
+                        "status" => string(src_cell.status),
+                    )
+                else
+                    Dict{String, Any}(
+                        "source" => "pending_registered",
+                        "defined_in_cell" => src_idx,
+                    )
+                end
             end
         end
     end

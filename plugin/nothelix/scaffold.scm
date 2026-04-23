@@ -38,7 +38,7 @@
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
-                          write-string-to-file
+                          write-string-to-file!
                           path-exists))
 
 (provide notebook-file?
@@ -551,7 +551,7 @@
          "\n"
          "@cell 1 :julia\n"
          "\n"))
-     (define err (write-string-to-file path template))
+     (define err (write-string-to-file! path template))
      (cond
        [(> (string-length err) 0)
         (set-status! (string-append "nothelix: failed to create notebook: " err))]
@@ -562,7 +562,7 @@
         (define project-toml "Project.toml")
         (cond
           [(string=? (path-exists project-toml) "no")
-           (write-string-to-file project-toml
+           (write-string-to-file! project-toml
              (string-append
                "[deps]\n"
                "CellMarkers = \"019d8495-069e-72c6-9285-251bb2f95da1\"\n"

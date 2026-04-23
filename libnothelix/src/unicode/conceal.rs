@@ -13,7 +13,7 @@
 use serde_json::json;
 
 use super::math_regions::find_math_regions;
-use super::scanner::{latex_overlays, scan_to_vec};
+use super::scanner::{latex_overlays, scan_to_vec_opts, ScannerOptions};
 
 /// Scan an entire document for math regions and return a JSON array of
 /// `{"offset": char_off, "replacement": str}` pairs.
@@ -73,6 +73,18 @@ pub fn compute_conceal_overlays(text: String) -> String {
 /// Returns tab-separated format: `"char_offset\treplacement\n..."`
 /// All offsets are CHAR offsets (not byte offsets).
 pub fn compute_conceal_overlays_for_comments(text: String) -> String {
+    compute_conceal_overlays_for_comments_with_options(text, false)
+}
+
+/// Variant of [`compute_conceal_overlays_for_comments`] with
+/// caller-chosen scanner options. Exposed as the `-with-options` FFI so
+/// the math-render plugin can pass `hide_math_layout=true` per-call
+/// without a process-global flag.
+pub fn compute_conceal_overlays_for_comments_with_options(
+    text: String,
+    hide_math_layout: bool,
+) -> String {
+    let opts = ScannerOptions { hide_math_layout };
     let byte_to_char = build_byte_to_char_map(&text);
     let doc_char_len = text.chars().count();
     let mut out = String::new();
@@ -163,7 +175,7 @@ pub fn compute_conceal_overlays_for_comments(text: String) -> String {
                 }
 
                 // Scan the joined block as a single math unit
-                for (overlay_offset, replacement) in scan_to_vec(&joined) {
+                for (overlay_offset, replacement) in scan_to_vec_opts(&joined, opts) {
                     // Map overlay offset in joined string → document byte offset
                     let doc_offset = map_joined_offset(&offset_map, overlay_offset);
                     emit(doc_offset, &replacement);
@@ -233,7 +245,7 @@ pub fn compute_conceal_overlays_for_comments(text: String) -> String {
 
             // Emit overlays for the math content.
             let math_text = &content[region_start..region_end];
-            for (offset, replacement) in scan_to_vec(math_text) {
+            for (offset, replacement) in scan_to_vec_opts(math_text, opts) {
                 emit(content_byte_start + region_start + offset, &replacement);
             }
         }

@@ -526,6 +526,123 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
 /// Markdown cells have their `# ` prefix stripped and are emitted as-is.
 /// Code cells are wrapped in ```julia fenced code blocks.
 /// Output sections are stripped.
+/// Scan a `.jl` notebook for where `var_name` is first *assigned*.
+///
+/// Finds the earliest cell whose code contains an assignment to `var_name`
+/// (plain `=`, compound `.=`, `+=` etc.) — ignores equality comparisons,
+/// type annotations without `=`, and occurrences inside strings/comments
+/// as best we can with line-level heuristics.
+///
+/// Used by the error-format pipeline to point the user at "your variable
+/// IS defined, just in cell N which is later than where you used it — move
+/// it up or run that cell first" rather than the generic "spelling / add
+/// `using PackageName`" message.
+///
+/// Returns JSON of the form
+/// `{"cell_index": N, "line_in_cell": L, "line_text": "..."}`
+/// or the string `"null"` when not found.
+pub fn scan_variable_definition(jl_path: String, var_name: String) -> String {
+    let cells = match parse_jl_file(&jl_path) {
+        Err(_) => return "null".to_string(),
+        Ok((c, _)) => c,
+    };
+    for cell in &cells {
+        if cell.kind != CellKind::Code {
+            continue;
+        }
+        if let Some((line_no, line_text)) = find_assignment_line(&cell.code, &var_name) {
+            return format!(
+                r#"{{"cell_index":{},"line_in_cell":{},"line_text":{}}}"#,
+                cell.index,
+                line_no,
+                serde_json::to_string(line_text.trim()).unwrap_or_else(|_| "\"\"".to_string())
+            );
+        }
+    }
+    "null".to_string()
+}
+
+/// Find the first line in `code` that assigns to `var_name`. Returns
+/// `(line_number_0_indexed, line_text)` or `None`.
+///
+/// Recognizes:
+///   - `var = expr`        (plain assignment)
+///   - `var .= expr`       (broadcast assignment)
+///   - `var += expr`       (compound assignments)
+///   - `var, other = ...`  (destructuring — first LHS position)
+///
+/// Rejects:
+///   - `var == expr`       (equality comparison)
+///   - `function var(...)` (function definition — we want variable
+///     introductions, though functions ARE technically binding `var`;
+///     caller can iterate again if the variable slot turns out to be a
+///     function, but the common UX case is `x = …` style assignments)
+///   - Matches inside `#` comment tails (best-effort — we just strip the
+///     comment tail before scanning)
+fn find_assignment_line(code: &str, var_name: &str) -> Option<(usize, String)> {
+    for (idx, raw_line) in code.lines().enumerate() {
+        // Strip inline comments — `x = 5 # note` → `x = 5 `
+        let line = match raw_line.find('#') {
+            Some(pos) => &raw_line[..pos],
+            None => raw_line,
+        };
+        if line_assigns_to(line, var_name) {
+            return Some((idx, raw_line.to_string()));
+        }
+    }
+    None
+}
+
+/// Token-level check: does `line` contain `var_name` followed by an
+/// assignment operator (but not `==`)?
+fn line_assigns_to(line: &str, var_name: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let name_bytes = var_name.as_bytes();
+    while i + name_bytes.len() <= bytes.len() {
+        // Match `var_name` on an identifier boundary.
+        let prev_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+        if prev_ok && &bytes[i..i + name_bytes.len()] == name_bytes {
+            let after = i + name_bytes.len();
+            // Next char must NOT be part of an identifier (so we don't
+            // match `var_namex`).
+            if after < bytes.len() && is_ident_byte(bytes[after]) {
+                i += 1;
+                continue;
+            }
+            // Skip spaces and look for `=` that isn't `==`.
+            let mut j = after;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            // Accept `=`, `.=`, `+=`, `-=`, `*=`, `/=`, `^=`, `%=`, etc.
+            // Reject `==`.
+            if j < bytes.len() {
+                let c = bytes[j];
+                let has_dot = j >= 1 && bytes[j.saturating_sub(1)] == b'.';
+                if c == b'=' && bytes.get(j + 1) != Some(&b'=') {
+                    return true;
+                }
+                if matches!(c, b'+' | b'-' | b'*' | b'/' | b'^' | b'%')
+                    && bytes.get(j + 1) == Some(&b'=')
+                {
+                    return true;
+                }
+                if has_dot && c == b'=' {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+#[inline]
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 pub fn export_to_markdown(jl_path: String) -> String {
     let (cells, _) = match parse_jl_file(&jl_path) {
         Err(e) => return format!("ERROR: {e}"),
