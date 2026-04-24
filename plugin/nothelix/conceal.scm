@@ -30,7 +30,8 @@
          clear-conceal!
          apply-conceal-for-cursor!
          schedule-reconceal
-         *math-render-active*)
+         *math-render-active*
+         *math-render-refresh-hook*)
 
 ;; Flag flipped by the math-render plugin when it stages virtual above/
 ;; below rows for big operators and `\frac`. When on, the scanner hides
@@ -38,6 +39,13 @@
 ;; collide. Lives here (not in math-render.scm) so the concealer can
 ;; read it at each scan without a circular require.
 (define *math-render-active* (box #false))
+
+;; Callback the math-render plugin installs so the conceal cycle can
+;; restage its virtual rows against the live buffer without a cyclic
+;; require. Default no-op so this module still works standalone.
+;; See math-render.scm — it sets this to `math-render-buffer-impl`
+;; after defining it.
+(define *math-render-refresh-hook* (box (lambda () #f)))
 
 ;;; ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -189,6 +197,15 @@
 ;; Compute and apply conceal overlays for the current buffer synchronously.
 ;; Tags the cache with the current document fingerprint so later cursor
 ;; moves can validate it.
+;;
+;; When math-render is active we ALSO re-stage the above/below virtual
+;; rows. The annotations are keyed to absolute line numbers — if a user
+;; adds or removes a line, every annotation below the edit sits at the
+;; wrong index until something refreshes it. Previously only `:w`
+;; rebuilt them, so the buffer visibly drifted while typing (operators
+;; gained/lost virtual rows as lines shifted under stale annotations).
+;; Piggy-backing the refresh onto the debounced conceal cycle keeps the
+;; annotations aligned without adding a second timer.
 (define (conceal-math!)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -198,7 +215,9 @@
     [(null? overlays)
      (clear-overlays!)]
     [else
-     (apply-conceal-for-cursor!)]))
+     (apply-conceal-for-cursor!)])
+  (when (unbox *math-render-active*)
+    ((unbox *math-render-refresh-hook*))))
 
 ;;@doc
 ;; Drop both the cache and the view overlays.

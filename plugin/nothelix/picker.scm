@@ -28,7 +28,7 @@
 
 (provide cell-picker)
 
-(struct CellPickerState (cells selected) #:mutable)
+(struct CellPickerState (cells selected digits) #:mutable)
 
 ;; ─── Marker parsing ───────────────────────────────────────────────────────────
 
@@ -178,13 +178,18 @@
 
     ;; Title updates to show which cell index the user is about to
     ;; jump to. Reduces cognitive load: the number lives in one place
-    ;; (the title) rather than cluttering every row.
+    ;; (the title) rather than cluttering every row. While the user is
+    ;; typing a multi-digit jump (e.g. "17"), the partial buffer with
+    ;; a trailing underscore shows what they've typed so far.
     (define selected-cell-idx
       (if (and (>= selected 0) (< selected (length cells)))
           (list-ref (list-ref cells selected) 2)
           0))
+    (define digits (CellPickerState-digits state))
     (define title
-      (string-append "Jump to Cell: " (number->string selected-cell-idx)))
+      (if (> (string-length digits) 0)
+          (string-append "Jump to Cell: " digits "_")
+          (string-append "Jump to Cell: " (number->string selected-cell-idx))))
     (frame-set-string! buf (+ x 2) y title text-style)
 
     ;; Each row shows the label (if present), or falls back to the
@@ -221,51 +226,104 @@
               (frame-set-string! buf (+ x list-width 4) (+ y i 1) truncated text-style)
               (loop (+ i 1)))))))))
 
+;; Find the list position of the first cell whose @cell N index equals
+;; `idx`, or #f if none. Used to preview-select as the user types a
+;; multi-digit jump target.
+(define (find-row-for-cell-index cells idx)
+  (let loop ([i 0])
+    (cond
+      [(>= i (length cells)) #f]
+      [(= (list-ref (list-ref cells i) 2) idx) i]
+      [else (loop (+ i 1))])))
+
+(define (jump-to-row cells row)
+  (when (and (>= row 0) (< row (length cells)))
+    (let* ([cell (list-ref cells row)]
+           [line-num (list-ref cell 0)])
+      ;; line-num is 0-indexed, helix.goto expects 1-indexed
+      (helix.goto (number->string (+ line-num 1))))))
+
 (define (handle-cell-picker-event state event)
   (let* ([cells (CellPickerState-cells state)]
          [selected (CellPickerState-selected state)]
-         [char (key-event-char event)])
+         [digits (CellPickerState-digits state)]
+         [char (key-event-char event)]
+         [digit-value (and char (char->number char))])
     (cond
       [(or (key-event-escape? event) (eqv? char #\q))
+       (set-CellPickerState-digits! state "")
        event-result/close]
+
+      ;; j/k navigate. Any navigation clears the digit buffer so the
+      ;; user's next digit press starts a fresh jump target rather
+      ;; than appending to a stale prefix.
       [(eqv? char #\j)
+       (set-CellPickerState-digits! state "")
        (when (< selected (- (length cells) 1))
          (set-CellPickerState-selected! state (+ selected 1)))
        event-result/consume]
       [(eqv? char #\k)
+       (set-CellPickerState-digits! state "")
        (when (> selected 0)
          (set-CellPickerState-selected! state (- selected 1)))
        event-result/consume]
+
+      ;; Digit press: append to buffer, preview-select the cell whose
+      ;; index matches the buffer (if any). Does NOT jump immediately
+      ;; — user confirms with Enter. This lets cells >9 be reached by
+      ;; typing multiple digits (e.g. "17" for cell 17); previously
+      ;; single-digit-only handling capped jumps at cell 9.
+      [digit-value
+       (let* ([new-buf (string-append digits (list->string (list char)))]
+              [num (string->number new-buf)]
+              [match-row (and num (find-row-for-cell-index cells num))])
+         (set-CellPickerState-digits! state new-buf)
+         (when match-row
+           (set-CellPickerState-selected! state match-row))
+         event-result/consume)]
+
+      ;; Enter commits. If the digit buffer is non-empty, jump to the
+      ;; cell whose index matches the buffer; otherwise jump to the
+      ;; currently-highlighted row (j/k selection).
       [(key-event-enter? event)
-       (when (< selected (length cells))
-         (let* ([cell (list-ref cells selected)]
-                [line-num (list-ref cell 0)])
-           ;; line-num is 0-indexed, helix.goto expects 1-indexed
-           (helix.goto (number->string (+ line-num 1)))))
+       (cond
+         [(> (string-length digits) 0)
+          (let* ([num (string->number digits)]
+                 [row (and num (find-row-for-cell-index cells num))])
+            (when row (jump-to-row cells row)))]
+         [else (jump-to-row cells selected)])
+       (set-CellPickerState-digits! state "")
        event-result/close]
+
+      ;; Any other key resets the digit buffer so a stray keypress
+      ;; doesn't leave a half-typed target lying around.
       [else
-       ;; Digit press: match the cell's actual @cell N index, not the
-       ;; list position. Pressing 0 jumps to cell index 0, pressing 3
-       ;; jumps to cell index 3, etc. Previous code did
-       ;; `(list-ref cells (- num 1))` which mapped digit 1 → cell
-       ;; index 0, off by one from what the user sees in the picker.
-       (let ([num (char->number (or char #\null))])
-         (if num
-             (let loop ([i 0])
-               (cond
-                 [(>= i (length cells)) event-result/consume]
-                 [(= (list-ref (list-ref cells i) 2) num)
-                  (let ([line-num (list-ref (list-ref cells i) 0)])
-                    (helix.goto (number->string (+ line-num 1))))
-                  event-result/close]
-                 [else (loop (+ i 1))]))
-             event-result/consume))])))
+       (set-CellPickerState-digits! state "")
+       event-result/consume])))
 
 (define (make-cell-picker-component)
+  (define cells (get-all-cells))
   (new-component! "cell-picker"
-    (CellPickerState (get-all-cells) 0)
+    (CellPickerState cells (initial-selection cells) "")
     render-cell-picker
     (hash "handle_event" handle-cell-picker-event)))
+
+;;@doc
+;; Pick the cell to highlight when the picker opens. Walks the cells
+;; list once; picks the last cell whose marker line is <= cursor line
+;; (i.e. the cell you're currently "inside"). Falls back to 0 when the
+;; cursor is above every marker or the buffer has no cells.
+(define (initial-selection cells)
+  (cond
+    [(null? cells) 0]
+    [else
+     (define cursor (current-line-number))
+     (let loop ([i 0] [best 0])
+       (cond
+         [(>= i (length cells)) best]
+         [(<= (car (list-ref cells i)) cursor)
+          (loop (+ i 1) i)]
+         [else best]))]))
 
 ;;@doc
 ;; Open interactive cell picker

@@ -1,6 +1,6 @@
 module CellRegistry
 
-export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies
+export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type
 
 # Cell state structure
 mutable struct Cell
@@ -27,12 +27,19 @@ Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(
 const CELLS = Dict{Int, Cell}()
 const VARIABLE_SOURCES = Dict{Symbol, Int}()  # Which cell defines each variable
 const VARIABLE_USERS = Dict{Symbol, Set{Int}}()  # var → set of cell indices that use it
+# Runtime type snapshot. Populated by the cell macro/executor after each
+# successful run with `string(typeof(value))` of every symbol in
+# `cell.defines`. Stale entries linger when a cell is re-run and no
+# longer defines a variable — acceptable because the hints that consume
+# this map tolerate "historical" info.
+const VARIABLE_TYPES = Dict{Symbol, String}()
 
 # Clear registry (useful for testing)
 function clear_registry()
     empty!(CELLS)
     empty!(VARIABLE_SOURCES)
     empty!(VARIABLE_USERS)
+    empty!(VARIABLE_TYPES)
 end
 
 # Get cells that this cell depends on
@@ -125,6 +132,26 @@ Return cell indices that this cell depends on but haven't been executed.
 function unexecuted_dependencies(cell_idx::Int)::Vector{Int}
     deps = get_dependencies(cell_idx)
     filter(d -> haskey(CELLS, d) && CELLS[d].status ∉ (:done,), deps)
+end
+
+"""
+Group currently-known variable types for the error enricher. Returns
+`Dict{type_string => [{"name", "cell"}, …]}` so Rust can answer
+"which in-scope variables have type T?" with one map lookup per type
+parsed out of a MethodError signature.
+"""
+function in_scope_variables_by_type()::Dict{String, Vector{Dict{String, Any}}}
+    out = Dict{String, Vector{Dict{String, Any}}}()
+    for (sym, typ) in VARIABLE_TYPES
+        haskey(VARIABLE_SOURCES, sym) || continue
+        src_idx = VARIABLE_SOURCES[sym]
+        entry = Dict{String, Any}(
+            "name" => string(sym),
+            "cell" => src_idx,
+        )
+        push!(get!(() -> Dict{String, Any}[], out, typ), entry)
+    end
+    out
 end
 
 end # module

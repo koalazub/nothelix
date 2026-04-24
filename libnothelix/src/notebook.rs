@@ -20,8 +20,102 @@
 //! ```
 
 use std::fs;
+use std::path::Path;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
+
+/// Look for a plot that nothelix cached from an earlier execution of
+/// `cell_index` (`.nothelix/images/cell-N.png` next to the notebook) and
+/// build a Jupyter `display_data` output carrying its base64 PNG. Used
+/// on `.jl → .ipynb` sync so plots the user ran in nothelix survive in
+/// the portable .ipynb output. Returns `None` when no sidecar file exists.
+/// Turn a markdown cell's `# @image <path>` markers into an
+/// `attachments` map keyed by filename and rewrite the cell source to
+/// reference them via `![](attachment:filename)`. Each successfully-
+/// read image contributes one `{image/png: "<base64>"}` entry. Files
+/// that can't be read are skipped silently — the user's source stays
+/// unchanged for those, so the `.jl` can still render them via the
+/// sidecar marker even if the `.ipynb` form can't embed them.
+fn embed_markdown_attachments(
+    markdown_body: &str,
+    image_paths: &[String],
+    jl_path: &str,
+) -> (String, Value) {
+    if image_paths.is_empty() {
+        return (markdown_body.to_string(), json!({})); // sentinel empty — caller discards
+    }
+
+    let parent = Path::new(jl_path).parent();
+    let mut attachments = serde_json::Map::new();
+    let mut image_lines = Vec::new();
+
+    for raw_path in image_paths {
+        let path_obj = parent
+            .map(|p| p.join(raw_path))
+            .unwrap_or_else(|| Path::new(raw_path).to_path_buf());
+        let bytes = match fs::read(&path_obj) {
+            Ok(b) if !b.is_empty() => b,
+            _ => continue,
+        };
+        let filename = Path::new(raw_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| raw_path.clone());
+        let mime = mime_for_extension(&filename);
+        let b64 = BASE64.encode(&bytes);
+        let mut mime_map = serde_json::Map::new();
+        mime_map.insert(mime.to_string(), Value::String(b64));
+        attachments.insert(filename.clone(), Value::Object(mime_map));
+        image_lines.push(format!("![]({})", format!("attachment:{filename}")));
+    }
+
+    if attachments.is_empty() {
+        return (markdown_body.to_string(), json!({}));
+    }
+
+    // Inject the image refs at the end of the markdown body, separated
+    // by a blank line so they render on their own paragraph.
+    let mut body = markdown_body.trim_end().to_string();
+    body.push_str("\n\n");
+    body.push_str(&image_lines.join("\n"));
+    (body, Value::Object(attachments))
+}
+
+fn mime_for_extension(filename: &str) -> &'static str {
+    let lower = filename.to_lowercase();
+    if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn read_sidecar_image_output(jl_path: &str, cell_index: isize) -> Option<Value> {
+    let parent = Path::new(jl_path).parent()?;
+    let img_path = parent
+        .join(".nothelix")
+        .join("images")
+        .join(format!("cell-{cell_index}.png"));
+    let bytes = fs::read(&img_path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let b64 = BASE64.encode(&bytes);
+    Some(json!({
+        "output_type": "display_data",
+        "data": {"image/png": b64},
+        "metadata": {}
+    }))
+}
 
 // ─── Cell types ───────────────────────────────────────────────────────────────
 
@@ -40,6 +134,13 @@ pub struct JlCell {
     /// Trailing comment from the marker line, e.g. "# Q1" from "@markdown 3 # Q1".
     /// Prepended to cell code during export so it appears in the ipynb.
     pub marker_comment: String,
+    /// Paths from `# @image <path>` markers inside this cell's body.
+    /// Stripped from `code` (the kernel doesn't need them as literal
+    /// comments, and in markdown they'd render as `@image foo.png`
+    /// prose), but preserved here so `convert_to_ipynb` can lift them
+    /// into portable forms — `display_data` outputs on code cells or
+    /// base64 `attachments` on markdown cells.
+    pub images: Vec<String>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -117,6 +218,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: String::new(),
+                images: Vec::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@cell ") {
             let rest = rest.trim();
@@ -128,6 +230,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: extract_marker_comment(rest),
+                images: Vec::new(),
             });
         } else if line.trim_end() == "@markdown" {
             cells.push(JlCell {
@@ -136,6 +239,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: String::new(),
+                images: Vec::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@markdown ") {
             let first = rest.split_whitespace().next().unwrap_or("");
@@ -146,6 +250,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: extract_marker_comment(rest),
+                images: Vec::new(),
             });
         } else if line.trim_end() == "@typst" {
             cells.push(JlCell {
@@ -154,6 +259,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: String::new(),
+                images: Vec::new(),
             });
         } else if let Some(rest) = line.strip_prefix("@typst ") {
             let first = rest.split_whitespace().next().unwrap_or("");
@@ -164,6 +270,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 code: String::new(),
                 start_line: i,
                 marker_comment: extract_marker_comment(rest),
+                images: Vec::new(),
             });
         }
     }
@@ -171,13 +278,27 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     // If there's non-empty code before the first cell marker, insert
     // an implicit preamble cell at index -1. This handles `using X`
     // lines at the top of the file that need to execute before any cell.
+    //
+    // `using NothelixMacros` is special-cased out: the converter injects
+    // it so Julia's LanguageServer resolves @cell/@markdown macros
+    // without false "Missing reference" squiggles, but it's not user
+    // code. Letting it become a preamble cell pollutes .ipynb round-
+    // trips — the package only exists in nothelix's bootstrap env, so
+    // running that cell in stock Julia fails with "Package
+    // NothelixMacros not found in current path".
     let first_marker_line = cells.first().map(|c| c.start_line).unwrap_or(lines.len());
     if first_marker_line > 0 {
         let preamble: String = lines[..first_marker_line]
             .iter()
             .filter(|l| {
                 let t = l.trim();
-                !t.is_empty() && !t.starts_with('#')
+                if t.is_empty() || t.starts_with('#') {
+                    return false;
+                }
+                if t == "using NothelixMacros" || t.starts_with("using NothelixMacros ") {
+                    return false;
+                }
+                true
             })
             .cloned()
             .collect::<Vec<_>>()
@@ -191,6 +312,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                     code: preamble,
                     start_line: 0,
                     marker_comment: String::new(),
+                    images: Vec::new(),
                 },
             );
         }
@@ -227,6 +349,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         };
 
         let mut filtered: Vec<&str> = Vec::new();
+        let mut images: Vec<String> = Vec::new();
         let mut in_output = false;
         for line in &lines[code_start..code_end] {
             if line.contains("# ─── Output") {
@@ -242,11 +365,16 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             if is_marker_line(line) {
                 continue;
             }
-            if line.starts_with("# @image ") {
+            if let Some(rest) = line.strip_prefix("# @image ") {
+                let path = rest.trim_end_matches('\r').trim();
+                if !path.is_empty() {
+                    images.push(path.to_string());
+                }
                 continue;
             }
             filtered.push(line);
         }
+        cells[ci].images = images;
 
         // Trim trailing blank lines.
         while filtered
@@ -452,40 +580,103 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
 
     let orig_cells = original["cells"].as_array().cloned().unwrap_or_default();
 
+    let make_source_lines = |text: &str| -> Value {
+        let line_count = text.lines().count();
+        let lines: Vec<Value> = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| {
+                let mut s = l.to_string();
+                if i < line_count.saturating_sub(1) {
+                    s.push('\n');
+                }
+                Value::String(s)
+            })
+            .collect();
+        Value::Array(lines)
+    };
+
+    // Markdown cells carry "# " on every line in the .jl form; strip it
+    // to recover the raw markdown source for the .ipynb.
+    let jl_to_ipynb_source = |cell: &JlCell| -> String {
+        if cell.kind == CellKind::Markdown || cell.kind == CellKind::Typst {
+            cell.code
+                .lines()
+                .map(|l| l.strip_prefix("# ").unwrap_or(l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            cell.code.clone()
+        }
+    };
+
+    // Round-trip integrity guard. Keep the orig cell's metadata +
+    // outputs + execution_count ONLY when the orig at `cell.index`
+    // plausibly describes the SAME cell the user has in the .jl:
+    //   1. same cell_type (code ↔ code, markdown ↔ markdown),
+    //   2. same trimmed source (insensitive to trailing whitespace).
+    //
+    // If either check fails the cell is treated as fresh, so we don't
+    // attach stale outputs from the orig .ipynb to a cell whose code
+    // has since been edited (or to a cell that was reordered and whose
+    // index now lands on a different orig). Index is a positional
+    // fallback — after `renumber-cells!` or a reorder, matching by
+    // content is what actually tells us if the orig is still valid.
+    let orig_is_valid_for = |orig: &Value, cell: &JlCell| -> bool {
+        let orig_type = orig.get("cell_type").and_then(|v| v.as_str()).unwrap_or("");
+        let expected_type = if matches!(cell.kind, CellKind::Markdown | CellKind::Typst) {
+            "markdown"
+        } else {
+            "code"
+        };
+        if orig_type != expected_type {
+            return false;
+        }
+        let orig_source = source_to_string(&orig["source"]);
+        let new_source = jl_to_ipynb_source(cell);
+        orig_source.trim() == new_source.trim()
+    };
+
     let new_cells: Vec<Value> = cells
         .iter()
         .map(|cell| {
-            let orig = orig_cells.get(cell.index as usize).cloned();
-
-            let make_source_lines = |text: &str| -> Value {
-                let line_count = text.lines().count();
-                let lines: Vec<Value> = text
-                    .lines()
-                    .enumerate()
-                    .map(|(i, l)| {
-                        let mut s = l.to_string();
-                        if i < line_count.saturating_sub(1) {
-                            s.push('\n');
-                        }
-                        Value::String(s)
-                    })
-                    .collect();
-                Value::Array(lines)
-            };
+            let source_text = jl_to_ipynb_source(cell);
+            let orig = orig_cells
+                .get(cell.index as usize)
+                .cloned()
+                .filter(|o| orig_is_valid_for(o, cell));
 
             if cell.kind == CellKind::Markdown || cell.kind == CellKind::Typst {
-                // Strip leading "# " comment prefix from each line.
-                let md: String = cell
-                    .code
-                    .lines()
-                    .map(|l| l.strip_prefix("# ").unwrap_or(l))
-                    .collect::<Vec<_>>()
-                    .join("\n");
                 let mut c = orig.unwrap_or_else(
                     || json!({"cell_type": "markdown", "metadata": {}, "source": []}),
                 );
                 c["cell_type"] = json!("markdown");
-                c["source"] = make_source_lines(&md);
+
+                // Embed every `# @image <path>` marker the cell held as
+                // a base64 `attachments` entry, and rewrite the source
+                // to reference them via `attachment:filename` — Jupyter's
+                // native convention for in-cell image embedding. The
+                // .ipynb becomes self-contained: shareable as a gist,
+                // openable in vanilla Jupyter, readable on GitHub.
+                let (markdown_body, attachments) =
+                    embed_markdown_attachments(&source_text, &cell.images, &jl_path);
+                c["source"] = make_source_lines(&markdown_body);
+                let has_attachments = attachments
+                    .as_object()
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false);
+                if has_attachments {
+                    c["attachments"] = attachments;
+                }
+
+                // Markdown cells don't carry execution_count or outputs
+                // in the Jupyter spec; if the orig had them (e.g. the
+                // cell was a code cell before), drop them so the .ipynb
+                // stays conformant.
+                if let Some(obj) = c.as_object_mut() {
+                    obj.remove("execution_count");
+                    obj.remove("outputs");
+                }
                 c
             } else {
                 let mut c = orig.unwrap_or_else(|| {
@@ -498,7 +689,24 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
                     })
                 });
                 c["cell_type"] = json!("code");
-                c["source"] = make_source_lines(&cell.code);
+                c["source"] = make_source_lines(&source_text);
+                if let Some(obj) = c.as_object_mut() {
+                    obj.entry("execution_count").or_insert(json!(null));
+                    obj.entry("outputs").or_insert(json!([]));
+                }
+
+                // Embed any plot the user generated in nothelix for this
+                // cell (`.nothelix/images/cell-N.png` next to the .jl)
+                // as a `display_data` output with base64 PNG. Keeps the
+                // .ipynb self-contained — opened in vanilla Jupyter (or
+                // pushed to GitHub) the plot shows without needing the
+                // sidecar `.nothelix/images/` directory. Replaces prior
+                // outputs because nothelix's saved image is the most
+                // recent result for this cell.
+                if let Some(image_output) = read_sidecar_image_output(&jl_path, cell.index) {
+                    c["outputs"] = json!([image_output]);
+                }
+
                 c
             }
         })
@@ -925,6 +1133,308 @@ mod tests {
         assert_eq!(nb["cells"].as_array().unwrap().len(), 4);
         assert_eq!(nb["cells"][0]["cell_type"], "code");
         assert_eq!(nb["cells"][2]["cell_type"], "markdown");
+    }
+
+    #[test]
+    fn preamble_filter_drops_nothelix_macros_pragma() {
+        // The converter injects `using NothelixMacros` as an LSP-
+        // visibility pragma at the top of the .jl. That line is not
+        // user code — it MUST NOT be turned into a synthesized
+        // preamble cell, or the resulting .ipynb will have a cell that
+        // fails to run in stock Julia ("Package NothelixMacros not
+        // found").
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let jl_path = tmp.path().with_extension("jl");
+        let src = "using NothelixMacros  # cell markers for static checking\n\n\
+                   # ═══ Nothelix Notebook: example.ipynb ═══\n# Cells: 1\n\n\
+                   @cell 0 :julia\nx = 1\n";
+        std::fs::write(&jl_path, src).unwrap();
+        let (cells, _) = parse_jl_file(&jl_path.to_string_lossy()).unwrap();
+        assert_eq!(cells.len(), 1, "should not emit preamble cell for pragma-only preamble, got: {}", cells.len());
+        assert_eq!(cells[0].index, 0);
+        assert_eq!(cells[0].code, "x = 1");
+    }
+
+    #[test]
+    fn preamble_filter_keeps_real_user_preamble() {
+        // User code that lives above the first @cell marker should
+        // still round-trip through an index=-1 preamble cell. The
+        // filter must only drop nothelix's own pragma, not arbitrary
+        // user `using ...` lines.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let jl_path = tmp.path().with_extension("jl");
+        let src = "using NothelixMacros\nconst MY_CONST = 42\nusing LinearAlgebra\n\n\
+                   @cell 0 :julia\nA = I\n";
+        std::fs::write(&jl_path, src).unwrap();
+        let (cells, _) = parse_jl_file(&jl_path.to_string_lossy()).unwrap();
+        assert_eq!(cells.len(), 2, "expected preamble cell + @cell 0, got {} cells", cells.len());
+        assert_eq!(cells[0].index, -1);
+        assert!(cells[0].code.contains("const MY_CONST = 42"));
+        assert!(cells[0].code.contains("using LinearAlgebra"));
+        assert!(!cells[0].code.contains("NothelixMacros"), "pragma must not leak into preamble cell");
+    }
+
+    #[test]
+    fn convert_to_ipynb_drops_stale_outputs_when_code_edited() {
+        // Round-trip integrity: if a code cell's source was edited in
+        // the .jl after the .ipynb was last written, the orig's
+        // `outputs`/`execution_count` are stale and must not be carried
+        // forward. Otherwise the .ipynb claims a stale output is the
+        // current result of code that's since been changed.
+        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "code",
+                "execution_count": 7,
+                "metadata": {},
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": "stale output\n"}],
+                "source": ["old_code = 1\n"]
+            }]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_path = tmp_ipynb.with_extension("jl");
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@cell 0 :julia\nnew_code = 2\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(cell["source"][0].as_str().unwrap(), "new_code = 2");
+        // Code changed → orig's outputs/execution_count are stale → must be cleared.
+        assert!(cell["outputs"].as_array().unwrap().is_empty(), "stale outputs should be dropped, got: {cell}");
+        assert!(cell["execution_count"].is_null(), "stale execution_count should be cleared, got: {cell}");
+    }
+
+    #[test]
+    fn convert_to_ipynb_preserves_outputs_when_code_unchanged() {
+        // The flip side: if the orig cell's source matches the .jl
+        // cell's source exactly (trimmed), orig's outputs and
+        // execution_count ARE still valid and should survive round-trip.
+        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "code",
+                "execution_count": 7,
+                "metadata": {"tags": ["important"]},
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": "hi\n"}],
+                "source": ["x = 1\n"]
+            }]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_path = tmp_ipynb.with_extension("jl");
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@cell 0 :julia\nx = 1\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(cell["execution_count"].as_i64(), Some(7), "execution_count should survive: {cell}");
+        assert_eq!(cell["metadata"]["tags"][0].as_str(), Some("important"), "metadata should survive: {cell}");
+        assert_eq!(cell["outputs"].as_array().unwrap().len(), 1, "outputs should survive: {cell}");
+    }
+
+    #[test]
+    fn convert_to_ipynb_clears_code_fields_when_turned_into_markdown() {
+        // Cell-type change: orig was code (has outputs/execution_count),
+        // user converted to markdown in .jl. Resulting markdown cell
+        // must not carry those now-meaningless fields.
+        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "code",
+                "execution_count": 3,
+                "metadata": {},
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": "old\n"}],
+                "source": ["println(\"old\")\n"]
+            }]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_path = tmp_ipynb.with_extension("jl");
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@markdown 0\n# Now a heading\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(cell["cell_type"].as_str(), Some("markdown"));
+        assert!(cell.get("outputs").is_none(), "markdown cell should not have outputs: {cell}");
+        assert!(cell.get("execution_count").is_none(), "markdown cell should not have execution_count: {cell}");
+    }
+
+    #[test]
+    fn convert_to_ipynb_embeds_nothelix_image_sidecar() {
+        // User workflow: executes a plot-producing cell in nothelix, the
+        // kernel writes .nothelix/images/cell-5.png, then they :sync-to-
+        // ipynb. The resulting .ipynb should carry the plot as a
+        // display_data base64 PNG so the notebook stays portable —
+        // opened in vanilla Jupyter or pushed to a repo, the image
+        // still renders without the sidecar directory.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let dir = tmp_dir.path();
+        let tmp_ipynb = dir.join("nb.ipynb");
+        let jl_path = dir.join("nb.jl");
+
+        // Minimal orig .ipynb — outputs are empty so we can tell the
+        // sidecar is what populated them.
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "code",
+                "execution_count": null,
+                "metadata": {},
+                "outputs": [],
+                "source": ["plot(x, y)\n"]
+            }]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        // Drop a fake PNG into the sidecar dir at cell index 5. The
+        // exact bytes don't matter — we only check the .ipynb round-
+        // trip base64-encodes them.
+        let img_dir = dir.join(".nothelix").join("images");
+        std::fs::create_dir_all(&img_dir).unwrap();
+        let fake_png: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]; // PNG signature
+        std::fs::write(img_dir.join("cell-5.png"), fake_png).unwrap();
+
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@cell 5 :julia\nplot(x, y)\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let outputs = nb["cells"][0]["outputs"].as_array().unwrap();
+        assert_eq!(outputs.len(), 1, "should attach exactly one display_data output, got: {outputs:#?}");
+        assert_eq!(outputs[0]["output_type"].as_str(), Some("display_data"));
+        let b64 = outputs[0]["data"]["image/png"].as_str().unwrap();
+        assert!(!b64.is_empty(), "PNG data should be base64-encoded, got: {b64:?}");
+        // Round-trip: decoded bytes equal the fake PNG we wrote.
+        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        assert_eq!(decoded, fake_png);
+    }
+
+    #[test]
+    fn convert_to_ipynb_embeds_markdown_image_as_attachment() {
+        // User workflow: :insert-image diagram.png inside a markdown
+        // cell. On sync-to-ipynb the image should land as a base64
+        // attachment keyed by filename, with the markdown source
+        // referencing `attachment:diagram.png` — matches Jupyter's
+        // native convention and survives gist/GitHub rendering.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let dir = tmp_dir.path();
+        let tmp_ipynb = dir.join("nb.ipynb");
+        let jl_path = dir.join("nb.jl");
+        let img_path = dir.join("diagram.png");
+
+        let fake_png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        std::fs::write(&img_path, &fake_png).unwrap();
+
+        // Minimal orig .ipynb so convert_to_ipynb has something to read.
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{"cell_type": "markdown", "metadata": {}, "source": []}]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        // Markdown cell body with an @image marker — this is what
+        // :insert-image would produce inside a markdown cell.
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@markdown 0\n# See the figure below.\n# @image diagram.png\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(cell["cell_type"].as_str(), Some("markdown"));
+
+        // attachments.diagram.png.image/png = base64 of fake_png
+        let attachment_b64 = cell["attachments"]["diagram.png"]["image/png"]
+            .as_str()
+            .unwrap_or_else(|| panic!("expected attachments.diagram.png.image/png, got:\n{cell:#?}"));
+        let decoded = base64::engine::general_purpose::STANDARD.decode(attachment_b64).unwrap();
+        assert_eq!(decoded, &fake_png[..]);
+
+        // The markdown body now references attachment:diagram.png.
+        let source_joined: String = cell["source"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            source_joined.contains("![](attachment:diagram.png)"),
+            "expected markdown body to reference the attachment, got:\n{source_joined}"
+        );
+    }
+
+    #[test]
+    fn convert_to_ipynb_skips_missing_image_files() {
+        // If a `# @image` path points at a file that doesn't exist,
+        // don't bail the whole conversion — just skip that attachment
+        // and leave the markdown body unchanged. The `.jl` can still
+        // render via the sidecar marker even if the `.ipynb` can't
+        // embed it.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let dir = tmp_dir.path();
+        let tmp_ipynb = dir.join("nb.ipynb");
+        let jl_path = dir.join("nb.jl");
+
+        let orig = serde_json::json!({
+            "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+            "cells": [{"cell_type": "markdown", "metadata": {}, "source": []}]
+        });
+        std::fs::write(&tmp_ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@markdown 0\n# Some prose.\n# @image vanished.png\n",
+            tmp_ipynb.display()
+        );
+        std::fs::write(&jl_path, jl_content).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert!(cell.get("attachments").is_none(), "no attachment should be written for missing file, got: {cell}");
     }
 
     #[test]

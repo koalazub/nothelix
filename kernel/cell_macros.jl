@@ -58,6 +58,21 @@ macro cell(index, exec_count, body)
         cell.stacktrace = captured.stacktrace
         cell.status = captured.error === nothing ? :done : :error
 
+        # Snapshot runtime types of the variables this cell defined.
+        # Powers the "in-scope variables of type T" MethodError hint
+        # downstream — we can only say "eigenvalues is a
+        # Vector{ComplexF64}" if we recorded that at assignment time.
+        if captured.error === nothing
+            for sym in defines
+                if isdefined(Main, sym)
+                    try
+                        CellRegistry.VARIABLE_TYPES[sym] = string(typeof(getfield(Main, sym)))
+                    catch
+                    end
+                end
+            end
+        end
+
         # Return the captured output (for REPL display)
         if captured.error !== nothing
             rethrow(captured.error)
@@ -120,6 +135,20 @@ function execute_cell(cell_idx::Int, code::String)
     cell.plot_data = captured.plot_data  # Store raw plot data for interactive charts
     cell.error = captured.error
     cell.status = captured.error === nothing ? :done : :error
+
+    # Mirror the @cell-macro path: record typeof for each defined
+    # variable so the MethodError enricher can answer "which variable
+    # in scope is of type T?".
+    if captured.error === nothing
+        for sym in cell.defines
+            if isdefined(Main, sym)
+                try
+                    CellRegistry.VARIABLE_TYPES[sym] = string(typeof(getfield(Main, sym)))
+                catch
+                end
+            end
+        end
+    end
 
     if captured.error !== nothing
         return (success=false, error=captured.error, stacktrace=captured.stacktrace)

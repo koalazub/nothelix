@@ -46,7 +46,77 @@ Removes every file this install placed. Leaves `~/.julia/`, your existing Helix 
 
 Jupyter's browser interface is great for exploration but painful if you live in a terminal. Nothelix lets you edit `.ipynb` files at the speed of modal editing, run cells against a real kernel, and view plot outputs inline without leaving Helix.
 
-Under the hood, a Rust library handles everything performance-sensitive — notebook parsing, kernel IPC, image decoding, Kitty protocol encoding — while Steel, Helix's embedded Scheme, drives the editor integration.
+## Architecture
+
+Nothelix is three moving pieces:
+
+```
+              ┌──────────────────────────────────────────┐
+              │              Forked Helix                │
+              │  (koalazub/helix feature/inline-image-   │
+              │   rendering — adds the fork-only APIs)   │
+              └──────────────┬───────────────────────────┘
+                             │  loads
+              ┌──────────────▼───────────────────────────┐
+              │        plugin/ (Steel / Scheme)          │
+              │   editor commands, keymaps, rendering,   │
+              │   document lifecycle hooks               │
+              └──────────────┬───────────────────────────┘
+                             │  FFI (#%require-dylib)
+              ┌──────────────▼───────────────────────────┐
+              │     libnothelix (Rust cdylib)            │
+              │   notebook parsing, kernel IPC, image    │
+              │   encoding, error enrichment, LSP env    │
+              └──────────────┬───────────────────────────┘
+                             │  spawns + file IPC
+              ┌──────────────▼───────────────────────────┐
+              │        Julia kernel (one per doc)        │
+              │   kernel/*.jl — cell registry,           │
+              │   AST analysis, output capture           │
+              └──────────────────────────────────────────┘
+```
+
+**Rough split.** Rust does everything system-shaped — notebook JSON parsing, kernel process management, image decoding, Kitty protocol encoding, error enrichment, LSP environment bootstrap. Steel does everything editor-shaped — commands, keymaps, picker UI, overlay placement, document-lifecycle hooks. Julia does everything language-shaped — cell execution, dependency tracking, runtime type introspection for error hints.
+
+### Why a fork?
+
+Stock Helix will compile and load nothelix, but three capabilities only exist on [koalazub/helix feature/inline-image-rendering](https://github.com/koalazub/helix/tree/feature/inline-image-rendering):
+
+| Fork addition | What it's for |
+|---|---|
+| **RawContent API** (`helix-view::document::raw_content`) | Document-attached image payloads. The terminal draws them via Kitty's Unicode-placeholder protocol so images survive scrolling and edits. |
+| **Math line annotations** (`Document::math_lines_above/below` + `MathAnnotations` line annotation + decoration) | Virtual rows above/below source lines. Used to stack `\sum`-style limits without touching the underlying text. |
+| **Steel FFI surfaces** (`helix.static.set-math-lines-{above,below}!`, `clear-math-lines!`, image-payload FFIs) | Scheme-callable entry points for both of the above. |
+
+When the plugin runs against stock Helix, image rendering and stacked-math limits silently fall back to placeholders — `with-handler`/`eval` guards in the plugin catch the missing FFIs, so nothing crashes. You just lose those two features.
+
+### The kernel protocol
+
+IPC is file-based JSON. One kernel process per open `.ipynb` / `.jl` document, long-lived until you `:kernel-shutdown`:
+
+1. Steel calls `kernel-execute-cell-start` → libnothelix writes `input.json` (cell code + index) into the kernel's scratch dir.
+2. Kernel watches the scratch dir, reads `input.json`, runs the code through `@cell` (which registers deps, captures output, catches errors).
+3. Kernel writes `output.json` with text/repr output, base64 PNG images, structured error info, and the updated cell registry snapshot.
+4. Steel polls `kernel-poll-result`, reads `output.json`, renders outputs in place and fires image registrations through the fork's RawContent API.
+
+Plots ride as base64 PNGs through Julia's `MIME("image/png")` display system — the kernel doesn't know or care about Kitty; it just writes pixels, and libnothelix handles the wire format.
+
+### Error enrichment
+
+Runtime errors are caught by the kernel and dumped as structured JSON (`kernel/output_capture.jl::extract_structured_error`). libnothelix runs them through a pipeline of `Enricher`s (`libnothelix/src/error_format.rs`) that fold source-context, cross-cell context, and kernel-side type hints into the rendered message:
+
+- **`UndefVarError`** — kernel attaches `cell_context` saying where the variable is/would-be defined. If the kernel hasn't indexed it yet, a static `.jl` scanner in Rust catches the case "defined in a later cell you haven't run yet".
+- **`MethodError`** — kernel snapshots `typeof(value)` of every binding in `VARIABLE_TYPES` on each successful assignment, plus runs `hasmethod(f, Tuple{typeof(val)})` for each in-scope value to find `method_candidates`. Rust's enricher maps the `::T` signatures to in-scope variables and renders a "variables by type" + "candidates" block.
+- **`DimensionMismatch`, `BoundsError`, `ParseError`** — source-line aware enrichers that re-express the error using the user's actual variable names instead of generic `x`/`y` placeholders.
+
+This means an error like `no method matching (Matrix)(::Vector{ComplexF64})` doesn't just echo the type mismatch — it tells you which variable in scope has that stray `Vector{ComplexF64}` and which in-scope value `Matrix()` would have accepted.
+
+### Julia LSP
+
+`lsp/julia-lsp` is a shell wrapper that:
+
+1. Resolves `using LanguageServer` against a nothelix-owned bootstrap env (`~/.local/share/nothelix/lsp/`) — populated once by `ensure-lsp-environment` FFI on plugin first-load.
+2. Forces LanguageServer.jl's analysis env to `~/.julia/environments/v#.#` (the user's default). That env accumulates every package the user has ever `Pkg.add`ed, so hover/completion/goto-def work regardless of which notebook directory they're in. No per-notebook `Project.toml` is created; nothing is littered next to notebooks.
 
 ## Building from source
 

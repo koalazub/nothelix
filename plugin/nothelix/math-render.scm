@@ -175,3 +175,15 @@
 (define (math-render-clear)
   (try-clear-all-math-lines!)
   (set-box! *math-render-active* #false))
+
+;; Install the refresh hook so `conceal-math!` (debounced at 400ms via
+;; schedule-reconceal) restages annotations against the current buffer.
+;; Without this, adding or removing a line leaves math annotations
+;; pinned at stale absolute line indices, and the buffer visibly
+;; drifted as virtual rows appeared at wrong positions. Idempotent:
+;; conceal.scm starts with a no-op; this swap replaces it with the
+;; real restager.
+(set-box! *math-render-refresh-hook*
+          (lambda ()
+            (when (math-render-ffi-available?)
+              (math-render-buffer-impl))))

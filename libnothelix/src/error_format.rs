@@ -196,6 +196,33 @@ pub struct StructuredError {
     pub cell_context: HashMap<String, VarContext>,
     #[serde(default)]
     pub unexecuted_deps: Vec<i64>,
+    /// Runtime type → list of in-scope variables currently of that type.
+    /// Populated by the kernel on MethodError. Empty when the kernel
+    /// isn't running or nothing has been executed yet.
+    #[serde(default)]
+    pub in_scope_variable_types: HashMap<String, Vec<ScopeVarEntry>>,
+    /// In-scope values the failing MethodError's function *does* have
+    /// a method for. Populated for single-arg MethodErrors.
+    #[serde(default)]
+    pub method_candidates: Vec<MethodCandidate>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ScopeVarEntry {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub cell: i64,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct MethodCandidate {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, rename = "type")]
+    pub type_name: String,
+    #[serde(default)]
+    pub cell: i64,
 }
 
 /// Where the formatter learned about a variable's defining cell. Each
@@ -498,7 +525,7 @@ fn enrich_with_source_context(err: &StructuredError) -> Option<String> {
     match err.error_type.as_str() {
         "DimensionMismatch" => enrich_dimension_mismatch(&err.message, src),
         "BoundsError" => enrich_bounds_error(&err.message, src),
-        "MethodError" => enrich_method_error(&err.message, src),
+        "MethodError" => enrich_method_error(&err.message, src, err),
         "ParseError" | "Meta.ParseError" => enrich_parse_error(&err.message, src),
         _ => None,
     }
@@ -575,15 +602,38 @@ fn enrich_bounds_error(message: &str, source: &str) -> Option<String> {
 /// Source:  "B = similar(n, Float64)"
 /// Output:  "   = note: `n` is Int64 — similar() expects an array as the first argument"
 ///          "   = help: try: similar(your_array, Float64, size(your_array))"
-fn enrich_method_error(message: &str, source: &str) -> Option<String> {
-    // Extract the function name from the message
+fn enrich_method_error(message: &str, source: &str, err: &StructuredError) -> Option<String> {
+    // "objects of type T are not callable" is a distinct shape from
+    // "no method matching f(::T)". Route it separately so we can give
+    // the user a concrete answer — "you called a value, here's where
+    // that value was assigned" — instead of silently dropping through
+    // to the generic hint about missing operators.
+    if message.contains("not callable") {
+        return enrich_not_callable(message, source, err);
+    }
+
+    // Extract the function name from the message. Julia writes two forms:
+    //   "matching funcname(::T1, ::T2)"   — ordinary calls
+    //   "matching (TypeName)(::T1, ::T2)" — type constructors (Matrix, Float64…)
+    // The constructor form wraps the callable in parens, which used to
+    // confuse this parser: `find('(')` returned 0, the empty slice before
+    // it became the "name", and the whole enricher bailed, leaving the
+    // user with "no method `` for these argument types".
     let func_name = {
         let idx = message.find("matching ")?;
         let after = &message[idx + 9..];
-        let end = after.find('(')?;
-        let name = after[..end].trim();
-        if name.is_empty() { return None; }
-        name.to_string()
+        let bytes = after.as_bytes();
+        if bytes.first() == Some(&b'(') {
+            let close = find_matching_close(bytes, 0)?;
+            let name = after[1..close].trim();
+            if name.is_empty() { return None; }
+            name.to_string()
+        } else {
+            let end = after.find('(')?;
+            let name = after[..end].trim();
+            if name.is_empty() { return None; }
+            name.to_string()
+        }
     };
 
     // Extract argument types from the message: "matching func(::Type1, ::Type2)"
@@ -613,7 +663,178 @@ fn enrich_method_error(message: &str, source: &str) -> Option<String> {
     out.push_str(&checks.join(", "));
     out.push('\n');
 
+    // Kernel-powered type hints. When the kernel is running and the
+    // user has executed at least one cell, each ::T in the error
+    // signature can point at the in-scope variable that actually has
+    // that type — so instead of "`C_inv = inv(Matrix(C))` failed" the
+    // user sees "`C` (a Vector{ComplexF64} from cell 17, line 5) was
+    // passed, but `C1` (a Circulant from cell 17) would work".
+    let mut any_scope_hint = false;
+    for typ in &arg_types {
+        if let Some(entries) = err.in_scope_variable_types.get(typ) {
+            if entries.is_empty() {
+                continue;
+            }
+            if !any_scope_hint {
+                out.push_str("   = scope: in-scope variables by type:\n");
+                any_scope_hint = true;
+            }
+            let names: Vec<String> = entries
+                .iter()
+                .map(|e| {
+                    if e.cell >= 0 {
+                        format!("`{}` (cell {})", e.name, e.cell)
+                    } else {
+                        format!("`{}`", e.name)
+                    }
+                })
+                .collect();
+            let _ = writeln!(out, "   |   {typ}: {}", names.join(", "));
+        }
+    }
+
+    if !err.method_candidates.is_empty() {
+        let _ = writeln!(
+            out,
+            "   = candidates: `{func_name}()` accepts these in-scope values:"
+        );
+        for c in &err.method_candidates {
+            if c.cell >= 0 {
+                let _ = writeln!(
+                    out,
+                    "   |   `{}` ({}) — cell {}",
+                    c.name, c.type_name, c.cell
+                );
+            } else {
+                let _ = writeln!(out, "   |   `{}` ({})", c.name, c.type_name);
+            }
+        }
+    }
+
     Some(out)
+}
+
+/// Render a "not callable" MethodError — the Julia parser's way of
+/// saying "you called a name, but that name is bound to a value (array,
+/// number, …), not a function".
+///
+/// The generic E043 hint suggests `2(x+1)` → `2*(x+1)`, which is one
+/// valid cause but misleading when the real issue is "X is a Vector from
+/// cell 17; stop trying to call it like a function". When the kernel
+/// has populated `in_scope_variable_types`, we can pinpoint: the failing
+/// value's type is in the message, and any in-scope binding of that
+/// type is a plausible culprit with cell-anchored attribution.
+fn enrich_not_callable(message: &str, source: &str, err: &StructuredError) -> Option<String> {
+    let obj_type = extract_not_callable_type(message)?;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "   = note: called something of type {obj_type} (not a function)");
+
+    // Name the call site from the source line when we can. Julia's
+    // message only gives us the type, not the identifier — we look at
+    // the source for `ident(...)` patterns and intersect with the
+    // scope map to point at the right one.
+    let call_names = scan_call_identifiers(source);
+    let typed_vars = err.in_scope_variable_types.get(&obj_type);
+
+    if let Some(entries) = typed_vars {
+        let matching: Vec<&ScopeVarEntry> = entries
+            .iter()
+            .filter(|e| call_names.iter().any(|c| c == &e.name))
+            .collect();
+        if !matching.is_empty() {
+            out.push_str("   = scope: the call site likely resolves to:\n");
+            for e in matching {
+                let _ = writeln!(
+                    out,
+                    "   |   `{}` — {obj_type} assigned in cell {}",
+                    e.name, e.cell
+                );
+            }
+            out.push_str("   = help: that name is a value, not a function. Index it with `[…]` or pick a different name for your function.\n");
+        } else {
+            // Fall back to listing all in-scope values of that type;
+            // user can eyeball which one matches.
+            out.push_str(&format!(
+                "   = scope: in-scope values of type {obj_type}:\n"
+            ));
+            for e in entries {
+                let _ = writeln!(out, "   |   `{}` — cell {}", e.name, e.cell);
+            }
+        }
+    } else if !call_names.is_empty() {
+        out.push_str("   = note: names called in the source line:\n");
+        for name in call_names.iter().take(5) {
+            let _ = writeln!(out, "   |   `{name}()`");
+        }
+        out.push_str("   = help: one of these resolves to a value, not a function. Execute upstream cells so the kernel knows each binding's type, then re-run this cell for a pinpointed hint.\n");
+    }
+
+    Some(out)
+}
+
+/// Pull the "of type X" portion out of `objects of type X are not callable`.
+/// Returns the type string (e.g. `Vector{ComplexF64}`) or None if the
+/// message shape doesn't match.
+fn extract_not_callable_type(msg: &str) -> Option<String> {
+    let start = msg.find("objects of type ")?;
+    let after = &msg[start + "objects of type ".len()..];
+    let end = after.find(" are not callable")?;
+    let t = after[..end].trim();
+    if t.is_empty() { None } else { Some(t.to_string()) }
+}
+
+/// Find every `identifier(` call in a source line. Skips string content
+/// and stops at `#` comments. Used to narrow "not callable" enrichment
+/// when Julia's error omits the offending name.
+fn scan_call_identifiers(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut names = Vec::new();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_str = true;
+            i += 1;
+            continue;
+        }
+        if b == b'#' {
+            break;
+        }
+        // Start of an identifier?
+        if b.is_ascii_alphabetic() || b == b'_' {
+            let start = i;
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c.is_ascii_alphanumeric() || c == b'_' || c == b'!' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            // Followed immediately by `(`?
+            if i < bytes.len() && bytes[i] == b'(' {
+                if let Ok(name) = std::str::from_utf8(&bytes[start..i]) {
+                    names.push(name.to_string());
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    names
 }
 
 /// Extract type names from a MethodError call signature.
@@ -623,22 +844,32 @@ fn scan_types_from_call(msg: &str) -> Vec<String> {
         Some(i) => i + 9,
         None => return Vec::new(),
     };
-    let paren_start = match msg[start..].find('(') {
-        Some(i) => start + i + 1,
+    let rest = &msg[start..];
+    let rest_bytes = rest.as_bytes();
+
+    // For type-constructor errors Julia emits `(Name)(::ArgT)`; the first
+    // paren group is the callable, not the argument list. Skip past it so
+    // we read the right parens for the arg types.
+    let after_name = if rest_bytes.first() == Some(&b'(') {
+        match find_matching_close(rest_bytes, 0) {
+            Some(close) => close + 1,
+            None => return Vec::new(),
+        }
+    } else {
+        0
+    };
+    let tail = &rest[after_name..];
+    let tail_bytes = tail.as_bytes();
+    let paren_open = match tail.find('(') {
+        Some(i) => i,
         None => return Vec::new(),
     };
-    // Find the matching closing paren
-    let mut depth = 1;
-    let bytes = msg.as_bytes();
-    let mut i = paren_start;
-    while i < bytes.len() && depth > 0 {
-        if bytes[i] == b'(' { depth += 1; }
-        if bytes[i] == b')' { depth -= 1; }
-        if depth > 0 { i += 1; }
-    }
-    let args_str = &msg[paren_start..i];
+    let paren_close = match find_matching_close(tail_bytes, paren_open) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    let args_str = &tail[paren_open + 1..paren_close];
 
-    // Split on ", ::" to get individual type args
     let mut types = Vec::new();
     for part in args_str.split("::") {
         let trimmed = part.trim().trim_end_matches([',', ' ']);
@@ -647,6 +878,30 @@ fn scan_types_from_call(msg: &str) -> Vec<String> {
         }
     }
     types
+}
+
+/// Find the index of the `)` that matches the `(` at `open_idx`.
+/// Caller must ensure `bytes[open_idx] == b'('`.
+fn find_matching_close(bytes: &[u8], open_idx: usize) -> Option<usize> {
+    if bytes.get(open_idx).copied() != Some(b'(') {
+        return None;
+    }
+    let mut depth: i32 = 1;
+    let mut i = open_idx + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Extract argument expressions from a function call in source code.
@@ -801,20 +1056,23 @@ fn scan_element_count(msg: &str) -> Option<String> {
     }
 }
 
-/// For ParseError: point at the exact column where the parser got confused.
+/// For ParseError: point at the exact column where the parser got confused,
+/// and surface bracket-balance issues on the offending line. Julia's
+/// parser often reports `Expected end` for problems that are really
+/// "you have one more `]` than `[`" — the caret column lands far from
+/// the actual stray bracket and the user can't tell from the message
+/// alone. A concrete "1 extra `]` on this line" note cuts through the
+/// misdirection.
 fn enrich_parse_error(message: &str, source: &str) -> Option<String> {
-    // Extract column from "Error @ none:LINE:COL"
     let col = scan_parse_error_col(message)?;
     if col == 0 || source.is_empty() {
         return None;
     }
 
     let mut out = String::new();
-    // Point at the column with a caret
-    let col_idx = col.saturating_sub(1); // 1-indexed → 0-indexed
+    let col_idx = col.saturating_sub(1);
     if col_idx < source.len() {
         let _ = write!(out, "   = note: error at column {col}");
-        // Show what character is at that position
         if let Some(ch) = source.chars().nth(col_idx) {
             if !ch.is_whitespace() {
                 let _ = write!(out, " (near `{ch}`)");
@@ -822,7 +1080,70 @@ fn enrich_parse_error(message: &str, source: &str) -> Option<String> {
         }
         out.push('\n');
     }
+
+    let (paren, bracket, brace) = count_bracket_balance(source);
+    if paren != 0 || bracket != 0 || brace != 0 {
+        out.push_str("   = note: bracket balance on this line:\n");
+        let report = |out: &mut String, net: i32, open: char, close: char| {
+            if net > 0 {
+                let _ = writeln!(out, "   |   {net} more `{open}` than `{close}` — unclosed");
+            } else if net < 0 {
+                let _ = writeln!(
+                    out,
+                    "   |   {} more `{close}` than `{open}` — stray close",
+                    -net
+                );
+            }
+        };
+        report(&mut out, paren, '(', ')');
+        report(&mut out, bracket, '[', ']');
+        report(&mut out, brace, '{', '}');
+        out.push_str(
+            "   = help: scan the line for an extra or missing bracket before trusting the \"Expected end\" message\n",
+        );
+    }
+
     Some(out)
+}
+
+/// Count net bracket imbalance on a source line, ignoring anything inside
+/// `"..."` strings. Returns `(parens, brackets, braces)` where each value
+/// is `opens - closes` — positive means unclosed, negative means stray
+/// close. Strings are skipped with a simple backslash-aware scanner so
+/// `"]"` inside a literal doesn't throw off the count.
+fn count_bracket_balance(source: &str) -> (i32, i32, i32) {
+    let bytes = source.as_bytes();
+    let mut paren = 0i32;
+    let mut bracket = 0i32;
+    let mut brace = 0i32;
+    let mut in_str = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_str = false;
+            }
+        } else {
+            match b {
+                b'"' => in_str = true,
+                b'#' => break, // comment — rest of line irrelevant
+                b'(' => paren += 1,
+                b')' => paren -= 1,
+                b'[' => bracket += 1,
+                b']' => bracket -= 1,
+                b'{' => brace += 1,
+                b'}' => brace -= 1,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    (paren, bracket, brace)
 }
 
 /// Extract column number from ParseError message "Error @ file:line:col".
@@ -1749,6 +2070,196 @@ mod tests {
         assert!(out.contains("`n`"), "should show actual arg name, got:\n{out}");
         assert!(out.contains("Int64"), "should show type, got:\n{out}");
         assert!(out.contains("typeof(n)"), "should suggest typeof check, got:\n{out}");
+    }
+
+    #[test]
+    fn method_error_type_constructor_parenthesized() {
+        // Julia writes type-constructor MethodErrors as `matching (Name)(...)`.
+        // Previously enrich_method_error read the empty slice before the
+        // first `(` as the name and bailed, producing `no method `` for these
+        // argument types` — useless.
+        let json = r#"{
+            "error_type": "MethodError",
+            "message": "no method matching (Matrix)(::Vector{ComplexF64})",
+            "frames": [],
+            "source_line": "C_inv = inv(Matrix(eigenvalues))",
+            "cell_index": 19,
+            "cell_line": 3
+        }"#;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(out.contains("`eigenvalues`"), "should show actual arg name, got:\n{out}");
+        assert!(out.contains("Vector{ComplexF64}"), "should show Vector type, got:\n{out}");
+        assert!(out.contains("typeof(eigenvalues)"), "should suggest typeof check, got:\n{out}");
+    }
+
+    #[test]
+    fn scan_types_from_call_handles_parenthesized_name() {
+        let types = scan_types_from_call("no method matching (Matrix)(::Vector{ComplexF64})");
+        assert_eq!(types, vec!["Vector{ComplexF64}".to_string()]);
+    }
+
+    #[test]
+    fn parse_error_reports_stray_close_bracket() {
+        // Real user case: `V = [... for w in ω]` had an extra `]`
+        // mid-expression. Julia reports "Expected `end`" because its
+        // parser got confused after the first stray close — not
+        // useful. The enricher should call out the bracket imbalance
+        // directly.
+        let json = r##"{
+            "error_type": "ParseError",
+            "message": "# Error @ none:16:39\nExpected `end`",
+            "frames": [],
+            "source_line": "V = [sum(X(w - k*ωs) for k in -10:10)] for w in ω]",
+            "cell_index": 25,
+            "cell_line": 16
+        }"##;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(
+            out.contains("bracket balance on this line"),
+            "should name the balance issue, got:\n{out}"
+        );
+        assert!(
+            out.contains("stray close") && out.contains("`]`"),
+            "should identify the extra `]`, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parse_error_reports_unclosed_bracket() {
+        let json = r##"{
+            "error_type": "ParseError",
+            "message": "# Error @ none:3:12\nExpected `end`",
+            "frames": [],
+            "source_line": "x = [1, 2, 3",
+            "cell_index": 1,
+            "cell_line": 3
+        }"##;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(
+            out.contains("unclosed") && out.contains("`[`"),
+            "should identify the unclosed `[`, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn parse_error_ignores_brackets_inside_strings() {
+        // `println("]")` is balanced — the `]` is inside a string literal.
+        let json = r##"{
+            "error_type": "ParseError",
+            "message": "# Error @ none:1:12\nsomething",
+            "frames": [],
+            "source_line": "println(\"]\")",
+            "cell_index": 0,
+            "cell_line": 1
+        }"##;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(
+            !out.contains("bracket balance"),
+            "bracket inside string must not trigger imbalance note, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn not_callable_pinpoints_by_scope_type() {
+        // User's case: `V = [sum(X(w - k*ωₛ) for k in -10:10) for w in ω]`
+        // where `X` was previously assigned a Vector{ComplexF64}. Julia
+        // says "objects of type Vector{ComplexF64} are not callable".
+        // With kernel's scope map we match the type to the called name
+        // and tell the user exactly which cell defined it.
+        let json = r##"{
+            "error_type": "MethodError",
+            "message": "MethodError: objects of type Vector{ComplexF64} are not callable\nUse square brackets [] for indexing an Array.",
+            "frames": [],
+            "source_line": "V = [sum(X(w - k*ωs) for k in -10:10) for w in ω]",
+            "cell_index": 25,
+            "cell_line": 8,
+            "in_scope_variable_types": {
+                "Vector{ComplexF64}": [{"name": "X", "cell": 17}]
+            }
+        }"##;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(out.contains("called something of type Vector{ComplexF64}"), "got:\n{out}");
+        assert!(
+            out.contains("`X` — Vector{ComplexF64} assigned in cell 17"),
+            "should name X and cell 17, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn not_callable_without_scope_map_lists_call_names() {
+        // When the kernel hasn't been running, fall back to naming the
+        // identifiers called on the offending line so the user knows
+        // where to look.
+        let json = r##"{
+            "error_type": "MethodError",
+            "message": "MethodError: objects of type Vector{Int64} are not callable",
+            "frames": [],
+            "source_line": "result = foo(x) + bar(y)",
+            "cell_index": 3,
+            "cell_line": 2
+        }"##;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(out.contains("names called in the source line"), "got:\n{out}");
+        assert!(out.contains("`foo()`") && out.contains("`bar()`"), "got:\n{out}");
+    }
+
+    #[test]
+    fn method_error_with_kernel_scope_hints() {
+        // Kernel attached in_scope_variable_types + method_candidates:
+        // Vector{ComplexF64} is held by `eigenvalues` (cell 17); Circulant
+        // is held by `C1` (cell 17) and `Matrix(::Circulant)` has a method.
+        // The enricher should render BOTH the "variables by type" block
+        // and the "candidates" block using those values.
+        let json = r#"{
+            "error_type": "MethodError",
+            "message": "no method matching (Matrix)(::Vector{ComplexF64})",
+            "frames": [],
+            "source_line": "C_inv = inv(Matrix(eigenvalues))",
+            "cell_index": 19,
+            "cell_line": 3,
+            "in_scope_variable_types": {
+                "Vector{ComplexF64}": [{"name": "eigenvalues", "cell": 17}],
+                "Circulant{Int64, Vector{Int64}}": [{"name": "C1", "cell": 17}]
+            },
+            "method_candidates": [
+                {"name": "C1", "type": "Circulant{Int64, Vector{Int64}}", "cell": 17}
+            ]
+        }"#;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(
+            out.contains("in-scope variables by type"),
+            "should include scope block, got:\n{out}"
+        );
+        assert!(
+            out.contains("Vector{ComplexF64}: `eigenvalues` (cell 17)"),
+            "should map type → var, got:\n{out}"
+        );
+        assert!(
+            out.contains("`Matrix()` accepts these in-scope values"),
+            "should include candidates block, got:\n{out}"
+        );
+        assert!(
+            out.contains("`C1`"),
+            "should name C1 as candidate, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn method_error_without_kernel_hints_still_works() {
+        // No in_scope_variable_types / method_candidates → parenthesized
+        // name parse + arg-type note should still render. Guarantees the
+        // enricher degrades gracefully when the kernel isn't running.
+        let json = r#"{
+            "error_type": "MethodError",
+            "message": "no method matching (Matrix)(::Vector{ComplexF64})",
+            "frames": [],
+            "source_line": "C_inv = inv(Matrix(eigenvalues))",
+            "cell_index": 19,
+            "cell_line": 3
+        }"#;
+        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        assert!(out.contains("`eigenvalues`"), "got:\n{out}");
+        assert!(!out.contains("in-scope variables by type"), "should not render empty scope block, got:\n{out}");
     }
 
     #[test]

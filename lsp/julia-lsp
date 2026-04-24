@@ -3,18 +3,29 @@ set -euo pipefail
 
 NOXDIR="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
 
-# Stack the bootstrap env ($NOXDIR, which has LanguageServer +
-# NothelixMacros) onto JULIA_LOAD_PATH so Julia can `using` them
-# from any active project. The user's default env (@v#.#) and
-# stdlib stay in the path via the default entries.
-#
-# This replaces the old --project=$NOXDIR flag which forced the
-# active project to $NOXDIR, causing LanguageServer to analyze
-# against an env that only had LanguageServer itself — which is
-# why every package reference showed as "Missing reference".
-export JULIA_LOAD_PATH="$NOXDIR:@:@v#.#:@stdlib"
+# LOAD_PATH: NOXDIR first so `using LanguageServer` + `using NothelixMacros`
+# resolve against the bootstrap env. @v#.# and @stdlib keep the user's
+# default env and Julia stdlib reachable for runtime `using X` of any
+# installed package. We DELIBERATELY omit `@` (active project) — if it
+# were in the path, a sparse parent Project.toml (e.g. one declaring
+# only CellMarkers) could hijack resolution and shadow the fully
+# populated v#.# env.
+export JULIA_LOAD_PATH="$NOXDIR:@v#.#:@stdlib"
 export JULIA_DEPOT_PATH="$NOXDIR/depot:$HOME/.julia"
 
+# Force LSP analysis env to the user's default v#.# env. That env
+# accumulates every package they've ever `Pkg.add`ed (including from
+# runtime Pkg.add in notebook cells), so hover/completion/goto-def
+# work for any installed package no matter which directory the open
+# file lives in. No per-notebook Project.toml needed; nothing is
+# written next to notebooks. `LanguageServer.choose_env()` is kept as
+# a last-resort fallback in case v#.# hasn't been created yet.
+#
+# Why not `choose_env()` first: it walks up for the nearest
+# Project.toml. When a user has a sparse env file anywhere above the
+# notebook (e.g. a shared course directory declaring only
+# CellMarkers), SymbolServer indexes only that env's tiny dep set
+# and every `using FFTW`-style reference becomes unresolved.
 exec julia \
   --startup-file=no \
   --history-file=no \
@@ -27,7 +38,18 @@ exec julia \
               nothing
           end
       end
-      let env_path = LanguageServer.choose_env()
+      let env_path = begin
+              v = "v$(VERSION.major).$(VERSION.minor)"
+              found = nothing
+              for depot in DEPOT_PATH
+                  p = joinpath(depot, "environments", v)
+                  if isdir(p) && isfile(joinpath(p, "Project.toml"))
+                      found = p
+                      break
+                  end
+              end
+              something(found, LanguageServer.choose_env())
+          end
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
           server.lint_missingrefs = :none
           run(server)

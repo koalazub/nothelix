@@ -139,9 +139,9 @@ example = "# Cell 1:\nf(x) = x^2\n\n# Cell 2 (separate execution):\nf(3)  # work
 id = "E043"
 match_type = "MethodError"
 match_tokens = ["objects of type", "not callable"]
-title = "value is not a function — missing operator?"
-help = "You're using function-call syntax on a non-function. You probably forgot * or another operator."
-example = "before: 2(x + 1)     # tries to \"call\" 2\nafter:  2 * (x + 1)  # multiplication"
+title = "tried to call a value, not a function"
+help = "A name you called resolves to a value (array/number/etc.), not a function. Two common causes: (1) the name was assigned earlier — e.g. `X = some_vector`, then `X(w)` tries to call the vector; index with `X[w]` or rename one of the two X's. (2) implicit multiplication — Julia doesn't treat `2(x+1)` as multiplication in every context; write `2*(x+1)` when the parser can't infer it. The `= scope:` block below (if present) names where the value was assigned."
+example = "# (1) Name shadowing:\nbefore: X = fft(data); ... X(w)     # calls a vector\nafter:  X = fft(data); ... X[idx]   # indexing\n\n# (2) Implicit multiplication:\nbefore: y = 2(x + 1)\nafter:  y = 2 * (x + 1)"
 
 # Ambiguous method
 [[hint]]
@@ -595,6 +595,14 @@ match_tokens = []
 title = "tried to modify read-only memory"
 help = "You're writing to an immutable value. Check if you need a mutable copy."
 example = "before: sort!(immutable_arr)\nafter:  sorted = sort(immutable_arr)"
+
+[[hint]]
+id = "E018"
+match_type = "ParseError"
+match_tokens = ["Expected `end`"]
+title = "syntax error — parser said `Expected end` (often misleading)"
+help = "Julia's parser emits `Expected end` as a catch-all when it gets confused. Real culprits, in descending order of how often they're the cause: (1) a number sitting directly next to a name without an operator — write `2*x`, not `2x` in expressions the parser can't disambiguate; (2) a range written without its step colon — `-π:0.001:π`, not `-π0.001:π`; (3) a missing `*` between two names — `a*b`, not `ab`; (4) an actual missing `end` keyword closing a block."
+example = "before: ω = -π0.001:π\nafter:  ω = -π:0.001:π\n\nbefore: y = 2x + sin(θ)\nafter:  y = 2*x + sin(θ)"
 
 [[hint]]
 id = "E017"

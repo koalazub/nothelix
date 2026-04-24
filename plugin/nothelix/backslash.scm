@@ -15,6 +15,7 @@
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in helix. "helix/commands.scm"))
+(require "conceal.scm")
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -106,4 +107,17 @@
                    [cur-col    before-len])
               (helix.goto-column bs-col)
               (helix.goto-column cur-col #true)
-              (helix.static.replace-selection-with unicode))))))
+              (helix.static.replace-selection-with unicode)
+              ;; The replacement removed `word-len` chars and added some
+              ;; from `unicode` at the same position — every char offset
+              ;; after this point has shifted, so the conceal cache is
+              ;; stale. Without a reconceal, cached overlays on
+              ;; downstream lines end up targeting the wrong characters
+              ;; (previous symptoms: `# \(c\)` rendered with the
+              ;; backslashes hidden at byte positions that no longer
+              ;; held backslashes, producing weirdly wrapped lines
+              ;; like `# (c\n) Before…` until the cursor visited that
+              ;; cell and forced a fresh compute). Schedule a debounced
+              ;; reconceal so the cache catches up immediately after
+              ;; the expansion.
+              (schedule-reconceal 50))))))

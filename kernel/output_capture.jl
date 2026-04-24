@@ -135,6 +135,47 @@ function extract_structured_error(error, stacktrace, code::String, cell_index::I
         end
     end
 
+    # Type-aware hints for MethodError. Rust-side enricher consumes two
+    # maps we attach here:
+    #   - in_scope_variable_types: `Dict{typeof_str => [{name, cell}, …]}`,
+    #     so the enricher can answer "which in-scope variables are that
+    #     type?" for each ::T in the error signature. Lets us write
+    #     "Vector{ComplexF64} in scope: `eigenvalues` (cell 17)" instead
+    #     of just echoing the type the user already saw.
+    #   - method_candidates: in-scope values that the failing function
+    #     does have a method for (when the error is a single-arg call).
+    #     Computed via `hasmethod(f, Tuple{typeof(val)})` — guarded by
+    #     try/catch because some exotic types can't be reflected on.
+    if error isa MethodError
+        scope_types = CellRegistry.in_scope_variables_by_type()
+        if !isempty(scope_types)
+            result["in_scope_variable_types"] = scope_types
+        end
+
+        if isdefined(error, :f) && isdefined(error, :args) && length(error.args) == 1
+            f = error.f
+            candidates = Dict{String, Any}[]
+            for (sym, typ) in CellRegistry.VARIABLE_TYPES
+                isdefined(Main, sym) || continue
+                try
+                    val = getfield(Main, sym)
+                    if hasmethod(f, Tuple{typeof(val)})
+                        src_idx = get(CellRegistry.VARIABLE_SOURCES, sym, -1)
+                        push!(candidates, Dict{String, Any}(
+                            "name" => string(sym),
+                            "type" => typ,
+                            "cell" => src_idx,
+                        ))
+                    end
+                catch
+                end
+            end
+            if !isempty(candidates)
+                result["method_candidates"] = candidates
+            end
+        end
+    end
+
     # For any error: check if the current cell has unexecuted dependencies
     unexec = CellRegistry.unexecuted_dependencies(cell_index)
     if !isempty(unexec)
@@ -526,8 +567,15 @@ function capture_toplevel(mod::Module, code::String)
         # assignments to create local variables instead of global ones.
         # Using Meta.parse + Core.eval ensures variables persist in the module.
         try
-            # Parse and evaluate each top-level expression separately
-            # This mimics REPL behaviour where each line is evaluated at module scope
+            # Parse and evaluate each top-level expression separately.
+            # Mimics REPL behaviour where each line is evaluated at module
+            # scope AND Jupyter/IJulia behaviour where every top-level
+            # expression producing a displayable value shows up in the
+            # cell's output. Previously we only captured the LAST
+            # expression's return — so a cell with two `plot(...)` calls
+            # displayed only the second, and a cell where the last line
+            # was `println(...)` displayed zero plots even when earlier
+            # `plot(...)` calls existed.
             exprs = Meta.parseall(code)
             local last_result = nothing
             for expr in exprs.args
@@ -535,6 +583,18 @@ function capture_toplevel(mod::Module, code::String)
                     continue
                 end
                 last_result = Core.eval(mod, expr)
+                if last_result !== nothing && is_displayable_plot(last_result)
+                    img = capture_plot_png(last_result)
+                    if img !== nothing
+                        push!(result.images, ("png", img))
+                    end
+                    # plot_data drives interactive chart overlays; we
+                    # only have one overlay slot per cell, so keep the
+                    # first plot's data.
+                    if result.plot_data === nothing
+                        result.plot_data = extract_plot_data(last_result)
+                    end
+                end
             end
             result.return_value = last_result
         catch e
@@ -596,14 +656,10 @@ function capture_toplevel(mod::Module, code::String)
         catch end
     end
 
-    # Check for displayable plot
-    if result.error === nothing && is_displayable_plot(result.return_value)
-        img_b64 = capture_plot_png(result.return_value)
-        if img_b64 !== nothing
-            push!(result.images, ("png", img_b64))
-        end
-        result.plot_data = extract_plot_data(result.return_value)
-    end
+    # Plot capture now happens inside the per-expression eval loop above
+    # so cells with multiple top-level plots render all of them, not
+    # only the final return value. We deliberately don't re-capture the
+    # return value here — it would double-register the last plot.
 
     result
 end

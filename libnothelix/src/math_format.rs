@@ -46,8 +46,15 @@ pub fn format_math(text: String) -> String {
         if let Some(close_idx) = find_dollar_block(&lines, idx) {
             out.push_str(line);
             out.push('\n');
-            for inner in &lines[idx + 1..close_idx] {
-                emit_reformatted_block_line(inner, &mut out);
+            // Merge cases/matrix row continuations first so each logical
+            // row lives on one physical line before we emit. Without this,
+            // `# 0 &` + `# \text{otherwise}` stays on two lines and the
+            // overlay scanner draws "otherwise" below the cases fence
+            // instead of beside its value — exactly the layout bug that
+            // made `X(ω) = { 0, otherwise }` render as three stranded
+            // lines instead of a two-row cases cell.
+            for inner in join_cases_continuations(&lines[idx + 1..close_idx]) {
+                emit_reformatted_block_line(&inner, &mut out);
             }
             // Closing "# $$" line.
             out.push_str(lines[close_idx]);
@@ -91,6 +98,38 @@ fn find_dollar_block(lines: &[&str], start: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// Merge cases/matrix row continuations so each logical row is on one
+/// physical line. A line ending in `&` (a cell separator) is the start of
+/// a row whose remaining cells live on the next line(s). Split rows break
+/// the overlay scanner, which renders per physical line — a row split
+/// across lines puts "otherwise" on its own line below the cases fence
+/// with no alignment to the value column beside it.
+fn join_cases_continuations(lines: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in lines {
+        let body = raw.trim_end_matches('\r');
+        let content = match body.strip_prefix("# ") {
+            Some(c) => c,
+            None => {
+                out.push((*raw).to_string());
+                continue;
+            }
+        };
+        let prev_is_continuation = out
+            .last()
+            .and_then(|p| p.strip_prefix("# "))
+            .map(|prev| prev.trim_end().ends_with('&'))
+            .unwrap_or(false);
+        if prev_is_continuation {
+            let prev = out.pop().expect("last() was Some");
+            out.push(format!("{} {}", prev.trim_end(), content.trim_start()));
+        } else {
+            out.push((*raw).to_string());
+        }
+    }
+    out
 }
 
 /// Reformat one content line of a `$$` block and push the result into `out`.
@@ -143,7 +182,19 @@ fn split_block_content(content: &str) -> Vec<String> {
         // `ω`, `π` directly — a naive slice mid-char panics).
         if bytes[i] == b'\\' {
             // \text{...} — isolate prose annotations on their own line.
+            // EXCEPT when it's the right-hand cell of a cases/matrix row
+            // (preceded by `&`): there `\text{otherwise}` is the row's
+            // condition, semantically part of the same row as its value.
+            // Splitting it off would reproduce the cases bug where the
+            // condition renders as an orphan line below the fence.
             if content[i..].starts_with("\\text{") {
+                let preceding = content[cursor..i].trim_end();
+                if preceding.ends_with('&') {
+                    // Skip past the \text{...} without emitting a split.
+                    let end = match_brace_after(bytes, i + 6);
+                    i = end;
+                    continue;
+                }
                 push(&mut pieces, &content[cursor..i]);
                 let end = match_brace_after(bytes, i + 6);
                 push(&mut pieces, &content[i..end]);
@@ -505,6 +556,51 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines.iter().any(|l| l.trim() == "# \\begin{aligned}"), "out:\n{out}");
         assert!(lines.iter().any(|l| l.trim() == "# \\end{aligned}"), "out:\n{out}");
+    }
+
+    #[test]
+    fn cases_row_condition_does_not_split_off() {
+        // User bug: when a cases row's condition used `\text{otherwise}`,
+        // the block splitter peeled the `\text{...}` onto its own line,
+        // leaving "0" and "otherwise" as separate physical lines. The
+        // scanner then rendered the fence with row 2 value "0" only and
+        // "otherwise" as an orphan below the fence.
+        let input = "# $$\n\
+                     # X(\\omega) =\n\
+                     # \\begin{cases}\n\
+                     # 1 - \\frac{|\\omega|}{\\omega_0} & |\\omega| \\leq \\omega_0 \\\\\n\
+                     # 0 &\n\
+                     # \\text{otherwise}\n\
+                     # \\end{cases}\n\
+                     # $$";
+        let out = format_math(input.to_string());
+        let lines: Vec<&str> = out.lines().collect();
+        // Both rows of the cases env should be on their own line, with
+        // value + condition joined by `&`. Critically, no `\text{otherwise}`
+        // line that stands alone without a preceding value.
+        assert!(
+            lines.iter().any(|l| l.trim() == "# 0 & \\text{otherwise}"),
+            "expected joined row '0 & \\text{{otherwise}}', got:\n{out}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.trim() == "# \\text{otherwise}"),
+            "condition should NOT be on its own line, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn cases_row_join_is_idempotent() {
+        // Running format_math on its own output shouldn't re-split the
+        // joined row.
+        let first = "# $$\n\
+                     # \\begin{cases}\n\
+                     # 0 &\n\
+                     # \\text{otherwise}\n\
+                     # \\end{cases}\n\
+                     # $$";
+        let once = format_math(first.to_string());
+        let twice = format_math(once.clone());
+        assert_eq!(once, twice, "format_math should be idempotent; second pass changed output:\nfirst:\n{once}\nsecond:\n{twice}");
     }
 
     #[test]
