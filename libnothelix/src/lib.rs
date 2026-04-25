@@ -3,6 +3,7 @@
 //! This file registers FFI functions with the Steel VM and holds small
 //! utility functions that don't warrant their own module.
 
+pub mod animation;
 mod chart;
 pub mod error_format;
 mod graphics;

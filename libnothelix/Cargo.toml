@@ -27,5 +27,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 steel-core = { path = "../../steel/crates/steel-core", features = ["dylibs", "sync"] }
 abi_stable = "0.11"
 
+inventory = "0.3"
+thiserror = "1"
+
 [dev-dependencies]
 tempfile = "3.10"
