@@ -41,6 +41,13 @@ else
 fi
 cargo run -p libnothelix --bin nothelix-meta --release > "$STAGING/lib/libnothelix.meta"
 
+# Animation smoke binary — exercised by `nothelix doctor --animation`.
+cargo build -p libnothelix --bin nothelix-animation-smoke --release
+if [ -f target/release/nothelix-animation-smoke ]; then
+    cp target/release/nothelix-animation-smoke "$STAGING/bin/"
+    chmod +x "$STAGING/bin/nothelix-animation-smoke"
+fi
+
 if [ -d "$HOME/projects/helix/runtime" ]; then
     cp -R "$HOME/projects/helix/runtime"/* "$STAGING/share/nothelix/runtime/"
 fi

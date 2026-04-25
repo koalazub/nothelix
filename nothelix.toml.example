@@ -16,3 +16,57 @@
 #   3. Sixel  - Limited colours, but widely supported
 #   4. None   - Fallback for unsupported terminals
 protocol = "auto"
+
+[animation]
+# Master switch for animated media (GIF / APNG / WebP / MP4 / WebM / Lottie).
+enabled = true
+
+# Display refresh ceiling. Bump to 120 / 144 / 165 on high-refresh monitors.
+# The plugin's tick scheduler is capped to this; lower values reduce CPU
+# / battery for the same animation.
+max_fps = 60
+
+# Per-engine LRU decode cache. Frames are cached as decoded RGBA so the
+# tick loop doesn't re-decode each frame. 64 MB easily covers any GIF
+# you'd embed in a notebook; raise for long videos when the `video`
+# Cargo feature is enabled.
+decode_cache_mb = 64
+
+# Refuse to decode larger than this (width × height pixels) — falls back
+# to static-image rendering. Catches accidental "I dropped a 4K animation
+# in here" cases.
+max_dimensions = [3840, 2160]
+
+# Refuse to decode longer than this — same fallback. Useful when the
+# `video` feature is on.
+max_duration_seconds = 600
+
+# "auto" picks the best protocol the terminal supports (kitty animation
+# protocol > kitty replay > static fallback). Override to pin a specific
+# strategy for testing.
+preferred_renderer = "auto"
+
+# One-shot status-line hint the first time an animation registers in
+# this session.
+first_run_hint = true
+
+# Show ▶ / ⏸ / ⊘ / ! glyph in the top-right of an animated cell to
+# indicate playback state.
+show_indicator = true
+
+# Pause animations whose document just lost editor focus.
+pause_on_focus_lost = true
+
+# Pause animations that scroll out of the viewport.
+pause_off_viewport = true
+
+# Per-MIME format toggles. The default Cargo build supports gif/apng/webp
+# only; mp4/webm need `cargo build --features video`, lottie needs
+# `--features lottie`.
+[animation.formats]
+gif = true
+apng = true
+webp = true
+mp4 = true
+webm = true
+lottie = false

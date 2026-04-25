@@ -11,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 name = "nothelix-meta"
 path = "src/bin/nothelix-meta.rs"
 
+[[bin]]
+name = "nothelix-animation-smoke"
+path = "src/bin/animation_smoke.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

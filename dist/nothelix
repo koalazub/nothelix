@@ -93,9 +93,11 @@ EOF
     doctor)
         shift
         smoke=0
+        animation_smoke=0
         while [ $# -gt 0 ]; do
             case "$1" in
                 --smoke) smoke=1 ;;
+                --animation) animation_smoke=1 ;;
                 *) echo "nothelix doctor: unknown flag: $1" >&2; exit 2 ;;
             esac
             shift
@@ -130,6 +132,24 @@ EOF
         run_static_doctor_checks
         if [ $smoke -eq 1 ]; then
             run_kernel_smoke_test
+        fi
+        if [ $animation_smoke -eq 1 ]; then
+            anim_bin=""
+            for candidate in \
+                "$NOTHELIX_BIN/nothelix-animation-smoke" \
+                "$(dirname "$0")/nothelix-animation-smoke" \
+                "$(dirname "$0")/../target/release/nothelix-animation-smoke"; do
+                if [ -x "$candidate" ]; then anim_bin="$candidate"; break; fi
+            done
+            if [ -z "$anim_bin" ]; then
+                _doctor_fail "animation smoke: nothelix-animation-smoke binary not found"
+            else
+                if "$anim_bin"; then
+                    _doctor_pass "animation smoke: distinct-frame transmission verified"
+                else
+                    _doctor_fail "animation smoke: see binary stderr above"
+                fi
+            fi
         fi
         printf '%s' "$DOCTOR_CHECKS_OUTPUT"
         echo ""
