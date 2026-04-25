@@ -30,12 +30,16 @@
                           json-get-many
                           json-get-first-image
                           json-get-first-image-with-dir
+                          json-get-first-image-bytes
+                          json-get-animated-mime
                           json-get-plot-data
                           kitty-placeholder-payload
                           kitty-placeholder-rows
                           save-image-to-cache!
                           format-julia-error
                           format-julia-error-with-notebook))
+
+(require "nothelix/animation.scm")
 
 (provide update-cell-output
          commentify
@@ -313,6 +317,16 @@
      ;; give the grid real buffer space to paint on, and with the
      ;; helix fork's deferred raw_content draw the placeholder
      ;; cells overwrite whatever the text pass drew on those rows.
+     ;; Animated MIME (e.g. image/gif) detection. When the kernel emits an
+     ;; animated payload alongside the PNG static fallback, register an
+     ;; animation engine instead of the static placeholder. The engine
+     ;; takes over emission via add-or-replace-animating-raw-content!
+     ;; on its tick loop (~16ms cadence), so the first animated frame
+     ;; lands at the marker line within one frame's worth of latency.
+     (define animated-mime
+       (json-get-animated-mime result-json))
+     (define is-animated? (> (string-length animated-mime) 0))
+
      (when image-ready
        (define focus (editor-focus))
        (define doc-id (editor->doc-id focus))
@@ -332,9 +346,17 @@
                         " char-idx=" (number->string char-idx)
                         " total-lines=" (number->string total-lines)
                         " payload-bytes=" (number->string (string-length image-payload))
-                        " rows-bytes=" (number->string (string-length image-placeholder-rows))))
-       (helix.static.add-raw-content-with-placeholders!
-         image-payload image-rows image-cols image-placeholder-rows char-idx))
+                        " rows-bytes=" (number->string (string-length image-placeholder-rows))
+                        " animated-mime=" animated-mime))
+       (cond
+         [is-animated?
+          (define raw-bytes
+            (json-get-first-image-bytes result-json (or saved-kernel-dir "")))
+          (when (> (bytes-length raw-bytes) 0)
+            (register-animation! animated-mime raw-bytes char-idx image-rows))]
+         [else
+          (helix.static.add-raw-content-with-placeholders!
+            image-payload image-rows image-cols image-placeholder-rows char-idx)]))
 
      (helix.static.collapse_selection)
      (helix.static.commit-changes-to-history)
