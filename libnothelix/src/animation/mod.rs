@@ -2,3 +2,4 @@
 //! the decoder table understands.
 
 pub mod decoder;
+pub mod decoders;

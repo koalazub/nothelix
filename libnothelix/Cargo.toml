@@ -30,5 +30,13 @@ abi_stable = "0.11"
 inventory = "0.3"
 thiserror = "1"
 
+[features]
+default = ["gif", "apng", "webp"]
+gif = []
+apng = []
+webp = []
+video = []
+lottie = []
+
 [dev-dependencies]
 tempfile = "3.10"
