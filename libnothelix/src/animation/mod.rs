@@ -2,6 +2,7 @@
 //! the decoder table understands.
 
 pub mod cache;
+pub mod config;
 pub mod decoder;
 pub mod decoders;
 pub mod engine;
