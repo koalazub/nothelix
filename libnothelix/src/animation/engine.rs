@@ -17,6 +17,22 @@ pub struct TickOutput {
     pub frame_index: u64,
 }
 
+/// Metadata snapshot from the most recent `tick()` call. Used by the Steel
+/// FFI accessor functions (`animation_tick_status`, etc.) which read this
+/// immediately after calling `animation_tick_bytes`.
+///
+/// Fields use `isize` because that is Steel's native integer type — both
+/// `FromFFIArg` and `Into<FFIValue>` are implemented for `isize`, making it
+/// the only integer type usable as both argument and return value in `register_fn`.
+#[derive(Clone, Default)]
+pub struct TickMetaSnapshot {
+    /// 0 = new frame bytes, 1 = no change (same frame), 2 = finished/paused, <0 = error
+    pub status: isize,
+    pub height: isize,
+    pub next_delay_ms: isize,
+    pub frame_index: isize,
+}
+
 pub struct AnimationEngine {
     pub id: u64,
     decoder: Box<dyn AnimatedDecoder>,
@@ -26,6 +42,8 @@ pub struct AnimationEngine {
     metadata: AnimationMetadata,
     state: PlaybackState,
     last_content_id: Option<u64>,
+    /// Set on every `tick()` call so Steel-side accessors can read it immediately after.
+    pub last_tick_meta: TickMetaSnapshot,
 }
 
 impl AnimationEngine {
@@ -47,6 +65,7 @@ impl AnimationEngine {
                 accumulated_paused: Duration::ZERO,
             },
             last_content_id: None,
+            last_tick_meta: TickMetaSnapshot::default(),
         }
     }
 
@@ -78,16 +97,36 @@ impl AnimationEngine {
                 now.saturating_duration_since(*started_at)
                     .saturating_sub(*accumulated_paused)
             }
-            _ => return None,
+            _ => {
+                self.last_tick_meta = TickMetaSnapshot {
+                    status: 2,
+                    height: 0,
+                    next_delay_ms: 0,
+                    frame_index: 0,
+                };
+                return None;
+            }
         };
         let frame = match self.decoder.frame_at(elapsed) {
             Ok(Some(f)) => f,
             Ok(None) => {
                 self.state = PlaybackState::Finished;
+                self.last_tick_meta = TickMetaSnapshot {
+                    status: 2,
+                    height: 0,
+                    next_delay_ms: 0,
+                    frame_index: 0,
+                };
                 return None;
             }
             Err(e) => {
                 self.state = PlaybackState::Errored { reason: e.to_string() };
+                self.last_tick_meta = TickMetaSnapshot {
+                    status: -1,
+                    height: 0,
+                    next_delay_ms: 0,
+                    frame_index: 0,
+                };
                 return None;
             }
         };
@@ -103,9 +142,17 @@ impl AnimationEngine {
         };
         self.last_content_id = Some(frame.content_id);
         let next_delay_ms = compute_next_delay(&self.metadata);
+        let height = ((frame.height as f32) / 16.0).ceil() as u16;
+        let status: isize = if bytes.is_empty() { 1 } else { 0 };
+        self.last_tick_meta = TickMetaSnapshot {
+            status,
+            height: height as isize,
+            next_delay_ms: next_delay_ms as isize,
+            frame_index: frame.frame_index as isize,
+        };
         Some(TickOutput {
             bytes,
-            height: ((frame.height as f32) / 16.0).ceil() as u16,
+            height,
             next_delay_ms,
             frame_index: frame.frame_index,
         })

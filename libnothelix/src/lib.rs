@@ -165,6 +165,24 @@ fn build_module() -> FFIModule {
     m.register_fn("lsp-project-dir", lsp::lsp_project_dir);
     m.register_fn("lsp-depot-dir", lsp::lsp_depot_dir);
 
+    // ── Animation ─────────────────────────────────────────────────────────────
+    // These complement the raw C-ABI exports (`nothelix_animation_*`). Steel
+    // cannot call `extern "C"` functions through `register_fn`; these wrappers
+    // use only Steel-marshallable types (String, Vec<u8>, i64, bool).
+    //
+    // Tick protocol (approach A):
+    //   1. Call `(animation-tick-bytes id)` → frame bytes or empty vec.
+    //   2. Immediately call the accessor functions to read per-tick metadata
+    //      (they read the `last_tick_meta` snapshot set during step 1).
+    m.register_fn("animation-register", animation::steel_api::animation_register);
+    m.register_fn("animation-tick-bytes", animation::steel_api::animation_tick_bytes);
+    m.register_fn("animation-tick-status", animation::steel_api::animation_tick_status);
+    m.register_fn("animation-tick-height", animation::steel_api::animation_tick_height);
+    m.register_fn("animation-tick-delay-ms", animation::steel_api::animation_tick_delay_ms);
+    m.register_fn("animation-tick-frame-index", animation::steel_api::animation_tick_frame_index);
+    m.register_fn("animation-set-pause", animation::steel_api::animation_set_pause);
+    m.register_fn("animation-drop", animation::steel_api::animation_drop);
+
     m
 }
 

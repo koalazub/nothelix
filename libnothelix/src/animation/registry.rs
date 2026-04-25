@@ -22,6 +22,9 @@ impl AnimationRegistry {
     pub fn get_mut(&mut self, id: u64) -> Option<&mut AnimationEngine> {
         self.engines.get_mut(&id)
     }
+    pub fn get(&self, id: u64) -> Option<&AnimationEngine> {
+        self.engines.get(&id)
+    }
     pub fn drop_engine(&mut self, id: u64) -> Option<AnimationEngine> {
         self.engines.remove(&id)
     }
