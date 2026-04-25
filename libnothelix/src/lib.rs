@@ -79,6 +79,7 @@ fn build_module() -> FFIModule {
         json_utils::json_get_first_image_bytes,
     );
     m.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
+    m.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
 
     // ── Graphics ──────────────────────────────────────────────────────────────
     m.register_fn("viuer-protocol", graphics::viuer_protocol);

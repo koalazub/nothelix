@@ -37,6 +37,48 @@ pub fn json_get_first_image(json_str: String) -> String {
     find_first_image_data(&parsed).unwrap_or_default()
 }
 
+const ANIMATED_MIMES: &[&str] = &[
+    "image/gif",
+    "image/apng",
+    "image/webp",
+    "video/mp4",
+    "video/webm",
+    "application/json+lottie",
+];
+
+/// If the given display_data JSON contains an animated MIME, returns the MIME
+/// string ("image/gif" etc). Returns empty string when only static MIMEs are
+/// present. The plugin uses this signal to decide whether to register an
+/// animation engine vs render a static image.
+pub fn json_get_animated_mime(json_str: String) -> String {
+    let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
+    find_animated_mime(&parsed).unwrap_or_default()
+}
+
+fn find_animated_mime(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(map) => {
+            for &mime in ANIMATED_MIMES {
+                if map
+                    .get(mime)
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    return Some(mime.to_string());
+                }
+            }
+            for val in map.values() {
+                if let Some(m) = find_animated_mime(val) {
+                    return Some(m);
+                }
+            }
+            None
+        }
+        Value::Array(arr) => arr.iter().find_map(find_animated_mime),
+        _ => None,
+    }
+}
+
 /// Like `json_get_first_image` but resolves sidecar files from `kernel_dir`.
 /// If image data starts with `"file:"`, reads the raw PNG and base64-encodes it.
 pub fn json_get_first_image_with_dir(json_str: String, kernel_dir: String) -> String {
@@ -195,6 +237,27 @@ mod tests {
     }
 
     #[test]
+    fn animated_mime_picked_before_png_when_both_present() {
+        // Kernel emits the animated payload AND a PNG static fallback in the
+        // same display_data bundle. find_first_image_data must return the
+        // animated bytes so the plugin sees animation-eligible data.
+        let json = r#"{"data": {"image/gif": "GIFBASE64", "image/png": "PNGBASE64"}}"#;
+        assert_eq!(json_get_first_image(json.into()), "GIFBASE64");
+    }
+
+    #[test]
+    fn json_get_animated_mime_returns_gif() {
+        let json = r#"{"data": {"image/gif": "abc", "image/png": "xyz"}}"#;
+        assert_eq!(json_get_animated_mime(json.into()), "image/gif");
+    }
+
+    #[test]
+    fn json_get_animated_mime_returns_empty_for_static_only() {
+        let json = r#"{"data": {"image/png": "xyz"}}"#;
+        assert_eq!(json_get_animated_mime(json.into()), "");
+    }
+
+    #[test]
     fn json_get_invalid_json() {
         assert_eq!(json_get("not json".into(), "key".into()), "");
     }
@@ -275,8 +338,22 @@ fn find_first_image_data(v: &Value) -> Option<String> {
                     }
                 }
             }
-            // Jupyter-style mime types.
-            for key in &["image/png", "image/jpeg", "image/gif"] {
+            // Jupyter-style mime types. Animated MIMEs are searched first so a
+            // bundle that contains both `image/gif` and `image/png` (the kernel
+            // emits PNG as a static fallback alongside the animated payload)
+            // returns the animated bytes; the plugin reads the
+            // `application/x-nothelix-animation` marker to know to register an
+            // animation engine instead of treating it as a static image.
+            for key in &[
+                "image/gif",
+                "image/apng",
+                "image/webp",
+                "video/mp4",
+                "video/webm",
+                "application/json+lottie",
+                "image/png",
+                "image/jpeg",
+            ] {
                 if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
                     if !s.is_empty() {
                         return Some(s.to_string());
