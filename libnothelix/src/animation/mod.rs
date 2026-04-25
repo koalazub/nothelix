@@ -4,3 +4,5 @@
 pub mod cache;
 pub mod decoder;
 pub mod decoders;
+pub mod renderer;
+pub mod renderers;
