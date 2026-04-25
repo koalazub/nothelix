@@ -11,14 +11,21 @@ impl WebPSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
         use ::image::AnimationDecoder;
         use ::image::codecs::webp::WebPDecoder;
-        let cursor = std::io::BufReader::new(std::io::Cursor::new(bytes));
-        let dec = WebPDecoder::new(cursor)
+        use ::image::ImageDecoder;
+
+        // Static WebP files don't surface through `into_frames` (the AnimationDecoder
+        // path yields zero frames), so we inspect the file twice: once for animated
+        // frames, and if none surface, fall back to a single-frame static decode.
+        let cursor1 = std::io::BufReader::new(std::io::Cursor::new(bytes));
+        let dec_anim = WebPDecoder::new(cursor1)
             .map_err(|e| DecoderError::Malformed(e.to_string()))?;
-        let frames_iter = dec.into_frames();
+        let dims = dec_anim.dimensions();
+        let frames_iter = dec_anim.into_frames();
+
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
-        let mut width = 0u16;
-        let mut height = 0u16;
+        let mut width = dims.0 as u16;
+        let mut height = dims.1 as u16;
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
@@ -40,8 +47,34 @@ impl WebPSource {
                 content_id,
             });
         }
+
+        // Static WebP fallback: re-open and decode the single full image.
+        if frames.is_empty() {
+            let cursor2 = std::io::BufReader::new(std::io::Cursor::new(bytes));
+            let dec_static = WebPDecoder::new(cursor2)
+                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let (w, h) = dec_static.dimensions();
+            let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
+            dec_static
+                .read_image(&mut buf)
+                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let rgba: Arc<[u8]> = Arc::from(buf.as_slice());
+            let content_id = hash_bytes(&rgba);
+            width = w as u16;
+            height = h as u16;
+            frames.push(DecodedFrame {
+                rgba,
+                width,
+                height,
+                frame_index: 0,
+                presentation_offset: Duration::ZERO,
+                content_id,
+            });
+            acc = Duration::ZERO;
+        }
+
         let frame_count = frames.len() as u64;
-        let total = if frame_count == 0 { Duration::ZERO } else { acc };
+        let total = if frame_count <= 1 { Duration::ZERO } else { acc };
         let native_fps = if total.as_millis() == 0 {
             0.0
         } else {
@@ -55,7 +88,7 @@ impl WebPSource {
                 frame_count: Some(frame_count),
                 native_fps,
                 total_duration: Some(total),
-                loops_natively: true,
+                loops_natively: frame_count > 1,
             },
         }))
     }
@@ -109,37 +142,53 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
-    /// Smoke test: encode a 4x4 RGBA image as WebP (lossless) and attempt to
-    /// decode it via WebPSource. Static WebPs decoded via `into_frames` may
-    /// yield zero or one frame — either outcome is acceptable; we just verify
-    /// no panic and correct dimensions when frames are present.
-    #[test]
-    fn opens_static_webp_via_webp_path() {
+    fn build_static_webp() -> Vec<u8> {
         use ::image::codecs::webp::WebPEncoder;
         use ::image::{ColorType, ImageEncoder};
+        // 4x4 solid red, lossless WebP. WebPEncoder in image 0.25 only supports
+        // static WebP — animated WebP encoding is not exposed through the public
+        // API. The behavioral guarantees we can verify on static WebP are
+        // dimension fidelity, single-frame, and stable content_id.
         let rgba = vec![255u8, 0, 0, 255].repeat(16);
         let mut buf = Vec::new();
         WebPEncoder::new_lossless(&mut buf)
             .write_image(&rgba, 4, 4, ColorType::Rgba8.into())
             .unwrap();
-        match WebPSource::open(&buf) {
-            Ok(dec) => {
-                let meta = dec.metadata();
-                let frames = meta.frame_count.unwrap_or(0);
-                if frames >= 1 {
-                    assert_eq!(meta.width, 4);
-                    assert_eq!(meta.height, 4);
-                }
-                // Zero frames: static WebP treated as empty animation — acceptable.
-            }
-            Err(_) => {
-                // Acceptable: static WebP is not an animated WebP; skip.
-            }
-        }
+        buf
     }
 
     #[test]
-    fn lookup_table_includes_webp() {
-        assert!(crate::animation::decoder::lookup_decoder("image/webp").is_some());
+    fn decoder_yields_one_frame_with_correct_dimensions() {
+        let bytes = build_static_webp();
+        let dec = WebPSource::open(&bytes).expect("decode static webp");
+        let meta = dec.metadata();
+        assert_eq!(meta.frame_count, Some(1));
+        assert_eq!(meta.width, 4);
+        assert_eq!(meta.height, 4);
+    }
+
+    #[test]
+    fn frame_at_zero_returns_index_zero() {
+        let bytes = build_static_webp();
+        let mut dec = WebPSource::open(&bytes).unwrap();
+        let f = dec.frame_at(Duration::from_millis(0)).unwrap().unwrap();
+        assert_eq!(f.frame_index, 0);
+        assert_eq!(f.width, 4);
+        assert_eq!(f.height, 4);
+    }
+
+    #[test]
+    fn content_id_stable_across_calls() {
+        let bytes = build_static_webp();
+        let mut dec = WebPSource::open(&bytes).unwrap();
+        let a = dec.frame_at(Duration::from_millis(0)).unwrap().unwrap().content_id;
+        let b = dec.frame_at(Duration::from_millis(50)).unwrap().unwrap().content_id;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn malformed_bytes_return_error() {
+        let bad = b"not a webp at all";
+        assert!(WebPSource::open(bad).is_err());
     }
 }

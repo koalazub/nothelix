@@ -10,17 +10,24 @@ pub struct ApngSource {
 impl ApngSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
         use ::image::AnimationDecoder;
+        use ::image::ImageDecoder;
         use ::image::codecs::png::PngDecoder;
-        let dec = PngDecoder::new(std::io::Cursor::new(bytes))
+
+        // First pass: try the animated path. PNGs that are not APNGs surface
+        // through `into_frames()` with zero frames; for those we fall back to
+        // a static single-frame decode so callers can render the still image.
+        let dec_anim = PngDecoder::new(std::io::Cursor::new(bytes))
             .map_err(|e| DecoderError::Malformed(e.to_string()))?;
-        let apng = dec
+        let dims = dec_anim.dimensions();
+        let apng = dec_anim
             .apng()
             .map_err(|e| DecoderError::Malformed(e.to_string()))?;
         let frames_iter = apng.into_frames();
+
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
-        let mut width = 0u16;
-        let mut height = 0u16;
+        let mut width = dims.0 as u16;
+        let mut height = dims.1 as u16;
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
@@ -42,8 +49,33 @@ impl ApngSource {
                 content_id,
             });
         }
+
+        if frames.is_empty() {
+            let dec_static = PngDecoder::new(std::io::Cursor::new(bytes))
+                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let (w, h) = dec_static.dimensions();
+            // Read into Rgba8 — PNGs may be Rgb8 or Indexed; convert via image's DynamicImage.
+            let dyn_img = ::image::DynamicImage::from_decoder(dec_static)
+                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let rgba8 = dyn_img.to_rgba8();
+            let raw = rgba8.into_raw();
+            let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
+            let content_id = hash_bytes(&rgba);
+            width = w as u16;
+            height = h as u16;
+            frames.push(DecodedFrame {
+                rgba,
+                width,
+                height,
+                frame_index: 0,
+                presentation_offset: Duration::ZERO,
+                content_id,
+            });
+            acc = Duration::ZERO;
+        }
+
         let frame_count = frames.len() as u64;
-        let total = if frame_count == 0 { Duration::ZERO } else { acc };
+        let total = if frame_count <= 1 { Duration::ZERO } else { acc };
         let native_fps = if total.as_millis() == 0 {
             0.0
         } else {
@@ -57,7 +89,7 @@ impl ApngSource {
                 frame_count: Some(frame_count),
                 native_fps,
                 total_duration: Some(total),
-                loops_natively: true,
+                loops_natively: frame_count > 1,
             },
         }))
     }
@@ -111,41 +143,73 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
-    /// Minimal smoke test: a single-frame "APNG" (technically a static PNG with
-    /// the apng decoder API still applicable). Real animated APNGs are tested
-    /// via integration in Task 31.
-    #[test]
-    fn opens_static_png_via_apng_path() {
-        // Build a 4x4 red PNG inline.
-        use ::image::codecs::png::PngEncoder;
-        use ::image::{ColorType, ImageEncoder};
-        let rgba = vec![255u8, 0, 0, 255].repeat(16);
+    /// Build a deterministic 3-frame 4x4 animated APNG using the low-level
+    /// `png` crate's animation API. Frames cycle through red → green → blue
+    /// at 100ms each, looping infinitely.
+    fn build_tiny_apng() -> Vec<u8> {
+        use png::{BitDepth, ColorType, Encoder};
+        let palette = [
+            [255u8, 0, 0, 255],   // red
+            [0, 255, 0, 255],     // green
+            [0, 0, 255, 255],     // blue
+        ];
         let mut buf = Vec::new();
-        PngEncoder::new(&mut buf)
-            .write_image(&rgba, 4, 4, ColorType::Rgba8.into())
-            .unwrap();
-        // Static PNG isn't an APNG; PngDecoder::apng() typically still returns OK
-        // but may yield zero frames (image crate skips non-APNG static images).
-        // Either outcome is acceptable — we just verify it doesn't panic.
-        match ApngSource::open(&buf) {
-            Ok(dec) => {
-                let meta = dec.metadata();
-                let frames = meta.frame_count.unwrap_or(0);
-                if frames >= 1 {
-                    // If a frame was returned, dimensions must be correct.
-                    assert_eq!(meta.width, 4);
-                    assert_eq!(meta.height, 4);
-                }
-                // Zero frames: static PNG treated as empty animation — acceptable.
+        {
+            let mut enc = Encoder::new(&mut buf, 4, 4);
+            enc.set_color(ColorType::Rgba);
+            enc.set_depth(BitDepth::Eight);
+            enc.set_animated(palette.len() as u32, 0).unwrap(); // 0 = infinite loop
+            enc.set_frame_delay(100, 1000).unwrap(); // 100/1000 s = 100 ms
+            let mut writer = enc.write_header().unwrap();
+            for color in &palette {
+                let frame: Vec<u8> = color.iter().copied().cycle().take(4 * 4 * 4).collect();
+                writer.write_image_data(&frame).unwrap();
             }
-            Err(_) => {
-                // Acceptable: static PNG is not APNG; skip.
-            }
+            writer.finish().unwrap();
         }
+        buf
     }
 
     #[test]
-    fn lookup_table_includes_apng() {
-        assert!(crate::animation::decoder::lookup_decoder("image/apng").is_some());
+    fn metadata_reports_three_frames() {
+        let bytes = build_tiny_apng();
+        let dec = ApngSource::open(&bytes).expect("decode tiny apng");
+        let meta = dec.metadata();
+        assert_eq!(meta.frame_count, Some(3));
+        assert_eq!(meta.width, 4);
+        assert_eq!(meta.height, 4);
+    }
+
+    #[test]
+    fn frame_at_timing_picks_correct_frame() {
+        let bytes = build_tiny_apng();
+        let mut dec = ApngSource::open(&bytes).unwrap();
+        // Frames at 0..100, 100..200, 200..300 → query midpoints
+        let f0 = dec.frame_at(Duration::from_millis(50)).unwrap().unwrap();
+        let f1 = dec.frame_at(Duration::from_millis(150)).unwrap().unwrap();
+        let f2 = dec.frame_at(Duration::from_millis(250)).unwrap().unwrap();
+        assert_eq!(f0.frame_index, 0);
+        assert_eq!(f1.frame_index, 1);
+        assert_eq!(f2.frame_index, 2);
+    }
+
+    #[test]
+    fn frame_at_loops_modulo_total() {
+        let bytes = build_tiny_apng();
+        let mut dec = ApngSource::open(&bytes).unwrap();
+        // Total = 300 ms; 350 ms wraps to 50 ms → frame 0
+        let f = dec.frame_at(Duration::from_millis(350)).unwrap().unwrap();
+        assert_eq!(f.frame_index, 0);
+    }
+
+    #[test]
+    fn distinct_content_ids_per_color() {
+        let bytes = build_tiny_apng();
+        let mut dec = ApngSource::open(&bytes).unwrap();
+        let mut ids = std::collections::HashSet::new();
+        for ms in [0, 100, 200] {
+            ids.insert(dec.frame_at(Duration::from_millis(ms)).unwrap().unwrap().content_id);
+        }
+        assert_eq!(ids.len(), 3);
     }
 }

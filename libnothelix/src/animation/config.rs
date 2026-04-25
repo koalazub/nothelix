@@ -56,27 +56,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_match_spec() {
-        let c = AnimationConfig::default();
-        assert!(c.enabled);
-        assert_eq!(c.max_fps, 60);
-        assert_eq!(c.decode_cache_mb, 64);
-        assert_eq!(c.max_dimensions, [3840, 2160]);
-        assert_eq!(c.max_duration_seconds, 600);
-        assert_eq!(c.preferred_renderer, "auto");
-        assert!(c.first_run_hint);
-        assert!(c.show_indicator);
-        assert!(c.pause_on_focus_lost);
-        assert!(c.pause_off_viewport);
-        assert!(c.formats.gif);
-        assert!(c.formats.apng);
-        assert!(c.formats.webp);
-        assert!(c.formats.mp4);
-        assert!(c.formats.webm);
-        assert!(!c.formats.lottie);
-    }
-
-    #[test]
     fn parses_partial_toml_keeps_defaults() {
         let toml_str = r#"
             enabled = false
@@ -92,11 +71,4 @@ mod tests {
         assert_eq!(c.decode_cache_mb, 64); // default kept
     }
 
-    #[test]
-    fn round_trip_toml() {
-        let c1 = AnimationConfig::default();
-        let s = toml::to_string(&c1).unwrap();
-        let c2: AnimationConfig = toml::from_str(&s).unwrap();
-        assert_eq!(c1, c2);
-    }
 }

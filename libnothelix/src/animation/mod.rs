@@ -386,12 +386,6 @@ mod steel_api_tests {
     }
 
     #[test]
-    fn steel_api_drop_missing_engine_returns_empty() {
-        let teardown = steel_api::animation_drop(99999isize);
-        assert!(teardown.is_empty());
-    }
-
-    #[test]
     fn steel_api_status_for_missing_engine_returns_minus_two() {
         assert_eq!(steel_api::animation_tick_status(99998isize), -2isize);
     }

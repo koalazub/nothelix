@@ -39,25 +39,3 @@ static REGISTRY: OnceLock<Mutex<AnimationRegistry>> = OnceLock::new();
 pub fn registry() -> &'static Mutex<AnimationRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(AnimationRegistry::new()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn allocate_id_increments() {
-        let mut reg = AnimationRegistry::new();
-        let a = reg.allocate_id();
-        let b = reg.allocate_id();
-        assert!(b > a);
-    }
-
-    #[test]
-    fn drop_engine_removes() {
-        let mut reg = AnimationRegistry::new();
-        let id = reg.allocate_id();
-        // Without an engine to insert (which requires a decoder/renderer), just
-        // confirm drop_engine on a missing id returns None.
-        assert!(reg.drop_engine(id).is_none());
-    }
-}

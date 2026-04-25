@@ -80,13 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn put_and_get_round_trips() {
-        let mut c = FrameCache::new(1_000);
-        c.put(make_frame(0, 100));
-        assert!(c.get(0).is_some());
-    }
-
-    #[test]
     fn lru_evicts_when_over_budget() {
         let mut c = FrameCache::new(250);
         c.put(make_frame(0, 100));

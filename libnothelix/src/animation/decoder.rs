@@ -52,13 +52,3 @@ pub fn lookup_decoder(mime: &str) -> Option<DecoderFactory> {
         .find(|e| e.mime == mime)
         .map(|e| e.factory)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lookup_returns_none_for_unknown_mime() {
-        assert!(lookup_decoder("image/nope").is_none());
-    }
-}

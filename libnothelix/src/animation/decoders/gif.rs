@@ -142,4 +142,9 @@ mod tests {
         }
         assert_eq!(ids.len(), 4);
     }
+
+    #[test]
+    fn malformed_bytes_return_error() {
+        assert!(GifSource::open(b"not a gif").is_err());
+    }
 }
