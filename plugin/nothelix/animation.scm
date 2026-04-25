@@ -11,7 +11,7 @@
 ;;;   document-focus-lost     -> mark engines for the doc as unfocused, drop
 ;;;                              their next callback
 ;;;   document-focus-gained   -> mark engines as focused, reschedule
-;;;   viewport-changed        -> recompute :visible? for engines in that doc,
+;;;   viewport-changed        -> recompute 'visible? for engines in that doc,
 ;;;                              reschedule the ones that just became visible
 ;;;
 ;;; Pause-when-offscreen / pause-when-unfocused short-circuits in
@@ -48,13 +48,13 @@
 ;;; ---------------------------------------------------------------------------
 
 ;; Map engine_id (int) -> state hash with keys:
-;;   :char-idx        char index where the overlay is anchored (int)
-;;   :doc-id          owning document id
-;;   :height          terminal rows the overlay occupies
-;;   :focused?        is the doc currently focused?
-;;   :visible?        is the cell within the current viewport?
-;;   :manual-paused?  user pressed <space>p
-;;   :status          'playing 'finished 'errored
+;;   'char-idx        char index where the overlay is anchored (int)
+;;   'doc-id          owning document id
+;;   'height          terminal rows the overlay occupies
+;;   'focused?        is the doc currently focused?
+;;   'visible?        is the cell within the current viewport?
+;;   'manual-paused?  user pressed <space>p
+;;   'status          'playing 'finished 'errored
 ;;
 ;; We never assume the hash exists in any branch; every hash-ref carries a
 ;; default and every mutation rebinds *animations* via set!.
@@ -83,10 +83,10 @@
 
 (define (animation-state-active? st)
   (and st
-       (hash-try-get st :focused?)
-       (hash-try-get st :visible?)
-       (not (hash-try-get st :manual-paused?))
-       (eq? (hash-try-get st :status) 'playing)))
+       (hash-try-get st 'focused?)
+       (hash-try-get st 'visible?)
+       (not (hash-try-get st 'manual-paused?))
+       (eq? (hash-try-get st 'status) 'playing)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Public commands
@@ -107,13 +107,13 @@
     [(<= id 0) #f]
     [else
      (define st
-       (hash :char-idx char-idx
-             :doc-id (editor->doc-id (editor-focus))
-             :height height
-             :focused? #t
-             :visible? #t
-             :manual-paused? #f
-             :status 'playing))
+       (hash 'char-idx char-idx
+             'doc-id (editor->doc-id (editor-focus))
+             'height height
+             'focused? #t
+             'visible? #t
+             'manual-paused? #f
+             'status 'playing))
      (state-set! id st)
      (maybe-show-first-hint!)
      (schedule-tick id)
@@ -128,11 +128,11 @@
     [(not eid) #f]
     [else
      (define st (state-of eid))
-     (define already-paused? (hash-try-get st :manual-paused?))
+     (define already-paused? (hash-try-get st 'manual-paused?))
      (define new-paused? (not already-paused?))
      (animation-set-pause eid new-paused?)
      (state-update! eid
-       (lambda (s) (hash-insert s :manual-paused? new-paused?)))
+       (lambda (s) (hash-insert s 'manual-paused? new-paused?)))
      (when (not new-paused?)
        (schedule-tick eid))
      (helix.redraw)
@@ -144,7 +144,7 @@
   (for-each
     (lambda (eid)
       (animation-set-pause eid #t)
-      (state-update! eid (lambda (s) (hash-insert s :manual-paused? #t))))
+      (state-update! eid (lambda (s) (hash-insert s 'manual-paused? #t))))
     (hash-keys *animations*)))
 
 ;;@doc
@@ -153,7 +153,7 @@
   (for-each
     (lambda (eid)
       (animation-set-pause eid #f)
-      (state-update! eid (lambda (s) (hash-insert s :manual-paused? #f)))
+      (state-update! eid (lambda (s) (hash-insert s 'manual-paused? #f)))
       (schedule-tick eid))
     (hash-keys *animations*)))
 
@@ -177,7 +177,7 @@
        ;; Frame produced — pull bytes, register raw content, request redraw.
        (define bytes (animation-tick-bytes eid))
        (when (> (bytes-length bytes) 0)
-         (define char-idx (hash-try-get st :char-idx))
+         (define char-idx (hash-try-get st 'char-idx))
          (define height (animation-tick-height eid))
          (helix.static.add-or-replace-animating-raw-content!
            bytes
@@ -188,9 +188,9 @@
          (helix.redraw))]
       [(= status 2)
        ;; Finished — mark and stop.
-       (state-update! eid (lambda (s) (hash-insert s :status 'finished)))]
+       (state-update! eid (lambda (s) (hash-insert s 'status 'finished)))]
       [(< status 0)
-       (state-update! eid (lambda (s) (hash-insert s :status 'errored)))]
+       (state-update! eid (lambda (s) (hash-insert s 'status 'errored)))]
       ;; status == 1: same content, no transmit, but keep ticking.
       [else (void)])
     (when (and (>= status 0)
@@ -215,8 +215,8 @@
     (filter
       (lambda (eid)
         (define st (state-of eid))
-        (and (equal? (hash-try-get st :doc-id) doc-id)
-             (let ([anchor (hash-try-get st :char-idx)])
+        (and (equal? (hash-try-get st 'doc-id) doc-id)
+             (let ([anchor (hash-try-get st 'char-idx)])
                (and (>= cursor anchor)
                     (< cursor (+ anchor 4096))))))
       (hash-keys *animations*)))
@@ -231,8 +231,8 @@
     (for-each
       (lambda (eid)
         (define st (state-of eid))
-        (when (equal? (hash-try-get st :doc-id) doc-id)
-          (state-update! eid (lambda (s) (hash-insert s :focused? #f)))))
+        (when (equal? (hash-try-get st 'doc-id) doc-id)
+          (state-update! eid (lambda (s) (hash-insert s 'focused? #f)))))
       (hash-keys *animations*))))
 
 (register-hook! "document-focus-gained"
@@ -240,8 +240,8 @@
     (for-each
       (lambda (eid)
         (define st (state-of eid))
-        (when (equal? (hash-try-get st :doc-id) doc-id)
-          (state-update! eid (lambda (s) (hash-insert s :focused? #t)))
+        (when (equal? (hash-try-get st 'doc-id) doc-id)
+          (state-update! eid (lambda (s) (hash-insert s 'focused? #t)))
           (schedule-tick eid)))
       (hash-keys *animations*))))
 
@@ -251,13 +251,13 @@
     (for-each
       (lambda (eid)
         (define st (state-of eid))
-        (when (equal? (hash-try-get st :doc-id) doc-id)
-          (define cell-anchor (hash-try-get st :char-idx))
+        (when (equal? (hash-try-get st 'doc-id) doc-id)
+          (define cell-anchor (hash-try-get st 'char-idx))
           (define newly-visible?
             (and (>= cell-anchor anchor) (< cell-anchor visible-end)))
-          (define was-visible? (hash-try-get st :visible?))
+          (define was-visible? (hash-try-get st 'visible?))
           (state-update! eid
-            (lambda (s) (hash-insert s :visible? newly-visible?)))
+            (lambda (s) (hash-insert s 'visible? newly-visible?)))
           (when (and newly-visible? (not was-visible?))
             (schedule-tick eid))))
       (hash-keys *animations*))))
