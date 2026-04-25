@@ -348,15 +348,24 @@
                         " payload-bytes=" (number->string (string-length image-payload))
                         " rows-bytes=" (number->string (string-length image-placeholder-rows))
                         " animated-mime=" animated-mime))
+       (define static-fallback!
+         (lambda ()
+           (helix.static.add-raw-content-with-placeholders!
+             image-payload image-rows image-cols image-placeholder-rows char-idx)))
        (cond
          [is-animated?
           (define raw-bytes
             (json-get-first-image-bytes result-json (or saved-kernel-dir "")))
-          (when (> (bytes-length raw-bytes) 0)
-            (register-animation! animated-mime raw-bytes char-idx image-rows))]
+          (define registered?
+            (and (> (bytes-length raw-bytes) 0)
+                 (register-animation! animated-mime raw-bytes char-idx image-rows)))
+          ;; If the animation engine refused (unknown mime, decode failure,
+          ;; lock contention), fall back to the static placeholder so the
+          ;; user still sees the first-frame image.
+          (when (not registered?)
+            (static-fallback!))]
          [else
-          (helix.static.add-raw-content-with-placeholders!
-            image-payload image-rows image-cols image-placeholder-rows char-idx)]))
+          (static-fallback!)]))
 
      (helix.static.collapse_selection)
      (helix.static.commit-changes-to-history)
