@@ -61,6 +61,7 @@
 (require "nothelix/scaffold.scm")
 (require "nothelix/math-format.scm")
 (require "nothelix/math-render.scm")
+(require "nothelix/animation.scm")
 
 ;; Test modules are loaded dynamically (see test commands below).
 
@@ -77,6 +78,7 @@
          graphics-protocol graphics-check nothelix-status
          julia-tab-complete
          conceal-math clear-conceal
+         animation-toggle-at-cursor animation-pause-all animation-resume-all
          new-notebook renumber-cells new-cell
          nothelix-debug-on nothelix-debug-off nothelix-debug-toggle
          run-all-tests run-cell-tests run-kernel-tests run-execution-tests
@@ -192,7 +194,8 @@
                   ("j" ":cell-picker")
                   ("a" ":select-cell")
                   ("i" ":select-cell-code")
-                  ("o" ":select-output"))))))
+                  ("o" ":select-output"))
+             ("p" ":animation-toggle-at-cursor")))))
 
 ;; ─── Plugin command documentation ─────────────────────────────────────────────
 ;;
