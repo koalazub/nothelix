@@ -4,7 +4,7 @@ using Base64
 using Dates
 using ..CellRegistry
 
-export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, extract_plot_data, set_log_file, set_kernel_dir
+export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, capture_animated_output, extract_plot_data, set_log_file, set_kernel_dir
 
 # Log to kernel directory if available (set by runner.jl)
 const CAPTURE_LOG_FILE = Ref{Union{String, Nothing}}(nothing)
@@ -263,9 +263,15 @@ function capture_execution(f)
 
     # Check for displayable plot
     if result.error === nothing && is_displayable_plot(result.return_value)
-        img_b64 = capture_plot_png(result.return_value)
-        if img_b64 !== nothing
-            push!(result.images, ("png", img_b64))
+        animated = capture_animated_output(result.return_value)
+        if animated !== nothing
+            ext = mime_to_extension(animated[1])
+            push!(result.images, ("plot.$ext", animated[2]))
+        else
+            img_b64 = capture_plot_png(result.return_value)
+            if img_b64 !== nothing
+                push!(result.images, ("png", img_b64))
+            end
         end
         result.plot_data = extract_plot_data(result.return_value)
     end
@@ -377,6 +383,46 @@ function capture_plot_png(p)
 
     capture_log("All methods failed for type: $(typeof(p))")
     nothing
+end
+
+const ANIMATED_MIMES = [
+    "image/gif",
+    "image/apng",
+    "image/webp",
+    "video/mp4",
+    "video/webm",
+    "application/json+lottie",
+]
+
+function mime_to_extension(mime::String)
+    return get(Dict(
+        "image/gif"  => "gif",
+        "image/apng" => "apng",
+        "image/webp" => "webp",
+        "video/mp4"  => "mp4",
+        "video/webm" => "webm",
+        "application/json+lottie" => "lottie",
+    ), mime, "bin")
+end
+
+# Try to capture an animated-MIME representation. Returns (mime::String, b64::String)
+# on success, or nothing if no animated MIME is showable.
+function capture_animated_output(x)
+    for mime in ANIMATED_MIMES
+        try
+            if Base.invokelatest(showable, MIME(mime), x)
+                io = IOBuffer()
+                Base.invokelatest(show, io, MIME(mime), x)
+                data = take!(io)
+                if !isempty(data)
+                    return (mime, base64encode(data))
+                end
+            end
+        catch e
+            capture_log("animated MIME show failed for $mime: $e")
+        end
+    end
+    return nothing
 end
 
 # Extract raw (x, y, label) data from a plot object for interactive braille charts.
@@ -584,9 +630,15 @@ function capture_toplevel(mod::Module, code::String)
                 end
                 last_result = Core.eval(mod, expr)
                 if last_result !== nothing && is_displayable_plot(last_result)
-                    img = capture_plot_png(last_result)
-                    if img !== nothing
-                        push!(result.images, ("png", img))
+                    animated = capture_animated_output(last_result)
+                    if animated !== nothing
+                        ext = mime_to_extension(animated[1])
+                        push!(result.images, ("plot.$ext", animated[2]))
+                    else
+                        img = capture_plot_png(last_result)
+                        if img !== nothing
+                            push!(result.images, ("png", img))
+                        end
                     end
                     # plot_data drives interactive chart overlays; we
                     # only have one overlay slot per cell, so keep the
