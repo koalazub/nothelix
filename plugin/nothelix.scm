@@ -338,7 +338,16 @@
 ;; directly at the end of that callback.
 (define *mutating-commands*
   '("convert-notebook" "sync-to-ipynb" "export-markdown" "export-typst"
-    "insert-image" "format-math-buffer" "math-render-buffer" "math-render-clear"))
+    "insert-image" "format-math-buffer" "math-render-buffer" "math-render-clear"
+    ;; Native helix commands that move/duplicate buffer content. Adding
+    ;; them here means a paste-or-yank of a math-containing region
+    ;; triggers a reconceal so overlays land on the new offsets instead
+    ;; of the old ones — common source of "math half-rendered after
+    ;; pasting/deleting a cell" jitter.
+    "paste_after" "paste_before" "paste_clipboard_after" "paste_clipboard_before"
+    "replace_with_yanked" "replace_selections_with_clipboard"
+    "delete_selection" "delete_selection_noyank"
+    "change_selection" "change_selection_noyank"))
 
 ;; Commands that write the buffer to disk. We hook these to run the
 ;; cell renumber pass so holes that accumulate during editing (from

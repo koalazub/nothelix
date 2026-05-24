@@ -8,6 +8,7 @@
 ;;; already-formatted buffer is a no-op.
 
 (require "common.scm")
+(require "conceal.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require "helix/ext.scm")
@@ -55,6 +56,13 @@
         (helix.static.replace-selection-with rewritten)
         (helix.static.collapse_selection)
         (helix.static.commit-changes-to-history)
+        ;; The whole-buffer rewrite invalidates every cached conceal
+        ;; overlay (offsets shift, math env content changes shape).
+        ;; Schedule a reconceal so the next render reflects the new
+        ;; layout instead of painting stale overlays on top of fresh
+        ;; bytes — that's the source of the previously-reported jitter
+        ;; right after format-math fires on save.
+        (schedule-reconceal 50)
         ;; Always confirm a real rewrite happened — even in silent (save-
         ;; hook) mode — so the user has a breadcrumb that their on-disk
         ;; copy will update on the next `:w`. Suppress only the
