@@ -265,6 +265,66 @@ mod tests {
     }
 
     #[test]
+    fn sum_paired_limits_keep_both_at_normal_size() {
+        // Regression: `\sum_{k=-n}^n` rendered as `∑_k=-nⁿ` because the
+        // braced subscript returned content_start, the main loop walked
+        // `k` (a non-whitespace byte), and the pending_limits reset
+        // zeroed the counter — the matching `^n` then fell into the
+        // regular-superscript path and got shrunk to `ⁿ`. Both limits
+        // must stay at normal size.
+        let result = latex_overlays(r"\sum_{k=-n}^n c_k".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        // ∑ from \sum should appear; ⁿ (superscript n) should NOT.
+        assert!(replacements.contains(&"∑"), "expected ∑, got {replacements:?}");
+        assert!(
+            !replacements.contains(&"ⁿ"),
+            "limit `^n` must not be shrunk to ⁿ; got {replacements:?}"
+        );
+    }
+
+    #[test]
+    fn complex_braced_superscript_keeps_braces_visible() {
+        // Regression: `e^{2\pi i kt}` rendered as `e^2π i kt` — hiding
+        // the braces fragmented the exponent group, with `2` looking
+        // like the only superscript and `π i kt` looking like
+        // baseline multiplication. When content has backslashes (or
+        // any non-simple char) we now keep the braces visible so the
+        // group reads as `e^{2π i kt}`.
+        let result = latex_overlays(r"e^{2\pi i kt}".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        // Walk overlays for any `hide` (empty replacement) on the `{`
+        // or `}` byte positions. There should be NO such overlays
+        // for complex content.
+        let source = r"e^{2\pi i kt}";
+        let open_brace = source.find('{').unwrap();
+        let close_brace = source.find('}').unwrap();
+        for o in arr {
+            let off = o["offset"].as_u64().unwrap() as usize;
+            let rep = o["replacement"].as_str().unwrap();
+            assert!(
+                !(off == open_brace && rep.is_empty()),
+                "opening `{{` should stay visible for complex super content; overlays:\n{arr:#?}"
+            );
+            assert!(
+                !(off == close_brace && rep.is_empty()),
+                "closing `}}` should stay visible for complex super content; overlays:\n{arr:#?}"
+            );
+        }
+        // π replacement must still appear (inner conceal still runs).
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(replacements.contains(&"π"), "expected π from \\pi, got {replacements:?}");
+    }
+
+    #[test]
     fn latex_overlays_norm_delimiter() {
         let result = latex_overlays(r"\|B - B_1\|".into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();

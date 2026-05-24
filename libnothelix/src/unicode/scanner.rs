@@ -735,11 +735,21 @@ impl<'a> Scanner<'a> {
             }
             // Default: keep limits inline but hide only the braces so
             // `^{...}` reads as `^...`, preserving the `^` as a visual
-            // cue for sub-vs-super. Return `content_start` so the main
-            // loop scans content for `\in`, `\mathbb`, Greek, etc.
+            // cue for sub-vs-super. We MUST return `past_close` (not
+            // `content_start`) — returning content_start re-enters the
+            // main loop on the limit's first content byte, and the
+            // pending_limits reset at the top of `scan_one` then
+            // zeroes the counter, so the paired `^` (or `_`) at the
+            // other end never sees a non-zero pending_limits and falls
+            // into the regular-script path. That bug rendered
+            // `\sum_{k=-n}^n` as `∑_k=-nⁿ` — the lower limit kept its
+            // size but the upper one shrank. Inner backslash conceal
+            // inside limits is forfeited; in practice limit bodies are
+            // ASCII (`k=-n`, `i=1`, `t→0`) and the readability win
+            // dominates.
             self.overlays.push(Overlay::hide(caret_pos + 1));
             self.overlays.push(Overlay::hide(past_close - 1));
-            return content_start;
+            return past_close;
         }
 
         let supers: Vec<Option<&'static str>> = content
@@ -764,12 +774,14 @@ impl<'a> Scanner<'a> {
 
         // Content isn't simple enough for in-place unicode super substitution
         // (contains backslash commands like `\pi`, nested braces, etc.). Keep
-        // the `^` as a visual cue, hide only the braces, and return
-        // `content_start` so the main scan loop walks the body — that way
-        // `\pi` → π, `\in` → ∈, etc. still get concealed inside the exponent,
-        // even though the result can't be shrunk to unicode superscript.
-        self.overlays.push(Overlay::hide(caret_pos + 1));
-        self.overlays.push(Overlay::hide(past_close - 1));
+        // BOTH the `^` and the braces visible so the exponent reads as
+        // a clearly-grouped expression — `e^{2π i kt}` rather than the
+        // earlier `e^2π i kt`, where hiding the braces fragmented the
+        // group: the `2` looked like the only exponent and `π i kt`
+        // looked like multiplication at baseline. Return `content_start`
+        // so the main loop still walks the body for `\pi` → π etc.;
+        // when it later reaches the (now visible) `}` it just passes
+        // through unchanged.
         content_start
     }
 
@@ -828,9 +840,13 @@ impl<'a> Scanner<'a> {
                 Overlay::hide_range(&mut self.overlays, underscore_pos, past_close);
                 return past_close;
             }
+            // Skip past the entire `_{…}` so the main loop's
+            // pending_limits reset doesn't fire on the limit body and
+            // strip the counter before the matching `^` is reached.
+            // See `scan_braced_superscript` for the full explanation.
             self.overlays.push(Overlay::hide(underscore_pos + 1));
             self.overlays.push(Overlay::hide(past_close - 1));
-            return content_start;
+            return past_close;
         }
 
         let subs: Vec<Option<&'static str>> = content
@@ -853,12 +869,11 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        // Complex content — keep `_` visible as a visual cue, hide braces,
-        // and recurse so inner backslash commands (`\in`, `\pi`, `\mathbb`)
-        // still get concealed even though we can't shrink them to unicode
-        // subscript forms.
-        self.overlays.push(Overlay::hide(underscore_pos + 1));
-        self.overlays.push(Overlay::hide(past_close - 1));
+        // Complex content — keep `_`, `{`, `}` ALL visible so the
+        // subscript reads as a clearly-grouped expression. See the
+        // matching note in `scan_braced_superscript`. Returns
+        // `content_start` so the main loop still concealas inner
+        // backslash commands.
         content_start
     }
 
