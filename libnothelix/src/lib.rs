@@ -176,6 +176,7 @@ fn build_module() -> FFIModule {
     //   2. Immediately call the accessor functions to read per-tick metadata
     //      (they read the `last_tick_meta` snapshot set during step 1).
     m.register_fn("animation-register", animation::steel_api::animation_register);
+    m.register_fn("animation-tick", animation::steel_api::animation_tick);
     m.register_fn("animation-tick-bytes", animation::steel_api::animation_tick_bytes);
     m.register_fn("animation-tick-status", animation::steel_api::animation_tick_status);
     m.register_fn("animation-tick-height", animation::steel_api::animation_tick_height);

@@ -149,7 +149,7 @@ mod tests {
         // static WebP — animated WebP encoding is not exposed through the public
         // API. The behavioral guarantees we can verify on static WebP are
         // dimension fidelity, single-frame, and stable content_id.
-        let rgba = vec![255u8, 0, 0, 255].repeat(16);
+        let rgba = [255u8, 0, 0, 255].repeat(16);
         let mut buf = Vec::new();
         WebPEncoder::new_lossless(&mut buf)
             .write_image(&rgba, 4, 4, ColorType::Rgba8.into())

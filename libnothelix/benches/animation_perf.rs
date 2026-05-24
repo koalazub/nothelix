@@ -6,7 +6,6 @@
 
 use std::time::{Duration, Instant};
 
-use nothelix::animation::decoder::*;
 use nothelix::animation::decoders::gif::GifSource;
 use nothelix::animation::engine::AnimationEngine;
 use nothelix::animation::renderer::{select_renderer, TerminalCaps};

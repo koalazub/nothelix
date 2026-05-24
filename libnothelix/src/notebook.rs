@@ -77,7 +77,7 @@ fn embed_markdown_attachments(
             );
         }
         attachments.insert(filename.clone(), Value::Object(mime_map));
-        image_lines.push(format!("![]({})", format!("attachment:{filename}")));
+        image_lines.push(format!("![](attachment:{filename})"));
     }
 
     if attachments.is_empty() {
@@ -1389,7 +1389,7 @@ mod tests {
         let img_path = dir.join("diagram.png");
 
         let fake_png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        std::fs::write(&img_path, &fake_png).unwrap();
+        std::fs::write(&img_path, fake_png).unwrap();
 
         // Minimal orig .ipynb so convert_to_ipynb has something to read.
         let orig = serde_json::json!({

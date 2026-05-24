@@ -261,6 +261,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
+            pkgs.cargo-nextest
             pkgs.bun
             pkgs.tree-sitter
             pkgs.git

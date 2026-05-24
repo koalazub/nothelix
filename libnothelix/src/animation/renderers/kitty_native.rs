@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn first_frame_uses_action_T() {
+    fn first_frame_uses_action_t() {
         let caps = TerminalCaps {
             kitty_graphics: true,
             kitty_animation_protocol: true,

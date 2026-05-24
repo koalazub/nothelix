@@ -1,7 +1,0 @@
-/Users/alielali/projects/nothelix/.devenv/flake.json
-/Users/alielali/projects/nothelix/.devenv.flake.nix
-/Users/alielali/projects/nothelix/.env
-/Users/alielali/projects/nothelix/devenv.local.nix
-/Users/alielali/projects/nothelix/devenv.lock
-/Users/alielali/projects/nothelix/devenv.nix
-/Users/alielali/projects/nothelix/devenv.yaml

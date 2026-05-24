@@ -13,6 +13,11 @@ pub mod renderers;
 use std::ffi::{c_char, CStr};
 use std::time::Instant;
 
+/// # Safety
+/// `mime_ptr` must be a valid pointer to a NUL-terminated C string;
+/// `bytes_ptr` must point to a readable buffer of length `bytes_len`;
+/// `out_engine_id` must be a valid writable `*mut u64`. All pointers
+/// must be valid for the duration of the call.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_register(
     mime_ptr: *const c_char,
@@ -50,6 +55,11 @@ pub unsafe extern "C" fn nothelix_animation_register(
     0
 }
 
+/// # Safety
+/// All four out-pointers (`out_payload_ptr`, `out_payload_len`,
+/// `out_height`, `out_next_delay_ms`) must be valid writable pointers
+/// for the duration of the call. The caller owns the returned payload
+/// buffer and must release it via `nothelix_animation_free_buffer`.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_tick(
     engine_id: u64,
@@ -94,13 +104,23 @@ pub unsafe extern "C" fn nothelix_animation_tick(
     0
 }
 
+/// # Safety
+/// `ptr` must be a pointer returned by `nothelix_animation_tick` (or
+/// null) with the matching `len`. Calling this with a foreign pointer
+/// or a different length than was returned is undefined behaviour.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_free_buffer(ptr: *mut u8, len: usize) {
     if !ptr.is_null() && len > 0 {
-        let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+        let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
+        let _ = Box::from_raw(slice);
     }
 }
 
+/// # Safety
+/// `engine_id` must be one previously returned by
+/// `nothelix_animation_register` (or any value — unknown ids are a
+/// no-op). The function is safe to call multiple times for the same id;
+/// later calls become no-ops.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
     if let Ok(mut reg) = registry::registry().lock() {
@@ -113,6 +133,10 @@ pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
     }
 }
 
+/// # Safety
+/// `engine_id` must be one previously returned by
+/// `nothelix_animation_register`. Unknown ids return `-1` without
+/// touching state. No raw pointers are dereferenced.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bool) -> i32 {
     let mut reg = registry::registry().lock().unwrap();
@@ -176,26 +200,41 @@ pub mod steel_api {
         id as isize
     }
 
-    /// Tick the engine and return the frame bytes.
+    /// Advance the engine by one tick.
     ///
-    /// Returns the Kitty/ANSI escape bytes for the current frame, or an empty
-    /// `Vec<u8>` when there is no new frame to send (status 1), or when the
-    /// animation has finished/is paused (status 2), or on error.
-    ///
-    /// After this call, use `animation_tick_status`, `animation_tick_height`,
-    /// `animation_tick_delay_ms`, and `animation_tick_frame_index` to read the
-    /// per-tick metadata stored on the engine.
-    pub fn animation_tick_bytes(engine_id: isize) -> Vec<u8> {
+    /// Side effects: updates `last_tick_meta` and `last_tick_bytes` on the
+    /// engine. Returns `0` on success, `-1` on lock failure, `-2` when the
+    /// engine_id is unknown. The actual frame bytes and metadata are read
+    /// out via the dedicated accessor functions afterwards
+    /// (`animation_tick_bytes`, `_status`, `_height`, `_delay_ms`,
+    /// `_frame_index`) — splitting "advance" from "read" keeps a single
+    /// scheduling step (`(animation-tick) (animation-tick-status)
+    /// (animation-tick-bytes)`) from advancing the engine multiple times
+    /// per frame.
+    pub fn animation_tick(engine_id: isize) -> isize {
         let mut reg = match registry().lock() {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(_) => return -1,
         };
         let eng = match reg.get_mut(engine_id as u64) {
             Some(e) => e,
-            None => return Vec::new(),
+            None => return -2,
         };
-        match eng.tick(Instant::now()) {
-            Some(o) => o.bytes,
+        eng.tick(Instant::now());
+        0
+    }
+
+    /// Read the frame bytes captured by the most recent `animation_tick`.
+    /// Pure accessor — does NOT advance the engine. Returns an empty
+    /// `Vec<u8>` when the last tick had no new frame to emit (status 1) or
+    /// when the engine has never been ticked.
+    pub fn animation_tick_bytes(engine_id: isize) -> Vec<u8> {
+        let reg = match registry().lock() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        match reg.get(engine_id as u64) {
+            Some(e) => e.last_tick_bytes.clone(),
             None => Vec::new(),
         }
     }
@@ -339,6 +378,12 @@ mod steel_api_tests {
         let id = steel_api::animation_register("image/gif".into(), tiny_gif_bytes());
         assert!(id > 0, "expected positive engine_id, got {id}");
 
+        // Advance the engine. animation_tick returns 0 on success and
+        // publishes the playback status into the last-tick snapshot
+        // (accessed via animation_tick_status).
+        let advance_rc = steel_api::animation_tick(id);
+        assert_eq!(advance_rc, 0, "tick advance failed: {advance_rc}");
+
         let bytes = steel_api::animation_tick_bytes(id);
         let status = steel_api::animation_tick_status(id);
         // Status must be 0 (new frame) or 1 (no change); first tick is always 0.
@@ -373,11 +418,16 @@ mod steel_api_tests {
         let rc = steel_api::animation_set_pause(id, true);
         assert_eq!(rc, 0isize, "pause should return 0");
 
-        // Ticking while paused returns empty bytes and status 2.
-        let bytes = steel_api::animation_tick_bytes(id);
-        assert!(bytes.is_empty(), "paused tick should return empty bytes");
+        // Advancing while paused publishes status 2 + empty bytes into
+        // the last-tick snapshot. animation_tick itself returns 0 on
+        // successful advance.
+        let advance_rc = steel_api::animation_tick(id);
+        assert_eq!(advance_rc, 0, "tick advance failed: {advance_rc}");
+
         let status = steel_api::animation_tick_status(id);
-        assert_eq!(status, 2isize, "paused tick should return status 2");
+        assert_eq!(status, 2isize, "paused tick should publish status 2");
+        let bytes = steel_api::animation_tick_bytes(id);
+        assert!(bytes.is_empty(), "paused tick should publish empty bytes");
 
         let rc = steel_api::animation_set_pause(id, false);
         assert_eq!(rc, 0isize, "resume should return 0");

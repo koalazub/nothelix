@@ -22,7 +22,23 @@
 
 (require "helix/editor.scm")
 (require "helix/misc.scm")
+(require (prefix-in helix. "helix/commands.scm"))
 (require-builtin steel/time)
+
+;; The animation FFI lives only on a freshly-rebuilt fork binary. Older
+;; binaries (any `hx` installed before the animation patch landed) have
+;; no `add-or-replace-animating-raw-content!` symbol at all, so a bare
+;; reference would fail at module-load time and take the whole plugin
+;; down. Wrap every fork-FFI call in `with-handler` + `eval` so the
+;; symbol is resolved at runtime and missing-FFI errors are caught and
+;; turned into silent no-ops — same graceful-degrade pattern math-
+;; render.scm uses for its line-annotation FFIs. Replays land as
+;; static (or not at all) until the user rebuilds; nothing crashes.
+(define (try-add-or-replace-animating-raw-content! bytes id height char-idx is-anim?)
+  (with-handler
+    (lambda (_) #false)
+    (eval `(helix.static.add-or-replace-animating-raw-content!
+             ,bytes ,id ,height ,char-idx ,is-anim?))))
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -62,7 +78,7 @@
 (define *first-hint-shown?* #f)
 
 (define (animation-engine-count)
-  (length (hash-keys *animations*)))
+  (length (hash-keys->list *animations*)))
 
 (define (now-ms)
   (current-milliseconds))
@@ -145,7 +161,7 @@
     (lambda (eid)
       (animation-set-pause eid #t)
       (state-update! eid (lambda (s) (hash-insert s 'manual-paused? #t))))
-    (hash-keys *animations*)))
+    (hash-keys->list *animations*)))
 
 ;;@doc
 ;; Resume every engine the user explicitly paused.
@@ -155,7 +171,7 @@
       (animation-set-pause eid #f)
       (state-update! eid (lambda (s) (hash-insert s 'manual-paused? #f)))
       (schedule-tick eid))
-    (hash-keys *animations*)))
+    (hash-keys->list *animations*)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Tick scheduler
@@ -179,7 +195,7 @@
        (when (> (bytes-length bytes) 0)
          (define char-idx (hash-try-get st 'char-idx))
          (define height (animation-tick-height eid))
-         (helix.static.add-or-replace-animating-raw-content!
+         (try-add-or-replace-animating-raw-content!
            bytes
            eid
            height
@@ -219,23 +235,35 @@
              (let ([anchor (hash-try-get st 'char-idx)])
                (and (>= cursor anchor)
                     (< cursor (+ anchor 4096))))))
-      (hash-keys *animations*)))
+      (hash-keys->list *animations*)))
   (if (null? candidates) #f (car candidates)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Hooks
 ;;; ---------------------------------------------------------------------------
 
-(register-hook! "document-focus-lost"
+;; The fork-only events `document-focus-{lost,gained}` and
+;; `viewport-changed` only exist on a hx binary that includes the
+;; pause-when-offscreen patch. Older binaries throw `Unknown event
+;; type` and abort plugin load. Wrap the registrations in `with-
+;; handler` so missing events degrade to "no auto-pause" — animations
+;; still play, they just keep ticking when the doc isn't focused
+;; until the user rebuilds hx.
+(define (try-register-hook! event handler)
+  (with-handler
+    (lambda (_) #false)
+    (register-hook! event handler)))
+
+(try-register-hook! "document-focus-lost"
   (lambda (doc-id)
     (for-each
       (lambda (eid)
         (define st (state-of eid))
         (when (equal? (hash-try-get st 'doc-id) doc-id)
           (state-update! eid (lambda (s) (hash-insert s 'focused? #f)))))
-      (hash-keys *animations*))))
+      (hash-keys->list *animations*))))
 
-(register-hook! "document-focus-gained"
+(try-register-hook! "document-focus-gained"
   (lambda (doc-id)
     (for-each
       (lambda (eid)
@@ -243,9 +271,9 @@
         (when (equal? (hash-try-get st 'doc-id) doc-id)
           (state-update! eid (lambda (s) (hash-insert s 'focused? #t)))
           (schedule-tick eid)))
-      (hash-keys *animations*))))
+      (hash-keys->list *animations*))))
 
-(register-hook! "viewport-changed"
+(try-register-hook! "viewport-changed"
   (lambda (_view-id doc-id anchor height)
     (define visible-end (+ anchor (* (max 1 height) 200))) ; ~200 chars/row heuristic
     (for-each
@@ -260,7 +288,7 @@
             (lambda (s) (hash-insert s 'visible? newly-visible?)))
           (when (and newly-visible? (not was-visible?))
             (schedule-tick eid))))
-      (hash-keys *animations*))))
+      (hash-keys->list *animations*))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Discoverability

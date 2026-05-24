@@ -44,6 +44,13 @@ pub struct AnimationEngine {
     last_content_id: Option<u64>,
     /// Set on every `tick()` call so Steel-side accessors can read it immediately after.
     pub last_tick_meta: TickMetaSnapshot,
+    /// Frame bytes from the most recent `tick()`. Cached so the Steel
+    /// API can split "advance the engine" (`animation-tick`) from
+    /// "read the bytes the last advance produced"
+    /// (`animation-tick-bytes`) without re-advancing — otherwise a
+    /// `(animation-tick) (animation-tick-bytes)` pair from Scheme would
+    /// step the engine twice and skip every other frame.
+    pub last_tick_bytes: Vec<u8>,
 }
 
 impl AnimationEngine {
@@ -66,6 +73,7 @@ impl AnimationEngine {
             },
             last_content_id: None,
             last_tick_meta: TickMetaSnapshot::default(),
+            last_tick_bytes: Vec::new(),
         }
     }
 
@@ -104,6 +112,7 @@ impl AnimationEngine {
                     next_delay_ms: 0,
                     frame_index: 0,
                 };
+                self.last_tick_bytes.clear();
                 return None;
             }
         };
@@ -117,6 +126,7 @@ impl AnimationEngine {
                     next_delay_ms: 0,
                     frame_index: 0,
                 };
+                self.last_tick_bytes.clear();
                 return None;
             }
             Err(e) => {
@@ -127,6 +137,7 @@ impl AnimationEngine {
                     next_delay_ms: 0,
                     frame_index: 0,
                 };
+                self.last_tick_bytes.clear();
                 return None;
             }
         };
@@ -150,6 +161,7 @@ impl AnimationEngine {
             next_delay_ms: next_delay_ms as isize,
             frame_index: frame.frame_index as isize,
         };
+        self.last_tick_bytes = bytes.clone();
         Some(TickOutput {
             bytes,
             height,

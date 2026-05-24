@@ -482,7 +482,7 @@ mod tests {
         let params = json!({"plot_data": []});
         let result_json = render_braille_chart(params.to_string());
         let result: Value = serde_json::from_str(&result_json).unwrap();
-        assert!(result["error"].as_str().unwrap().len() > 0);
+        assert!(!result["error"].as_str().unwrap().is_empty());
     }
 
     #[test]
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn fmt_num_decimal() {
-        assert_eq!(fmt_num(3.14), "3.14");
+        assert_eq!(fmt_num(2.75), "2.75");
     }
 
     #[test]

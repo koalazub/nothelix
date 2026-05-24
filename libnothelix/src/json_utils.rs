@@ -166,6 +166,59 @@ pub fn json_get_plot_data(json_str: String) -> String {
         .unwrap_or_default()
 }
 
+/// Recursively search `v` for image data (base64 or `file:` sidecar marker).
+///
+/// Handles two formats:
+/// - runner.jl: `{"images": [{"format": "png", "data": "..."}]}`
+/// - Jupyter:   `{"image/png": "base64..."}`
+fn find_first_image_data(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(map) => {
+            // runner.jl images format.
+            if let Some(arr) = map.get("images").and_then(|i| i.as_array()) {
+                if let Some(first) = arr.first() {
+                    if let Some(data) = first.get("data").and_then(|d| d.as_str()) {
+                        if !data.is_empty() {
+                            return Some(data.to_string());
+                        }
+                    }
+                }
+            }
+            // Jupyter-style mime types. Animated MIMEs are searched first so a
+            // bundle that contains both `image/gif` and `image/png` (the kernel
+            // emits PNG as a static fallback alongside the animated payload)
+            // returns the animated bytes; the plugin reads the
+            // `application/x-nothelix-animation` marker to know to register an
+            // animation engine instead of treating it as a static image.
+            for key in &[
+                "image/gif",
+                "image/apng",
+                "image/webp",
+                "video/mp4",
+                "video/webm",
+                "application/json+lottie",
+                "image/png",
+                "image/jpeg",
+            ] {
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
+                    if !s.is_empty() {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            // Recurse into child values.
+            for val in map.values() {
+                if let Some(img) = find_first_image_data(val) {
+                    return Some(img);
+                }
+            }
+            None
+        }
+        Value::Array(arr) => arr.iter().find_map(find_first_image_data),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,55 +373,3 @@ mod tests {
     }
 }
 
-/// Recursively search `v` for image data (base64 or `file:` sidecar marker).
-///
-/// Handles two formats:
-/// - runner.jl: `{"images": [{"format": "png", "data": "..."}]}`
-/// - Jupyter:   `{"image/png": "base64..."}`
-fn find_first_image_data(v: &Value) -> Option<String> {
-    match v {
-        Value::Object(map) => {
-            // runner.jl images format.
-            if let Some(arr) = map.get("images").and_then(|i| i.as_array()) {
-                if let Some(first) = arr.first() {
-                    if let Some(data) = first.get("data").and_then(|d| d.as_str()) {
-                        if !data.is_empty() {
-                            return Some(data.to_string());
-                        }
-                    }
-                }
-            }
-            // Jupyter-style mime types. Animated MIMEs are searched first so a
-            // bundle that contains both `image/gif` and `image/png` (the kernel
-            // emits PNG as a static fallback alongside the animated payload)
-            // returns the animated bytes; the plugin reads the
-            // `application/x-nothelix-animation` marker to know to register an
-            // animation engine instead of treating it as a static image.
-            for key in &[
-                "image/gif",
-                "image/apng",
-                "image/webp",
-                "video/mp4",
-                "video/webm",
-                "application/json+lottie",
-                "image/png",
-                "image/jpeg",
-            ] {
-                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
-                }
-            }
-            // Recurse into child values.
-            for val in map.values() {
-                if let Some(img) = find_first_image_data(val) {
-                    return Some(img);
-                }
-            }
-            None
-        }
-        Value::Array(arr) => arr.iter().find_map(find_first_image_data),
-        _ => None,
-    }
-}

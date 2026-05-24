@@ -40,7 +40,7 @@ mod fixtures {
     pub fn static_webp() -> Vec<u8> {
         use ::image::codecs::webp::WebPEncoder;
         use ::image::{ColorType, ImageEncoder};
-        let rgba = vec![0u8, 200, 50, 255].repeat(64);
+        let rgba = [0u8, 200, 50, 255].repeat(64);
         let mut buf = Vec::new();
         WebPEncoder::new_lossless(&mut buf)
             .write_image(&rgba, 8, 8, ColorType::Rgba8.into())
