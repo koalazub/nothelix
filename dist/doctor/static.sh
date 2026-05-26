@@ -37,6 +37,34 @@ doctor_check_hx_nothelix() {
     fi
 }
 
+# Probe the installed hx-nothelix for the four fork-only Steel symbols.
+# A stale binary (built from an upstream Helix that predates the
+# inline-image-rendering branch) won't have them, and the plugin will
+# degrade silently — no animation, no auto-pause on focus/viewport
+# change. Fail loud with a `darwin-rebuild switch` hint so this stops
+# being a "the editor doesn't show nothelix" mystery.
+doctor_check_fork_symbols() {
+    if [ ! -x "$HX_NOTHELIX" ]; then
+        return
+    fi
+    local missing=""
+    local sym
+    for sym in \
+        "add-or-replace-animating-raw-content" \
+        "document-focus-gained" \
+        "document-focus-lost" \
+        "viewport-changed"; do
+        if ! strings "$HX_NOTHELIX" 2>/dev/null | grep -Fq "$sym"; then
+            missing="${missing}${missing:+ }${sym}"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        _doctor_fail "hx-nothelix predates fork patches — missing: ${missing} — run 'darwin-rebuild switch' (or rebuild ~/projects/helix via cargo + copy to ~/.local/bin/hx-nothelix)"
+    else
+        _doctor_pass "fork patches present in hx-nothelix (animation FFI + focus + viewport events)"
+    fi
+}
+
 doctor_check_libnothelix() {
     local dylib=""
     if [ -f "$STEEL_HOME/native/libnothelix.dylib" ]; then
@@ -218,6 +246,7 @@ doctor_check_terminal_graphics() {
 
 run_static_doctor_checks() {
     doctor_check_hx_nothelix
+    doctor_check_fork_symbols
     doctor_check_libnothelix
     doctor_check_build_id
     doctor_check_plugin_cogs

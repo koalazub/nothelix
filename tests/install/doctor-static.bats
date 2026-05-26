@@ -18,7 +18,19 @@ setup() {
     mkdir -p "$HOME/.config/helix"
     mkdir -p "$HOME/.local/share/nothelix/lsp"
 
-    echo "#!/bin/bash" > "$HOME/.local/bin/hx-nothelix"
+    # Embed the four fork-only Steel symbols as plain strings inside the
+    # fake hx-nothelix so doctor_check_fork_symbols sees them. A real
+    # built binary has these embedded in its read-only data segment;
+    # plain comments work for the strings(1)-based probe.
+    cat > "$HOME/.local/bin/hx-nothelix" <<'EOF'
+#!/bin/bash
+# fork-symbol markers consumed by nothelix doctor:
+# add-or-replace-animating-raw-content
+# document-focus-gained
+# document-focus-lost
+# viewport-changed
+exit 0
+EOF
     chmod +x "$HOME/.local/bin/hx-nothelix"
     cp "$WRAPPER" "$HOME/.local/bin/nothelix"
     echo "#!/bin/bash" > "$HOME/.local/bin/julia-lsp"
@@ -109,4 +121,27 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"terminal graphics"* ]]
     [[ "$output" == *"skipped"* ]]
+}
+
+@test "doctor passes the fork-symbols check on a freshly-built fork" {
+    # Default setup() already embeds the four fork-only symbols.
+    run "$WRAPPER" doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fork patches present"* ]]
+}
+
+@test "doctor fails the fork-symbols check on a stale hx-nothelix" {
+    # Overwrite the fake binary with one that lacks the symbols.
+    cat > "$HOME/.local/bin/hx-nothelix" <<'EOF'
+#!/bin/bash
+# upstream-only helix, no fork patches
+exit 0
+EOF
+    chmod +x "$HOME/.local/bin/hx-nothelix"
+
+    run "$WRAPPER" doctor
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"predates fork patches"* ]]
+    [[ "$output" == *"add-or-replace-animating-raw-content"* ]]
+    [[ "$output" == *"darwin-rebuild switch"* ]]
 }
