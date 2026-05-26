@@ -62,6 +62,7 @@
 (require "nothelix/math-format.scm")
 (require "nothelix/math-render.scm")
 (require "nothelix/animation.scm")
+(require "nothelix/health.scm")
 
 ;; Test modules are loaded dynamically (see test commands below).
 
@@ -130,6 +131,13 @@
 ;;@doc
 ;; Toggle nothelix debug logging on/off.
 (define (nothelix-debug-toggle) (nothelix-debug-toggle!))
+
+;;@doc
+;; Print the current nothelix health-check status. Re-runs the check
+;; on every invocation so you can verify a fix mid-session without
+;; restarting Helix. Empty output ⇒ all checks pass; otherwise the
+;; full set of issues prints on the status line, joined by " | ".
+(define (nothelix-status) (nothelix-status-command))
 
 ;;; ============================================================================
 ;;; SCAFFOLDING — thin command shims for the `nothelix/scaffold.scm` module

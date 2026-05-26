@@ -7,6 +7,7 @@ pub mod animation;
 mod chart;
 pub mod error_format;
 mod graphics;
+mod health;
 mod json_utils;
 mod kernel;
 mod kitty_placeholder;
@@ -159,6 +160,12 @@ fn build_module() -> FFIModule {
     // ── Error formatting ─────────────────────────────────────────────
     m.register_fn("format-julia-error", format_julia_error);
     m.register_fn("format-julia-error-with-notebook", format_julia_error_with_notebook);
+
+    // ── Health check ──────────────────────────────────────────────────
+    // Pure-Rust subset of `nothelix doctor`'s static checks. Returns
+    // TSV (one issue per line, `id\tmessage\tfix_hint`) for in-editor
+    // diagnostics — empty string means healthy.
+    m.register_fn("nothelix-health-check-tsv", health::nothelix_health_check_tsv);
 
     // ── LSP environment ───────────────────────────────────────────────
     m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
