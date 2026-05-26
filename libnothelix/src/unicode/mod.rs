@@ -325,6 +325,62 @@ mod tests {
     }
 
     #[test]
+    fn integral_with_ascii_bounds_keeps_limits_normal_size() {
+        // Sibling of sum_paired_limits — confirms the past_close fix
+        // doesn't shrink ASCII integral bounds either. `\int_a^b f(x)dx`
+        // must produce ∫ but not ᵃ / ᵇ.
+        let result = latex_overlays(r"\int_a^b f(x)dx".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(replacements.contains(&"∫"), "expected ∫, got {replacements:?}");
+        assert!(
+            !replacements.contains(&"ᵃ") && !replacements.contains(&"ᵇ"),
+            "integral bounds got shrunk: {replacements:?}"
+        );
+    }
+
+    #[test]
+    fn prod_with_braced_subscript_and_bare_super_keeps_limits() {
+        // `\prod_{i=1}^n a_i` — the paired (braced sub + bare super)
+        // case at a different big operator. ∏ must appear; the bare
+        // `^n` must NOT shrink to ⁿ (subscript a_i can stay subscripted
+        // since `a_i` is the inline-sub path, not a big-op limit).
+        let result = latex_overlays(r"\prod_{i=1}^n a_i".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(replacements.contains(&"∏"), "expected ∏, got {replacements:?}");
+        assert!(
+            !replacements.contains(&"ⁿ"),
+            "paired-limit shrunk superscript: {replacements:?}"
+        );
+    }
+
+    #[test]
+    fn inline_super_on_non_big_operator_still_works() {
+        // `\alpha^2` is NOT a big-operator context. pending_limits
+        // logic should not interfere; the inline-super path must
+        // still convert `2` to `²` while α is concealed normally.
+        let result = latex_overlays(r"\alpha^2 + \beta^3".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(replacements.contains(&"α"), "missing α: {replacements:?}");
+        assert!(replacements.contains(&"²"), "inline super ^2 lost: {replacements:?}");
+        assert!(replacements.contains(&"³"), "inline super ^3 lost: {replacements:?}");
+    }
+
+    #[test]
     fn latex_overlays_norm_delimiter() {
         let result = latex_overlays(r"\|B - B_1\|".into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
