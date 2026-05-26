@@ -100,8 +100,17 @@ install profile="release":
     echo "Installed: {{ local_bin }}/julia-lsp"
 
     # ── LSP environment ───────────────────────────────────────────────────
-    echo "Setting up Julia LSP environment..."
-    julia --startup-file=no --quiet --project="{{ nothelix_root }}/lsp" -e 'using Pkg; Pkg.instantiate()'
+    # The dylib + plugin + julia-lsp wrapper are already installed above; the
+    # Pkg.instantiate() step is a "warm the cache" nice-to-have so the FIRST
+    # `.jl` open doesn't pay LSP cold-start. If julia isn't on PATH (running
+    # outside `nix develop`), skip with a hint instead of failing the whole
+    # install — the LSP also instantiates on demand when julia-lsp first runs.
+    if command -v julia >/dev/null 2>&1; then
+        echo "Setting up Julia LSP environment..."
+        julia --startup-file=no --quiet --project="{{ nothelix_root }}/lsp" -e 'using Pkg; Pkg.instantiate()'
+    else
+        echo "julia not on PATH — skipping LSP env warm-up (will instantiate on first .jl open)"
+    fi
 
 # build without installing
 build profile="release":
