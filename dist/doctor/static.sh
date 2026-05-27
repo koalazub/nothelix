@@ -37,12 +37,17 @@ doctor_check_hx_nothelix() {
     fi
 }
 
-# Probe the installed hx-nothelix for the four fork-only Steel symbols.
-# A stale binary (built from an upstream Helix that predates the
-# inline-image-rendering branch) won't have them, and the plugin will
-# degrade silently — no animation, no auto-pause on focus/viewport
-# change. Fail loud with a `darwin-rebuild switch` hint so this stops
-# being a "the editor doesn't show nothelix" mystery.
+# Probe the installed hx-nothelix for fork-only indicators that survive
+# release-mode LTO. The Steel kebab-case match-arm strings (e.g.
+# "document-focus-gained") get inlined as immediate byte comparisons by
+# LLVM under `lto = "thin"`, so grep returns 0 even on freshly-patched
+# binaries — checking those produces false positives. Instead probe:
+#
+#   - add-or-replace-animating-raw-content: registered via register_fn,
+#     which keeps the literal addressable for the FFI dispatch table.
+#     Distinguishes the fork from upstream Helix outright.
+#   - DocumentFocusGained / ViewportChanged: Rust struct names emitted
+#     by the events! macro; LTO preserves them as debug type info.
 doctor_check_fork_symbols() {
     if [ ! -x "$HX_NOTHELIX" ]; then
         return
@@ -51,9 +56,8 @@ doctor_check_fork_symbols() {
     local sym
     for sym in \
         "add-or-replace-animating-raw-content" \
-        "document-focus-gained" \
-        "document-focus-lost" \
-        "viewport-changed"; do
+        "DocumentFocusGained" \
+        "ViewportChanged"; do
         if ! strings "$HX_NOTHELIX" 2>/dev/null | grep -Fq "$sym"; then
             missing="${missing}${missing:+ }${sym}"
         fi

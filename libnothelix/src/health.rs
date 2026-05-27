@@ -112,11 +112,30 @@ fn check_fork_symbols(hx_nothelix: &Path, issues: &mut Vec<HealthIssue>) {
     let Ok(bytes) = std::fs::read(hx_nothelix) else {
         return;
     };
+
+    // Probe for symbols that reliably survive release-mode LTO. The
+    // Steel kebab-case match-arm strings (e.g. "document-focus-gained")
+    // get inlined as immediate byte comparisons by LLVM under
+    // `lto = "thin"`, so byte-level grep returns 0 even when the match
+    // arm code is present. Use indicators that the compiler is forced
+    // to preserve in rodata:
+    //
+    //   - `add-or-replace-animating-raw-content`: registered via
+    //     `register_fn(name, …)` which keeps the literal addressable
+    //     for the function-table entry. Distinguishes fork from
+    //     upstream Helix outright.
+    //   - `DocumentFocusGained` / `ViewportChanged`: Rust struct names
+    //     emitted by the `events!` macro. Survive LTO because debug
+    //     info / type names keep them addressable.
+    //
+    // We do NOT probe for the kebab-case match-arm names — they're
+    // LTO-stripped from release builds even on freshly-patched
+    // binaries, producing a false-positive "missing" diagnostic that
+    // wasted a session of debugging this very check.
     const FORK_SYMBOLS: &[&str] = &[
         "add-or-replace-animating-raw-content",
-        "document-focus-gained",
-        "document-focus-lost",
-        "viewport-changed",
+        "DocumentFocusGained",
+        "ViewportChanged",
     ];
     let missing: Vec<&&str> = FORK_SYMBOLS
         .iter()
@@ -261,11 +280,13 @@ mod tests {
         let hx = bin_dir.join("hx-nothelix");
         fs::write(
             &hx,
-            // All four fork-only symbols embedded as plain strings.
+            // LTO-stable fork indicators: the FFI binding name plus the
+            // Rust struct names emitted by the events! macro. These
+            // survive release-mode LTO that strips the Steel kebab-case
+            // match-arm strings.
             "add-or-replace-animating-raw-content \
-             document-focus-gained \
-             document-focus-lost \
-             viewport-changed",
+             DocumentFocusGained \
+             ViewportChanged",
         )
         .unwrap();
         (steel_home, share, hx)
@@ -363,13 +384,15 @@ mod tests {
 
     #[test]
     fn partial_fork_symbols_lists_only_missing_ones() {
-        // Simulate the user's current install: has the animation FFI +
-        // focus-lost but missing focus-gained + viewport-changed.
+        // Simulate a binary that has the animation FFI registered but
+        // lacks the focus/viewport event types entirely (e.g. upstream
+        // Helix patched only halfway). The report should name the
+        // missing struct identifiers, not the animation binding.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(
             &hx,
-            "add-or-replace-animating-raw-content document-focus-lost only",
+            "add-or-replace-animating-raw-content only — no events",
         )
         .unwrap();
         let issues = run_health_check(&steel, &share, &hx);
@@ -377,10 +400,33 @@ mod tests {
             .iter()
             .find(|i| i.id == "fork-symbols-missing")
             .expect("expected fork-symbols-missing");
-        assert!(issue.message.contains("document-focus-gained"));
-        assert!(issue.message.contains("viewport-changed"));
+        assert!(issue.message.contains("DocumentFocusGained"));
+        assert!(issue.message.contains("ViewportChanged"));
         assert!(!issue.message.contains("add-or-replace-animating-raw-content"));
-        assert!(!issue.message.contains("document-focus-lost"));
+    }
+
+    #[test]
+    fn lto_friendly_binary_with_only_indicator_strings_passes() {
+        // Regression: a freshly-built fork binary contains the
+        // register_fn-anchored animation literal and the Rust struct
+        // names, but LTO strips the Steel kebab-case match-arm strings
+        // (`document-focus-gained`, `viewport-changed`). The earlier
+        // probe wrongly flagged these as missing on a healthy build.
+        // The current probe must accept the LTO shape.
+        let td = TempDir::new().unwrap();
+        let (steel, share, hx) = healthy_layout(&td);
+        fs::write(
+            &hx,
+            "this binary has: add-or-replace-animating-raw-content \
+             plus event types DocumentFocusGained ViewportChanged \
+             — the kebab-case strings are inlined and absent",
+        )
+        .unwrap();
+        let issues = run_health_check(&steel, &share, &hx);
+        assert!(
+            issues.iter().all(|i| i.id != "fork-symbols-missing"),
+            "LTO-shaped fresh binary must not be flagged: {issues:#?}"
+        );
     }
 
     #[test]

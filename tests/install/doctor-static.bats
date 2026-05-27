@@ -18,17 +18,17 @@ setup() {
     mkdir -p "$HOME/.config/helix"
     mkdir -p "$HOME/.local/share/nothelix/lsp"
 
-    # Embed the four fork-only Steel symbols as plain strings inside the
-    # fake hx-nothelix so doctor_check_fork_symbols sees them. A real
-    # built binary has these embedded in its read-only data segment;
-    # plain comments work for the strings(1)-based probe.
+    # Embed LTO-stable fork indicators inside the fake hx-nothelix so
+    # doctor_check_fork_symbols sees them. Real release builds inline
+    # the Steel kebab-case match-arm strings; only these indicators
+    # reliably survive: the register_fn-anchored animation literal and
+    # the Rust struct names emitted by the events! macro.
     cat > "$HOME/.local/bin/hx-nothelix" <<'EOF'
 #!/bin/bash
-# fork-symbol markers consumed by nothelix doctor:
+# fork indicators consumed by nothelix doctor:
 # add-or-replace-animating-raw-content
-# document-focus-gained
-# document-focus-lost
-# viewport-changed
+# DocumentFocusGained
+# ViewportChanged
 exit 0
 EOF
     chmod +x "$HOME/.local/bin/hx-nothelix"

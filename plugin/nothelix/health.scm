@@ -54,9 +54,30 @@
 
 ;;@doc
 ;; Re-run the static health check and update the cache. Returns the
-;; list of issues for callers that want the structured form.
+;; list of issues for callers that want the structured form. Every
+;; invocation also writes its outcome to the helix log so the user can
+;; review past health-check results via :log-open even after the
+;; status-line message has scrolled away.
 (define (run-health-check!)
   (set! *health-issues* (parse-health-tsv (nothelix-health-check-tsv)))
+  (cond
+    [(null? *health-issues*)
+     (log::info! "nothelix-health: all checks pass")]
+    [else
+     (log::warn! (string-append
+                  "nothelix-health: "
+                  (number->string (length *health-issues*))
+                  " issue(s) detected"))
+     (for-each
+      (lambda (issue)
+        (log::warn! (string-append
+                     "nothelix-health: ["
+                     (list-ref issue 0)
+                     "] "
+                     (list-ref issue 1)
+                     " — fix: "
+                     (list-ref issue 2))))
+      *health-issues*)])
   *health-issues*)
 
 ;; Format a single issue for the status line. Issue is
@@ -66,7 +87,9 @@
 
 ;; Show the first issue with a hint pointing at :nothelix-status for
 ;; more. No-op when the cache is empty (healthy install) or when the
-;; hint has already been shown this session.
+;; hint has already been shown this session. The status line is
+;; transient — the persistent record lives in the helix log (written
+;; by run-health-check! and viewable via :log-open).
 (define (surface-first-issue!)
   (when (and (not *health-hint-shown?*)
              (not (null? *health-issues*)))
@@ -77,7 +100,9 @@
       (if (> (length *health-issues*) 1)
           (string-append base " (more — :nothelix-status)")
           base))
-    (set-status! msg)))
+    (set-status! msg)
+    (log::warn!
+      (string-append "nothelix-health (surfaced to user): " msg))))
 
 ;;@doc
 ;; Schedule the first-issue surface after a short delay so Helix has
