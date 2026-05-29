@@ -3,6 +3,13 @@
 //! This file registers FFI functions with the Steel VM and holds small
 //! utility functions that don't warrant their own module.
 
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`, `Vec<u8>`,
+// `isize`), not borrows. The clippy lint is correct that some args
+// aren't consumed internally, but the owned type is load-bearing for the
+// FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 pub mod animation;
 mod chart;
 pub mod error_format;
@@ -22,7 +29,7 @@ use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
 
 steel::declare_module!(build_module);
 
-/// Compile-time BUILD_ID for this libnothelix. Used by
+/// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
 /// installed fork binary.
 ///
@@ -206,7 +213,7 @@ fn format_julia_error(error_json: String, raw_error: String) -> String {
 }
 
 /// Like `format_julia_error` but also takes the notebook `.jl` path so
-/// UndefVarError messages can be enriched by the static-scan enricher
+/// `UndefVarError` messages can be enriched by the static-scan enricher
 /// — "variable `t` is defined in @cell N (later in the notebook), move
 /// it up" instead of the generic "check spelling" hint.
 fn format_julia_error_with_notebook(

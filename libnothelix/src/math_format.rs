@@ -1,3 +1,8 @@
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`), not
+// borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 //! Multi-line formatter for math environments in Julia notebook comments.
 //!
 //! When LaTeX block environments (`\begin{cases}...\end{cases}`, `pmatrix`,
@@ -110,12 +115,9 @@ fn join_cases_continuations(lines: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for raw in lines {
         let body = raw.trim_end_matches('\r');
-        let content = match body.strip_prefix("# ") {
-            Some(c) => c,
-            None => {
-                out.push((*raw).to_string());
-                continue;
-            }
+        let content = if let Some(c) = body.strip_prefix("# ") { c } else {
+            out.push((*raw).to_string());
+            continue;
         };
         let prev_is_continuation = out
             .last()
@@ -137,13 +139,10 @@ fn join_cases_continuations(lines: &[&str]) -> Vec<String> {
 fn emit_reformatted_block_line(line: &str, out: &mut String) {
     let body = line.trim_end_matches('\r');
     let cr = if line.len() > body.len() { "\r" } else { "" };
-    let content = match body.strip_prefix("# ") {
-        Some(c) => c,
-        None => {
-            out.push_str(line);
-            out.push('\n');
-            return;
-        }
+    let content = if let Some(c) = body.strip_prefix("# ") { c } else {
+        out.push_str(line);
+        out.push('\n');
+        return;
     };
     if content.trim().is_empty() {
         out.push_str(line);

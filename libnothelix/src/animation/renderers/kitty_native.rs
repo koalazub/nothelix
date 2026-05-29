@@ -1,5 +1,5 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::*;
+use crate::animation::renderer::{TerminalCaps, AnimationRenderer, RendererEntry, RendererCapabilities, RenderContext};
 use base64::Engine;
 use std::collections::HashMap;
 
@@ -53,19 +53,19 @@ impl AnimationRenderer for KittyNativeRenderer {
 
     fn teardown(&mut self, engine_id: u64) -> Vec<u8> {
         self.sent_first_frame.remove(&engine_id);
-        format!("\x1b_Ga=d,d=I,i={};\x1b\\", engine_id).into_bytes()
+        format!("\x1b_Ga=d,d=I,i={engine_id};\x1b\\").into_bytes()
     }
 }
 
 fn kitty_full_transmission(image_id: u32, b64: &str) -> Vec<u8> {
     let mut out = Vec::new();
-    chunked_apc(&mut out, &format!("a=T,f=100,i={},q=2", image_id), b64);
+    chunked_apc(&mut out, &format!("a=T,f=100,i={image_id},q=2"), b64);
     out
 }
 
 fn kitty_add_frame(image_id: u32, b64: &str) -> Vec<u8> {
     let mut out = Vec::new();
-    chunked_apc(&mut out, &format!("a=a,i={},r=1,q=2", image_id), b64);
+    chunked_apc(&mut out, &format!("a=a,i={image_id},r=1,q=2"), b64);
     out
 }
 
@@ -80,11 +80,11 @@ fn chunked_apc(out: &mut Vec<u8>, key_value: &str, payload_b64: &str) {
         let m = if last { 0 } else { 1 };
         let chunk_str = std::str::from_utf8(chunk).unwrap_or("");
         let prefix = if i == 0 {
-            format!("{},m={}", key_value, m)
+            format!("{key_value},m={m}")
         } else {
-            format!("m={}", m)
+            format!("m={m}")
         };
-        out.extend_from_slice(format!("\x1b_G{};{}\x1b\\", prefix, chunk_str).as_bytes());
+        out.extend_from_slice(format!("\x1b_G{prefix};{chunk_str}\x1b\\").as_bytes());
     }
 }
 

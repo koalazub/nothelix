@@ -100,21 +100,18 @@ impl AnimationEngine {
     }
 
     pub fn tick(&mut self, now: Instant) -> Option<TickOutput> {
-        let elapsed = match &self.state {
-            PlaybackState::Playing { started_at, accumulated_paused } => {
-                now.saturating_duration_since(*started_at)
-                    .saturating_sub(*accumulated_paused)
-            }
-            _ => {
-                self.last_tick_meta = TickMetaSnapshot {
-                    status: 2,
-                    height: 0,
-                    next_delay_ms: 0,
-                    frame_index: 0,
-                };
-                self.last_tick_bytes.clear();
-                return None;
-            }
+        let elapsed = if let PlaybackState::Playing { started_at, accumulated_paused } = &self.state {
+            now.saturating_duration_since(*started_at)
+                .saturating_sub(*accumulated_paused)
+        } else {
+            self.last_tick_meta = TickMetaSnapshot {
+                status: 2,
+                height: 0,
+                next_delay_ms: 0,
+                frame_index: 0,
+            };
+            self.last_tick_bytes.clear();
+            return None;
         };
         let frame = match self.decoder.frame_at(elapsed) {
             Ok(Some(f)) => f,

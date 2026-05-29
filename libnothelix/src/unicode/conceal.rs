@@ -1,3 +1,8 @@
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`), not
+// borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 //! Document-level conceal computation.
 //!
 //! The Rust FFI layer exposes two entry points:
@@ -37,7 +42,7 @@ pub fn compute_conceal_overlays(text: String) -> String {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
             if let Some(arr) = v.as_array() {
                 for obj in arr {
-                    if let Some(offset) = obj.get("offset").and_then(|o| o.as_i64()) {
+                    if let Some(offset) = obj.get("offset").and_then(serde_json::Value::as_i64) {
                         let replacement = obj
                             .get("replacement")
                             .and_then(|o| o.as_str())
@@ -108,12 +113,9 @@ pub fn compute_conceal_overlays_for_comments_with_options(
     while i < lines.len() {
         let (line_byte_start, line) = lines[i];
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        let content = match trimmed.strip_prefix("# ") {
-            Some(c) => c,
-            None => {
-                i += 1;
-                continue;
-            }
+        let content = if let Some(c) = trimmed.strip_prefix("# ") { c } else {
+            i += 1;
+            continue;
         };
 
         // Detect multi-line $$ block: a line whose content is just "$$"
@@ -282,7 +284,7 @@ pub fn compute_conceal_overlays_for_comments_with_options(
 /// position maps to the char index of the character that contains that
 /// byte (so mid-character bytes map correctly too).
 /// Map an offset in the joined $$ block string back to a document byte offset.
-/// `offset_map` is (joined_offset, doc_byte_offset) for each line start.
+/// `offset_map` is (`joined_offset`, `doc_byte_offset`) for each line start.
 fn map_joined_offset(offset_map: &[(usize, usize)], joined_offset: usize) -> usize {
     // Find the last line whose joined_offset <= the target
     let mut best_joined = 0;

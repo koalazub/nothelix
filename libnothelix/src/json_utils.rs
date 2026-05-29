@@ -3,6 +3,13 @@
 //! All functions accept a JSON string and return a string value, keeping the
 //! Scheme side free from direct JSON parsing.
 
+// Steel's `register_fn` marshals values from the Steel VM and requires the
+// registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// not borrows. So while clippy::needless_pass_by_value is technically
+// correct that we don't consume the args internally, the owned type is
+// load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 use serde_json::Value;
 
 pub fn json_get(json_str: String, key: String) -> String {
@@ -46,7 +53,7 @@ const ANIMATED_MIMES: &[&str] = &[
     "application/json+lottie",
 ];
 
-/// If the given display_data JSON contains an animated MIME, returns the MIME
+/// If the given `display_data` JSON contains an animated MIME, returns the MIME
 /// string ("image/gif" etc). Returns empty string when only static MIMEs are
 /// present. The plugin uses this signal to decide whether to register an
 /// animation engine vs render a static image.
@@ -105,7 +112,7 @@ pub fn json_get_first_image_with_dir(json_str: String, kernel_dir: String) -> St
 }
 
 /// Like `json_get_first_image_with_dir` but returns raw bytes instead of base64.
-/// Uses the new Steel ByteVector FFI return (Phase 3).
+/// Uses the new Steel `ByteVector` FFI return (Phase 3).
 /// Returns empty vec if no image found.
 pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> Vec<u8> {
     let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
@@ -131,12 +138,9 @@ pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> Vec<u
 /// `keys_csv` is comma-separated field names. Returns tab-separated values.
 /// Missing fields return empty strings. Non-string values are stringified.
 pub fn json_get_many(json_str: String, keys_csv: String) -> String {
-    let parsed = match serde_json::from_str::<Value>(&json_str) {
-        Ok(v) => v,
-        Err(_) => {
-            let count = keys_csv.split(',').count();
-            return "\t".repeat(count.saturating_sub(1));
-        }
+    let parsed = if let Ok(v) = serde_json::from_str::<Value>(&json_str) { v } else {
+        let count = keys_csv.split(',').count();
+        return "\t".repeat(count.saturating_sub(1));
     };
     keys_csv
         .split(',')
@@ -161,7 +165,7 @@ pub fn json_get_plot_data(json_str: String) -> String {
     serde_json::from_str::<Value>(&json_str)
         .ok()
         .and_then(|v| v.get("plot_data").cloned())
-        .filter(|v| v.is_array())
+        .filter(serde_json::Value::is_array)
         .map(|v| v.to_string())
         .unwrap_or_default()
 }

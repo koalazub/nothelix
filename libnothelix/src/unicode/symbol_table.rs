@@ -1,3 +1,14 @@
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`), not
+// borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+// The symbol table is a verbatim mirror of Julia's stdlib/REPL —
+// preserving the original glyph encoding (sometimes pre-composed, sometimes
+// combining-form) lets `unicode_lookup` match Julia REPL output byte-for-byte
+// when the user copies a symbol from the Julia REPL into Pluto.jl-style code.
+// Forcing NFC normalisation would diverge from the source of truth.
+#![allow(clippy::unicode_not_nfc)]
+
 //! LaTeX name → Unicode character lookup table.
 //!
 //! Extracted verbatim from Julia's stdlib REPL package

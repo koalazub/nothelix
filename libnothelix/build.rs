@@ -1,14 +1,14 @@
 //! Build script for libnothelix.
 //!
-//! Generates a stable BUILD_ID at compile time so the wrapper's
+//! Generates a stable `BUILD_ID` at compile time so the wrapper's
 //! `nothelix doctor` check can verify that hx-nothelix and libnothelix
 //! came from the same CI run. Format:
 //!
-//!   ci-<yyyymmdd>-<short-git-sha>     (when NOTHELIX_CI_BUILD=1)
+//!   ci-<yyyymmdd>-<short-git-sha>     (when `NOTHELIX_CI_BUILD=1`)
 //!   dev-<short-git-sha>[-dirty]       (otherwise)
 //!
-//! The CI release workflow exports NOTHELIX_CI_BUILD=1 and a fixed
-//! NOTHELIX_BUILD_DATE before invoking cargo. Local developer builds
+//! The CI release workflow exports `NOTHELIX_CI_BUILD=1` and a fixed
+//! `NOTHELIX_BUILD_DATE` before invoking cargo. Local developer builds
 //! get the `dev-` prefix automatically.
 
 use std::process::Command;

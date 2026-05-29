@@ -16,7 +16,7 @@ impl FrameCache {
         }
     }
 
-    /// Look up a cached frame by frame_index. On hit, promotes the entry to most-recent.
+    /// Look up a cached frame by `frame_index`. On hit, promotes the entry to most-recent.
     pub fn get(&mut self, frame_index: u64) -> Option<DecodedFrame> {
         let pos = self.entries.iter().position(|(i, _)| *i == frame_index)?;
         let entry = self.entries.remove(pos)?;

@@ -1,3 +1,9 @@
+// Steel's `register_fn` (used by the `steel_api` submodule) marshals
+// values from the Steel VM and requires the registered fn's signature
+// to take owned types (`String`, `Vec<u8>`), not borrows. The owned type
+// is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 //! Animated media engine. Library-agnostic — accepts any MIME bundle
 //! the decoder table understands.
 
@@ -80,15 +86,12 @@ pub unsafe extern "C" fn nothelix_animation_tick(
         Some(e) => e,
         None => return -1,
     };
-    let out = match eng.tick(Instant::now()) {
-        Some(o) => o,
-        None => {
-            *out_payload_ptr = std::ptr::null_mut();
-            *out_payload_len = 0;
-            *out_height = 0;
-            *out_next_delay_ms = 0;
-            return 2; // finished or paused
-        }
+    let out = if let Some(o) = eng.tick(Instant::now()) { o } else {
+        *out_payload_ptr = std::ptr::null_mut();
+        *out_payload_len = 0;
+        *out_height = 0;
+        *out_next_delay_ms = 0;
+        return 2; // finished or paused
     };
     *out_height = out.height;
     *out_next_delay_ms = out.next_delay_ms;
@@ -200,7 +203,7 @@ pub mod steel_api {
     ///
     /// Side effects: updates `last_tick_meta` and `last_tick_bytes` on the
     /// engine. Returns `0` on success, `-1` on lock failure, `-2` when the
-    /// engine_id is unknown. The actual frame bytes and metadata are read
+    /// `engine_id` is unknown. The actual frame bytes and metadata are read
     /// out via the dedicated accessor functions afterwards
     /// (`animation_tick_bytes`, `_status`, `_height`, `_delay_ms`,
     /// `_frame_index`) — splitting "advance" from "read" keeps a single
@@ -232,7 +235,7 @@ pub mod steel_api {
     ///   1 = no change (same frame content, bytes empty)
     ///   2 = finished or paused
     ///  -1 = decode error
-    ///  -2 = engine_id not found (never registered or already dropped)
+    ///  -2 = `engine_id` not found (never registered or already dropped)
     pub fn animation_tick_status(engine_id: isize) -> isize {
         lock_registry()
             .get(engine_id as u64)

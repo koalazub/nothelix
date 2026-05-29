@@ -1,5 +1,5 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::*;
+use crate::animation::renderer::{TerminalCaps, AnimationRenderer, RendererEntry, RendererCapabilities, RenderContext};
 
 pub struct KittyReplayRenderer {
     last_id: Option<u64>,

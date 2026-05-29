@@ -1,5 +1,10 @@
 //! Graphics protocol detection and Kitty escape sequence generation.
 
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// not borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 use std::fmt::Write;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};

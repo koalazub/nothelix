@@ -1,3 +1,8 @@
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// not borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 //! Braille chart renderer.
 //!
 //! Converts x/y data series into Unicode braille characters (U+2800–U+28FF)
@@ -76,11 +81,11 @@ fn fmt_num(v: f64) -> String {
     if v.abs() < 1e-12 {
         "0".into()
     } else if v.abs() >= 1e6 || (v.abs() < 0.01 && v.abs() > 0.0) {
-        format!("{:.2e}", v)
+        format!("{v:.2e}")
     } else if v.fract().abs() < 1e-9 {
-        format!("{:.0}", v)
+        format!("{v:.0}")
     } else {
-        format!("{:.2}", v)
+        format!("{v:.2}")
     }
 }
 
@@ -121,12 +126,12 @@ fn parse_series(data: &Value) -> Vec<Series> {
             let x: Vec<f64> = s["x"]
                 .as_array()?
                 .iter()
-                .filter_map(|v| v.as_f64())
+                .filter_map(serde_json::Value::as_f64)
                 .collect();
             let y: Vec<f64> = s["y"]
                 .as_array()?
                 .iter()
-                .filter_map(|v| v.as_f64())
+                .filter_map(serde_json::Value::as_f64)
                 .collect();
             if x.is_empty() || y.is_empty() {
                 return None;

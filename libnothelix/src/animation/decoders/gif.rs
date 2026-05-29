@@ -1,4 +1,4 @@
-use crate::animation::decoder::*;
+use crate::animation::decoder::{DecodedFrame, AnimationMetadata, AnimatedDecoder, DecoderError, DecoderEntry};
 use std::sync::Arc;
 use std::time::Duration;
 

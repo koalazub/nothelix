@@ -70,7 +70,7 @@ pub struct ErrorHint {
     pub id: String,
     pub match_type: String,
     /// Normalised selector. `flat_tokens(&self.selector)` / similar can
-    /// rebuild the old flat view for hints that need it; match_hint
+    /// rebuild the old flat view for hints that need it; `match_hint`
     /// below consults the selector directly.
     pub selector: Selector,
     pub title: String,
@@ -197,12 +197,12 @@ pub struct StructuredError {
     #[serde(default)]
     pub unexecuted_deps: Vec<i64>,
     /// Runtime type → list of in-scope variables currently of that type.
-    /// Populated by the kernel on MethodError. Empty when the kernel
+    /// Populated by the kernel on `MethodError`. Empty when the kernel
     /// isn't running or nothing has been executed yet.
     #[serde(default)]
     pub in_scope_variable_types: HashMap<String, Vec<ScopeVarEntry>>,
-    /// In-scope values the failing MethodError's function *does* have
-    /// a method for. Populated for single-arg MethodErrors.
+    /// In-scope values the failing `MethodError`'s function *does* have
+    /// a method for. Populated for single-arg `MethodErrors`.
     #[serde(default)]
     pub method_candidates: Vec<MethodCandidate>,
 }
@@ -228,9 +228,9 @@ pub struct MethodCandidate {
 /// Where the formatter learned about a variable's defining cell. Each
 /// variant carries exactly the fields meaningful for its provenance.
 /// Serialized form uses a `source` tag — kernel must emit one of:
-///   {"source":"executed","defined_in_cell":N,"status":"done"}
-///   {"source":"pending_registered","defined_in_cell":N}
-///   {"source":"static_source","defined_in_cell":N,"line_in_cell":L,"line_text":"…"}
+///   {"`source":"executed","defined_in_cell":N,"status":"done`"}
+///   {"`source":"pending_registered","defined_in_cell":N`}
+///   {"`source":"static_source","defined_in_cell":N,"line_in_cell":L,"line_text"`:"…"}
 #[derive(Debug, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum VarContext {
@@ -280,23 +280,23 @@ pub struct ErrorFrame {
 
 /// Tokens extracted from an error message by scanning.
 struct ErrorTokens {
-    /// The Julia error type: "MethodError", "BoundsError", etc.
+    /// The Julia error type: "`MethodError`", "`BoundsError`", etc.
     error_type: String,
-    /// The message body (everything after "ErrorType: ").
+    /// The message body (everything after "`ErrorType`: ").
     message: String,
     /// Function name from "matching func(" or similar.
     func_name: String,
-    /// Type names extracted from ::TypeName patterns.
+    /// Type names extracted from `::TypeName` patterns.
     types: Vec<String>,
 }
 
 /// Scan an error string into structured tokens.
-/// Handles both "ErrorType: message" format and bare messages.
+/// Handles both "`ErrorType`: message" format and bare messages.
 fn tokenize_error(error_type: &str, message: &str) -> ErrorTokens {
     let full = if error_type.is_empty() {
         message.to_string()
     } else {
-        format!("{}: {}", error_type, message)
+        format!("{error_type}: {message}")
     };
 
     let (etype, msg) = split_error_type(&full);
@@ -313,8 +313,8 @@ fn tokenize_error(error_type: &str, message: &str) -> ErrorTokens {
     }
 }
 
-/// Split "ErrorType: message" → (type, message).
-/// Falls back to ("", full_string) if no colon found.
+/// Split "`ErrorType`: message" → (type, message).
+/// Falls back to ("", `full_string`) if no colon found.
 fn split_error_type(s: &str) -> (String, String) {
     if let Some(colon) = s.find(": ") {
         let etype = s[..colon].trim();
@@ -372,8 +372,8 @@ fn scan_word_or_operator(s: &str) -> String {
     s[..i].to_string()
 }
 
-/// Extract all type names from ::TypeName patterns in the message.
-/// "no method matching +(::Vector{Float64}, ::Int64)" → ["Vector", "Int64"]
+/// Extract all type names from `::TypeName` patterns in the message.
+/// "no method matching +(`::Vector{Float64`}, `::Int64`)" → ["Vector", "Int64"]
 fn scan_types(msg: &str) -> Vec<String> {
     let mut types = Vec::new();
     let bytes = msg.as_bytes();
@@ -484,7 +484,7 @@ fn find_hint<'a>(hints: &'a [ErrorHint], tokens: &ErrorTokens) -> Option<&'a Err
 /// Expand template placeholders using extracted tokens.
 /// - {func} → extracted function name
 /// - {type1}, {type2} → extracted type names
-/// - {var} → first word of message (for UndefVarError)
+/// - {var} → first word of message (for `UndefVarError`)
 fn expand_template(template: &str, tokens: &ErrorTokens) -> String {
     let mut result = template.to_string();
 
@@ -531,12 +531,12 @@ fn enrich_with_source_context(err: &StructuredError) -> Option<String> {
     }
 }
 
-/// For DimensionMismatch: extract operand names from source line and dimensions
+/// For `DimensionMismatch`: extract operand names from source line and dimensions
 /// from the message, render a concrete note.
 ///
 /// Message: "a has size (8, 8), b has size (5, 5), mismatch at dim 1"
-/// Source:  "result = S_hat * K"
-/// Output:  "   = note: S_hat is (8, 8), K is (5, 5) — need size(S_hat, 2) == size(K, 1)"
+/// Source:  "result = `S_hat` * K"
+/// Output:  "   = note: `S_hat` is (8, 8), K is (5, 5) — need `size(S_hat`, 2) == size(K, 1)"
 fn enrich_dimension_mismatch(message: &str, source: &str) -> Option<String> {
     // Extract dimensions from message: look for "size (M, N)" or "(M, N)" patterns
     let dims = scan_dimension_pairs(message);
@@ -581,7 +581,7 @@ fn enrich_dimension_mismatch(message: &str, source: &str) -> Option<String> {
     Some(out)
 }
 
-/// For BoundsError with source context: show what the user was indexing.
+/// For `BoundsError` with source context: show what the user was indexing.
 fn enrich_bounds_error(message: &str, source: &str) -> Option<String> {
     // Extract the array length from "N-element"
     let n = scan_element_count(message)?;
@@ -595,13 +595,13 @@ fn enrich_bounds_error(message: &str, source: &str) -> Option<String> {
     Some(out)
 }
 
-/// For MethodError: extract the function call from the source line, map
+/// For `MethodError`: extract the function call from the source line, map
 /// the types from the error message to the actual arguments.
 ///
-/// Message: "no method matching similar(::Int64, ::Type{Float64})"
+/// Message: "no method matching `similar(::Int64`, `::Type{Float64`})"
 /// Source:  "B = similar(n, Float64)"
-/// Output:  "   = note: `n` is Int64 — similar() expects an array as the first argument"
-///          "   = help: try: similar(your_array, Float64, size(your_array))"
+/// Output:  "   = note: `n` is Int64 — `similar()` expects an array as the first argument"
+///          "   = help: try: `similar(your_array`, Float64, `size(your_array)`)"
 fn enrich_method_error(message: &str, source: &str, err: &StructuredError) -> Option<String> {
     // "objects of type T are not callable" is a distinct shape from
     // "no method matching f(::T)". Route it separately so we can give
@@ -714,7 +714,7 @@ fn enrich_method_error(message: &str, source: &str, err: &StructuredError) -> Op
     Some(out)
 }
 
-/// Render a "not callable" MethodError — the Julia parser's way of
+/// Render a "not callable" `MethodError` — the Julia parser's way of
 /// saying "you called a name, but that name is bound to a value (array,
 /// number, …), not a function".
 ///
@@ -755,9 +755,7 @@ fn enrich_not_callable(message: &str, source: &str, err: &StructuredError) -> Op
         } else {
             // Fall back to listing all in-scope values of that type;
             // user can eyeball which one matches.
-            out.push_str(&format!(
-                "   = scope: in-scope values of type {obj_type}:\n"
-            ));
+            let _ = writeln!(out, "   = scope: in-scope values of type {obj_type}:");
             for e in entries {
                 let _ = writeln!(out, "   |   `{}` — cell {}", e.name, e.cell);
             }
@@ -837,8 +835,8 @@ fn scan_call_identifiers(source: &str) -> Vec<String> {
     names
 }
 
-/// Extract type names from a MethodError call signature.
-/// "matching similar(::Int64, ::Type{Float64})" → ["Int64", "Type{Float64}"]
+/// Extract type names from a `MethodError` call signature.
+/// "matching `similar(::Int64`, `::Type{Float64`})" → ["Int64", "Type{Float64}"]
 fn scan_types_from_call(msg: &str) -> Vec<String> {
     let start = match msg.find("matching ") {
         Some(i) => i + 9,
@@ -978,7 +976,7 @@ fn scan_dimension_pairs(msg: &str) -> Vec<String> {
 }
 
 /// Extract the two operands of a binary operator from a source line.
-/// "result = S_hat * K" → ["S_hat", "K"]
+/// "result = `S_hat` * K" → ["`S_hat`", "K"]
 /// "A \ b" → ["A", "b"]
 /// "x .+ y" → ["x", "y"]
 fn scan_binary_operands(source: &str) -> Vec<String> {
@@ -1014,7 +1012,7 @@ fn scan_binary_operands(source: &str) -> Vec<String> {
 }
 
 /// Extract a variable name from an expression fragment.
-/// "S_hat" → "S_hat", "func(x)" → "", "A'" → "A"
+/// "`S_hat`" → "`S_hat`", "func(x)" → "", "A'" → "A"
 fn extract_var_name(s: &str) -> String {
     let s = s.trim().trim_end_matches('\''); // strip transpose
     let bytes = s.as_bytes();
@@ -1042,7 +1040,7 @@ fn extract_var_name(s: &str) -> String {
     }
 }
 
-/// Extract element count from "N-element" in a BoundsError message.
+/// Extract element count from "N-element" in a `BoundsError` message.
 fn scan_element_count(msg: &str) -> Option<String> {
     let idx = msg.find("-element")?;
     // Walk backwards to find the number
@@ -1056,7 +1054,7 @@ fn scan_element_count(msg: &str) -> Option<String> {
     }
 }
 
-/// For ParseError: point at the exact column where the parser got confused,
+/// For `ParseError`: point at the exact column where the parser got confused,
 /// and surface bracket-balance issues on the offending line. Julia's
 /// parser often reports `Expected end` for problems that are really
 /// "you have one more `]` than `[`" — the caret column lands far from
@@ -1146,7 +1144,7 @@ fn count_bracket_balance(source: &str) -> (i32, i32, i32) {
     (paren, bracket, brace)
 }
 
-/// Extract column number from ParseError message "Error @ file:line:col".
+/// Extract column number from `ParseError` message "Error @ <file:line:col>".
 fn scan_parse_error_col(msg: &str) -> Option<usize> {
     for line in msg.lines() {
         let trimmed = line.trim().trim_start_matches("# ");
@@ -1244,7 +1242,7 @@ pub fn format_error(ctx: &FormatContext<'_>) -> String {
     "error: unknown\n".to_string()
 }
 
-/// Populates `cell_context` for UndefVarError by scanning the notebook
+/// Populates `cell_context` for `UndefVarError` by scanning the notebook
 /// `.jl` source for an assignment to the missing variable. Only fires
 /// when the kernel supplied no context of its own.
 struct StaticCellScanEnricher;
@@ -1326,44 +1324,34 @@ fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
     let mut out = String::new();
 
     // ── Header ──
-    match &matched {
-        Some(h) => {
-            let title = expand_template(&h.title, &tokens);
-            out.push_str(&format!("error[{}]: {}\n", h.id, title));
-        }
-        None => {
-            let short = err.message.lines().next().unwrap_or(&err.message);
-            out.push_str(&format!("error[{}]: {}\n", err.error_type, truncate(short, 80)));
-        }
+    if let Some(h) = &matched {
+        let title = expand_template(&h.title, &tokens);
+        let _ = writeln!(out, "error[{}]: {}", h.id, title);
+    } else {
+        let short = err.message.lines().next().unwrap_or(&err.message);
+        let _ = writeln!(out, "error[{}]: {}", err.error_type, truncate(short, 80));
     }
 
     // ── Location ──
     if err.cell_index >= 0 && err.cell_line > 0 {
-        out.push_str(&format!(
-            "  --> cell {}, line {}\n",
-            err.cell_index, err.cell_line
-        ));
+        let _ = writeln!(out, "  --> cell {}, line {}", err.cell_index, err.cell_line);
     } else if err.cell_index >= 0 {
-        out.push_str(&format!("  --> cell {}\n", err.cell_index));
+        let _ = writeln!(out, "  --> cell {}", err.cell_index);
     }
 
     // ── Source context ──
     out.push_str("   |\n");
     if !err.source_line.is_empty() && err.cell_line > 0 {
         let src = err.source_line.trim_end();
-        out.push_str(&format!("{:>3} | {}\n", err.cell_line, src));
+        let _ = writeln!(out, "{:>3} | {}", err.cell_line, src);
         let leading = err.source_line.len() - err.source_line.trim_start().len();
         let width = src.trim().len();
         if width > 0 {
-            out.push_str(&format!(
-                "   | {}{}\n",
-                " ".repeat(leading),
-                "^".repeat(width)
-            ));
+            let _ = writeln!(out, "   | {}{}", " ".repeat(leading), "^".repeat(width));
         }
     }
     let short_msg = truncate(err.message.lines().next().unwrap_or(&err.message), 120);
-    out.push_str(&format!("   | {}\n", short_msg));
+    let _ = writeln!(out, "   | {short_msg}");
     out.push_str("   |\n");
 
     // ── Help + example ──
@@ -1371,14 +1359,14 @@ fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
         if !h.help.is_empty() {
             let help = expand_template(&h.help, &tokens);
             for line in wrap(&help, 72) {
-                out.push_str(&format!("   = help: {}\n", line));
+                let _ = writeln!(out, "   = help: {line}");
             }
         }
         if !h.example.is_empty() {
             let ex = expand_template(&h.example, &tokens);
             out.push_str("   = example:\n");
             for line in ex.lines() {
-                out.push_str(&format!("   |   {}\n", line));
+                let _ = writeln!(out, "   |   {line}");
             }
         }
     }
@@ -1418,7 +1406,7 @@ fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
         out.push_str("   = note: call chain:\n");
         for (i, entry) in chain.iter().enumerate() {
             let pfx = if i == 0 { "   |   → " } else { "   |     → " };
-            out.push_str(&format!("{}{}\n", pfx, entry));
+            let _ = writeln!(out, "{pfx}{entry}");
         }
     }
 
@@ -1489,93 +1477,91 @@ fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
     // Extract location from "# Error @ file:line:col" or "Error @ none:10:23"
     let location = scan_error_location(&cleaned);
 
-    match &matched {
-        Some(h) => {
-            let title = expand_template(&h.title, &tokens);
-            out.push_str(&format!("error[{}]: {}\n", h.id, title));
+    if let Some(h) = &matched {
+        let title = expand_template(&h.title, &tokens);
+        let _ = writeln!(out, "error[{}]: {}", h.id, title);
 
-            // Show location if extracted
-            if let Some(ref loc) = location {
-                out.push_str(&format!("  --> {}\n", loc));
-            }
+        // Show location if extracted
+        if let Some(ref loc) = location {
+            let _ = writeln!(out, "  --> {loc}");
+        }
 
-            out.push_str("   |\n");
-            // Show meaningful content lines (skip the error type echo and location lines)
-            let content_lines: Vec<&str> = cleaned
-                .lines()
-                .filter(|l| {
-                    let t = l.trim().trim_start_matches("# ");
-                    !t.is_empty()
-                        && !t.starts_with("Error @")
-                        && !t.starts_with("ParseError")
-                        && !t.starts_with("LoadError")
-                })
-                .take(3)
-                .collect();
-            if content_lines.is_empty() {
-                // No meaningful content — just show the raw first line
-                let first = truncate(cleaned.lines().next().unwrap_or(&cleaned), 120);
-                out.push_str(&format!("   | {}\n", first));
-            } else {
-                for line in &content_lines {
-                    out.push_str(&format!("   | {}\n", line));
-                }
-            }
-            out.push_str("   |\n");
-
-            if !h.help.is_empty() {
-                let help = expand_template(&h.help, &tokens);
-                for line in wrap(&help, 72) {
-                    out.push_str(&format!("   = help: {}\n", line));
-                }
-            }
-            if !h.example.is_empty() {
-                let ex = expand_template(&h.example, &tokens);
-                out.push_str("   = example:\n");
-                for line in ex.lines() {
-                    out.push_str(&format!("   |   {}\n", line));
-                }
+        out.push_str("   |\n");
+        // Show meaningful content lines (skip the error type echo and location lines)
+        let content_lines: Vec<&str> = cleaned
+            .lines()
+            .filter(|l| {
+                let t = l.trim().trim_start_matches("# ");
+                !t.is_empty()
+                    && !t.starts_with("Error @")
+                    && !t.starts_with("ParseError")
+                    && !t.starts_with("LoadError")
+            })
+            .take(3)
+            .collect();
+        if content_lines.is_empty() {
+            // No meaningful content — just show the raw first line
+            let first = truncate(cleaned.lines().next().unwrap_or(&cleaned), 120);
+            let _ = writeln!(out, "   | {first}");
+        } else {
+            for line in &content_lines {
+                let _ = writeln!(out, "   | {line}");
             }
         }
-        None => {
-            let first = cleaned.lines().next().unwrap_or(&cleaned);
-            if !tokens.error_type.is_empty() && !tokens.message.is_empty() {
-                out.push_str(&format!(
-                    "error[{}]: {}\n",
-                    tokens.error_type,
-                    truncate(&tokens.message, 100)
-                ));
-            } else if !tokens.error_type.is_empty() {
-                // Error type but no message — still show it cleanly
-                out.push_str(&format!("error[{}]\n", tokens.error_type));
-            } else {
-                out.push_str(&format!("error: {}\n", truncate(first, 100)));
-            }
+        out.push_str("   |\n");
 
-            if let Some(ref loc) = location {
-                out.push_str(&format!("  --> {}\n", loc));
+        if !h.help.is_empty() {
+            let help = expand_template(&h.help, &tokens);
+            for line in wrap(&help, 72) {
+                let _ = writeln!(out, "   = help: {line}");
             }
-
-            out.push_str("   |\n");
-            // Show content lines, filtering noise
-            let content_lines: Vec<&str> = cleaned
-                .lines()
-                .filter(|l| {
-                    let t = l.trim().trim_start_matches("# ");
-                    !t.is_empty() && !t.starts_with("Error @")
-                })
-                .skip(1) // skip the "ErrorType: ..." line already in header
-                .take(3)
-                .collect();
-            if content_lines.is_empty() && !tokens.message.is_empty() {
-                out.push_str(&format!("   | {}\n", tokens.message));
-            } else {
-                for line in &content_lines {
-                    out.push_str(&format!("   | {}\n", line));
-                }
-            }
-            out.push_str("   |\n");
         }
+        if !h.example.is_empty() {
+            let ex = expand_template(&h.example, &tokens);
+            out.push_str("   = example:\n");
+            for line in ex.lines() {
+                let _ = writeln!(out, "   |   {line}");
+            }
+        }
+    } else {
+        let first = cleaned.lines().next().unwrap_or(&cleaned);
+        if !tokens.error_type.is_empty() && !tokens.message.is_empty() {
+            let _ = writeln!(
+                out,
+                "error[{}]: {}",
+                tokens.error_type,
+                truncate(&tokens.message, 100)
+            );
+        } else if !tokens.error_type.is_empty() {
+            // Error type but no message — still show it cleanly
+            let _ = writeln!(out, "error[{}]", tokens.error_type);
+        } else {
+            let _ = writeln!(out, "error: {}", truncate(first, 100));
+        }
+
+        if let Some(ref loc) = location {
+            let _ = writeln!(out, "  --> {loc}");
+        }
+
+        out.push_str("   |\n");
+        // Show content lines, filtering noise
+        let content_lines: Vec<&str> = cleaned
+            .lines()
+            .filter(|l| {
+                let t = l.trim().trim_start_matches("# ");
+                !t.is_empty() && !t.starts_with("Error @")
+            })
+            .skip(1) // skip the "ErrorType: ..." line already in header
+            .take(3)
+            .collect();
+        if content_lines.is_empty() && !tokens.message.is_empty() {
+            let _ = writeln!(out, "   | {}", tokens.message);
+        } else {
+            for line in &content_lines {
+                let _ = writeln!(out, "   | {line}");
+            }
+        }
+        out.push_str("   |\n");
     }
 
     out
@@ -1594,7 +1580,7 @@ fn clean_path(path: &str) -> String {
                 Some(slash) => &after[slash + 1..],
                 None => after,
             };
-            return format!("stdlib:{}", cleaned);
+            return format!("stdlib:{cleaned}");
         }
         if let Some(idx) = path.find("/share/julia/") {
             return path[idx + 13..].to_string();
@@ -1638,7 +1624,7 @@ fn build_call_chain(frames: &[ErrorFrame]) -> Vec<String> {
         }
         if frame.is_user_code {
             if collapsed > 0 {
-                chain.push(format!("[{} stdlib frames]", collapsed));
+                chain.push(format!("[{collapsed} stdlib frames]"));
                 collapsed = 0;
             }
             if frame.line > 0 {

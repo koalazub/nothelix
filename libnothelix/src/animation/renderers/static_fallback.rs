@@ -1,5 +1,7 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::*;
+use crate::animation::renderer::{TerminalCaps, AnimationRenderer, RendererEntry, RendererCapabilities, RenderContext};
+#[cfg(test)]
+use crate::animation::renderer::select_renderer;
 
 pub struct StaticFallbackRenderer {
     last_id: Option<u64>,

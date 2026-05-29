@@ -1,3 +1,8 @@
+// Steel's `register_fn` marshals values from the Steel VM and requires
+// the registered fn's signature to take owned types (`String`), not
+// borrows. The owned type is load-bearing for the FFI dispatcher.
+#![allow(clippy::needless_pass_by_value)]
+
 //! Byte-offset LaTeX scanner.
 //!
 //! Walks a math region's text once, dispatching to a focused `scan_*`
@@ -282,7 +287,7 @@ impl<'a> Scanner<'a> {
         }
 
         // Find matching \end{env_name}.
-        let end_tag = format!("\\end{{{}}}", env_name);
+        let end_tag = format!("\\end{{{env_name}}}");
         let env_content_start = i;
         let env_end_pos = self.text[env_content_start..]
             .find(&end_tag)

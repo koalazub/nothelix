@@ -1,6 +1,6 @@
 //! Markdown/LaTeX → Typst conversion for notebook export.
 //!
-//! Reference: https://typst.app/docs/guides/guide-for-latex-users/
+//! Reference: <https://typst.app/docs/guides/guide-for-latex-users>/
 //!
 //! Key differences from LaTeX:
 //! - Display math: `$ content $` (space after opening, before closing $)
@@ -179,7 +179,7 @@ pub fn latex_to_typst_math(latex: &str) -> String {
                 let inner = s[start + open.len()..end].to_string();
                 let rows: Vec<String> = inner
                     .split("\\\\")
-                    .map(|row| row.split('&').map(|c| c.trim()).collect::<Vec<_>>().join(", "))
+                    .map(|row| row.split('&').map(str::trim).collect::<Vec<_>>().join(", "))
                     .filter(|r| !r.trim().is_empty())
                     .collect();
                 s = format!("{}mat({}){}", &s[..start], rows.join("; "), &s[end + close.len()..]);
