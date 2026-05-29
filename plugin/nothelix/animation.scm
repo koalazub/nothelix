@@ -25,11 +25,31 @@
 (require (prefix-in helix. "helix/commands.scm"))
 (require-builtin steel/time)
 
-;; Fork-only FFI. `nothelix-doctor` + the in-editor health check warn
-;; the user when `hx` predates this symbol; on a stale binary the
-;; plugin fails to load, which is the desired outcome — better a loud
-;; failure caught by `:nothelix-status` than silent "animations don't
-;; play and nobody knows why".
+;; Steel resolves `prefix-in` imports at module-load time against the
+;; import set, not at call time. So a bare `helix.static.add-or-
+;; replace-animating-raw-content!` reference here fails with
+;; FreeIdentifier on any binary where the symbol isn't already in the
+;; helix.static. namespace at load — not just stale binaries, but ALSO
+;; rebuilt binaries where the static-command registration timing means
+;; the symbol may not be in the import set yet when this module is
+;; first compiled. `eval` defers the lookup to call time so we get the
+;; symbol when it actually exists, and `with-handler` turns missing-
+;; symbol errors into silent no-ops (which the doctor / `:nothelix-
+;; status` then flag for the user). `set-status!` keeps the failure
+;; visible on the first occurrence per session so silent-no-op doesn't
+;; mask a genuine stale-binary case.
+(define *animation-ffi-warned?* #f)
+;; Rust signature is (cx, view_id, char_idx, id, payload, height, is_animating);
+;; cx is auto-injected by Steel, leaving 6 user-visible args in that exact order.
+(define (try-add-or-replace-animating-raw-content! view-id char-idx id bytes height is-anim?)
+  (with-handler
+    (lambda (err)
+      (when (not *animation-ffi-warned?*)
+        (set! *animation-ffi-warned?* #t)
+        (set-status! "nothelix: animation FFI unavailable — run :nothelix-status"))
+      #false)
+    (eval `(helix.static.add-or-replace-animating-raw-content!
+             ,view-id ,char-idx ,id ,bytes ,height ,is-anim?))))
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -191,11 +211,12 @@
        (when (> (bytes-length bytes) 0)
          (define char-idx (hash-try-get st 'char-idx))
          (define height (animation-tick-height eid))
-         (helix.static.add-or-replace-animating-raw-content!
-           bytes
-           eid
-           height
+         (try-add-or-replace-animating-raw-content!
+           (editor-focus)
            char-idx
+           eid
+           bytes
+           height
            #t)
          (helix.redraw))]
       [(= status 2)
