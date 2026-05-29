@@ -1,56 +1,137 @@
 name: release
 
+# Auto-release on green main: every push that passes the gate ships a patch
+# release (tag auto-bumped from the latest v* tag). Minor/major bumps stay
+# manual via workflow_dispatch with an explicit version. Put `[skip release]`
+# in the commit message to opt a push out.
+
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit release tag (vX.Y.Z); overrides the auto patch bump'
+        required: false
+        default: ''
+
+# Two pushes in flight would race the tag computation. GitHub holds at most
+# ONE pending run per group: under rapid pushes the middle run is cancelled
+# outright, so that push never gets its own release — the newest run ships a
+# commit that already contains it. Intentional: we want the latest green main
+# released, not one tag per push.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  version:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so every release tag is visible
+
+      - name: Compute next version
+        id: next
+        env:
+          OVERRIDE: ${{ inputs.version }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then
+            # Strict vMAJOR.MINOR.PATCH only: a suffixed tag (v1.2.3-rc1,
+            # v1.2.3junk) would win the v:refname sort and break every
+            # subsequent auto patch bump.
+            BARE="${OVERRIDE#v}"
+            MAJOR="${BARE%%.*}"
+            REST="${BARE#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            ok=true
+            [ "v$BARE" = "$OVERRIDE" ] || ok=false                     # leading v
+            [ "$BARE" = "${MAJOR}.${MINOR}.${PATCH}" ] || ok=false     # exactly two dots
+            for part in "$MAJOR" "$MINOR" "$PATCH"; do
+              case "$part" in
+                ''|*[!0-9]*) ok=false ;;                               # digits only
+              esac
+            done
+            if [ "$ok" != true ]; then
+              echo "version override must be strict vMAJOR.MINOR.PATCH (digits only, no suffix), got: $OVERRIDE" >&2
+              exit 1
+            fi
+            NEXT="$OVERRIDE"
+          else
+            LATEST=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+            [ -n "$LATEST" ] || LATEST="v0.0.0"
+            BARE="${LATEST#v}"
+            MAJOR="${BARE%%.*}"
+            REST="${BARE#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "tag $NEXT already exists" >&2
+            exit 1
+          fi
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "releasing $NEXT"
+
+  # Self-contained green gate — deliberately not coupled to ci.yml so a
+  # release run proves its own commit.
+  gate:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v17
+
+      - name: fmt
+        run: nix develop -c cargo fmt --all --check
+
+      - name: clippy
+        run: nix develop -c cargo clippy -p libnothelix --all-targets -- -D warnings
+
+      - name: tests
+        run: nix develop -c cargo nextest run -p libnothelix
+
   build:
+    needs: [version, gate]
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        # linux-arm64 deferred: no arm64 runner budget yet; install.sh
+        # already reports it as unsupported.
         include:
           - target: darwin-arm64
             runner: macos-14
             system: aarch64-darwin
           - target: linux-x86_64
-            runner: ubuntu-24.04
+            runner: ubuntu-latest
             system: x86_64-linux
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v17
-      - uses: DeterminateSystems/magic-nix-cache-action@v8
 
       - name: Build tarball
         run: nix build .#packages.${{ matrix.system }}.nothelix-tarball -L
 
-      - name: Package as .tar.gz
-        run: |
-          TAG="${GITHUB_REF_NAME:-vdev}"
-          DIR=$(ls -d result/nothelix-* | head -1)
-          TARBALL="nothelix-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "$TARBALL" -C result "$(basename "$DIR")"
-          if command -v shasum >/dev/null; then
-            shasum -a 256 "$TARBALL" > "${TARBALL}.sha256"
-          else
-            sha256sum "$TARBALL" > "${TARBALL}.sha256"
-          fi
-          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+      - name: Package release artifacts
+        run: scripts/package-release-tarball.sh result "${{ needs.version.outputs.version }}" "${{ matrix.target }}" out
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: |
-            ${{ env.TARBALL }}
-            ${{ env.TARBALL }}.sha256
+          path: out/
+          if-no-files-found: error
 
   release:
-    needs: build
-    runs-on: ubuntu-24.04
+    needs: [version, build]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -59,7 +140,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Combine SHA256SUMS
+      - name: Assemble release assets
         run: |
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
@@ -69,9 +150,10 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: |
             release/*.tar.gz
             release/SHA256SUMS
             release/install.sh
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true

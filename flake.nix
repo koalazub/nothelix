@@ -281,7 +281,12 @@
             echo "  just test          run libnothelix tests"
             echo "  nix build          build the release tarball"
             echo ""
-            exec nu
+            # The hook runs before `nix develop -c <cmd>`'s command, so an
+            # unconditional `exec nu` swallows CI invocations (GitHub Actions
+            # sets CI=true).
+            if [ -z "''${CI:-}" ]; then
+              exec nu
+            fi
           '';
         };
       }

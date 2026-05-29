@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      # No Nix cache action: the Magic Nix Cache service shut down in
+      # Feb 2025, so magic-nix-cache-action is dead. If cold `nix develop`
+      # gets too slow, DeterminateSystems/flakehub-cache-action works
+      # without repo secrets (needs `permissions: id-token: write,
+      # contents: read` on the job).
+
+      - name: Test
+        run: nix develop -c cargo nextest run -p libnothelix
+
+      - name: Clippy
+        run: nix develop -c cargo clippy -p libnothelix --all-targets -- -D warnings
+
+      - name: Format
+        run: nix develop -c cargo fmt -p libnothelix --check
