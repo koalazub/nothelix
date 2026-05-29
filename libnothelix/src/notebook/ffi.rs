@@ -49,7 +49,6 @@ pub fn notebook_get_cell_code(path: String, cell_index: isize) -> String {
         .unwrap_or_default()
 }
 
-
 pub fn get_cell_at_line(path: String, line: isize) -> String {
     let line = line as usize;
     match parse_jl_file(&path) {
@@ -107,4 +106,3 @@ pub fn list_jl_code_cells(jl_path: String, limit: isize) -> String {
         }
     }
 }
-

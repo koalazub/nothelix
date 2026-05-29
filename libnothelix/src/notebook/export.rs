@@ -13,7 +13,7 @@
 
 use std::fs;
 
-use super::cells::{parse_jl_file, CellKind};
+use super::cells::{jl_sibling_path, parse_jl_file, CellKind};
 
 pub fn export_to_markdown(jl_path: String) -> String {
     let (cells, _) = match parse_jl_file(&jl_path) {
@@ -25,7 +25,9 @@ pub fn export_to_markdown(jl_path: String) -> String {
 
     for cell in &cells {
         match cell.kind {
-            CellKind::Markdown | CellKind::Typst => {
+            // Raw cells pass through verbatim — nbformat defines them
+            // as already being in the target format.
+            CellKind::Markdown | CellKind::Typst | CellKind::Raw => {
                 for line in cell.code.lines() {
                     out.push_str(line.strip_prefix("# ").unwrap_or(line));
                     out.push('\n');
@@ -46,7 +48,7 @@ pub fn export_to_markdown(jl_path: String) -> String {
         }
     }
 
-    let out_path = jl_path.replace(".jl", ".md");
+    let out_path = jl_sibling_path(&jl_path, ".md");
     match fs::write(&out_path, &out) {
         Ok(_) => format!("Exported to {out_path}"),
         Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
@@ -74,6 +76,15 @@ pub fn export_to_typst(jl_path: String) -> String {
                 out.push_str(&crate::typst_export::md_to_typst(&stripped));
                 out.push('\n');
             }
+            // Raw cells pass through without markdown→typst rewriting —
+            // nbformat defines them as already being in the target format.
+            CellKind::Raw => {
+                for line in cell.code.lines() {
+                    out.push_str(line.strip_prefix("# ").unwrap_or(line));
+                    out.push('\n');
+                }
+                out.push('\n');
+            }
             CellKind::Code => {
                 if cell.code.trim().is_empty() {
                     continue;
@@ -88,10 +99,9 @@ pub fn export_to_typst(jl_path: String) -> String {
         }
     }
 
-    let out_path = jl_path.replace(".jl", ".typ");
+    let out_path = jl_sibling_path(&jl_path, ".typ");
     match fs::write(&out_path, &out) {
         Ok(_) => format!("Exported to {out_path}"),
         Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
     }
 }
-

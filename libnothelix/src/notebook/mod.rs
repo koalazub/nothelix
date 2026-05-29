@@ -17,7 +17,10 @@
 //! @markdown 1
 //! # <markdown line as Julia comment>
 //!
-//! @cell 2 julia
+//! @raw 2
+//! # <raw line as Julia comment>
+//!
+//! @cell 3 julia
 //! <code>
 //! # ─── Output ───
 //! <output>
@@ -266,7 +269,12 @@ mod tests {
                    @cell 0 :julia\nx = 1\n";
         std::fs::write(&jl_path, src).unwrap();
         let (cells, _) = parse_jl_file(&jl_path.to_string_lossy()).unwrap();
-        assert_eq!(cells.len(), 1, "should not emit preamble cell for pragma-only preamble, got: {}", cells.len());
+        assert_eq!(
+            cells.len(),
+            1,
+            "should not emit preamble cell for pragma-only preamble, got: {}",
+            cells.len()
+        );
         assert_eq!(cells[0].index, 0);
         assert_eq!(cells[0].code, "x = 1");
     }
@@ -283,11 +291,19 @@ mod tests {
                    @cell 0 :julia\nA = I\n";
         std::fs::write(&jl_path, src).unwrap();
         let (cells, _) = parse_jl_file(&jl_path.to_string_lossy()).unwrap();
-        assert_eq!(cells.len(), 2, "expected preamble cell + @cell 0, got {} cells", cells.len());
+        assert_eq!(
+            cells.len(),
+            2,
+            "expected preamble cell + @cell 0, got {} cells",
+            cells.len()
+        );
         assert_eq!(cells[0].index, -1);
         assert!(cells[0].code.contains("const MY_CONST = 42"));
         assert!(cells[0].code.contains("using LinearAlgebra"));
-        assert!(!cells[0].code.contains("NothelixMacros"), "pragma must not leak into preamble cell");
+        assert!(
+            !cells[0].code.contains("NothelixMacros"),
+            "pragma must not leak into preamble cell"
+        );
     }
 
     #[test]
@@ -297,7 +313,10 @@ mod tests {
         // `outputs`/`execution_count` are stale and must not be carried
         // forward. Otherwise the .ipynb claims a stale output is the
         // current result of code that's since been changed.
-        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let tmp_ipynb = tempfile::NamedTempFile::new()
+            .unwrap()
+            .path()
+            .with_extension("ipynb");
         let orig = serde_json::json!({
             "nbformat": 4,
             "nbformat_minor": 5,
@@ -322,12 +341,19 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let cell = &nb["cells"][0];
         assert_eq!(cell["source"][0].as_str().unwrap(), "new_code = 2");
         // Code changed → orig's outputs/execution_count are stale → must be cleared.
-        assert!(cell["outputs"].as_array().unwrap().is_empty(), "stale outputs should be dropped, got: {cell}");
-        assert!(cell["execution_count"].is_null(), "stale execution_count should be cleared, got: {cell}");
+        assert!(
+            cell["outputs"].as_array().unwrap().is_empty(),
+            "stale outputs should be dropped, got: {cell}"
+        );
+        assert!(
+            cell["execution_count"].is_null(),
+            "stale execution_count should be cleared, got: {cell}"
+        );
     }
 
     #[test]
@@ -335,7 +361,10 @@ mod tests {
         // The flip side: if the orig cell's source matches the .jl
         // cell's source exactly (trimmed), orig's outputs and
         // execution_count ARE still valid and should survive round-trip.
-        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let tmp_ipynb = tempfile::NamedTempFile::new()
+            .unwrap()
+            .path()
+            .with_extension("ipynb");
         let orig = serde_json::json!({
             "nbformat": 4,
             "nbformat_minor": 5,
@@ -360,11 +389,24 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let cell = &nb["cells"][0];
-        assert_eq!(cell["execution_count"].as_i64(), Some(7), "execution_count should survive: {cell}");
-        assert_eq!(cell["metadata"]["tags"][0].as_str(), Some("important"), "metadata should survive: {cell}");
-        assert_eq!(cell["outputs"].as_array().unwrap().len(), 1, "outputs should survive: {cell}");
+        assert_eq!(
+            cell["execution_count"].as_i64(),
+            Some(7),
+            "execution_count should survive: {cell}"
+        );
+        assert_eq!(
+            cell["metadata"]["tags"][0].as_str(),
+            Some("important"),
+            "metadata should survive: {cell}"
+        );
+        assert_eq!(
+            cell["outputs"].as_array().unwrap().len(),
+            1,
+            "outputs should survive: {cell}"
+        );
     }
 
     #[test]
@@ -372,7 +414,10 @@ mod tests {
         // Cell-type change: orig was code (has outputs/execution_count),
         // user converted to markdown in .jl. Resulting markdown cell
         // must not carry those now-meaningless fields.
-        let tmp_ipynb = tempfile::NamedTempFile::new().unwrap().path().with_extension("ipynb");
+        let tmp_ipynb = tempfile::NamedTempFile::new()
+            .unwrap()
+            .path()
+            .with_extension("ipynb");
         let orig = serde_json::json!({
             "nbformat": 4,
             "nbformat_minor": 5,
@@ -397,11 +442,18 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let cell = &nb["cells"][0];
         assert_eq!(cell["cell_type"].as_str(), Some("markdown"));
-        assert!(cell.get("outputs").is_none(), "markdown cell should not have outputs: {cell}");
-        assert!(cell.get("execution_count").is_none(), "markdown cell should not have execution_count: {cell}");
+        assert!(
+            cell.get("outputs").is_none(),
+            "markdown cell should not have outputs: {cell}"
+        );
+        assert!(
+            cell.get("execution_count").is_none(),
+            "markdown cell should not have execution_count: {cell}"
+        );
     }
 
     #[test]
@@ -450,15 +502,25 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let outputs = nb["cells"][0]["outputs"].as_array().unwrap();
-        assert_eq!(outputs.len(), 1, "should attach exactly one display_data output, got: {outputs:#?}");
+        assert_eq!(
+            outputs.len(),
+            1,
+            "should attach exactly one display_data output, got: {outputs:#?}"
+        );
         assert_eq!(outputs[0]["output_type"].as_str(), Some("display_data"));
         let b64 = outputs[0]["data"]["image/png"].as_str().unwrap();
-        assert!(!b64.is_empty(), "PNG data should be base64-encoded, got: {b64:?}");
+        assert!(
+            !b64.is_empty(),
+            "PNG data should be base64-encoded, got: {b64:?}"
+        );
         // Round-trip: decoded bytes equal the fake PNG we wrote.
         use base64::Engine as _;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         assert_eq!(decoded, fake_png);
     }
 
@@ -498,16 +560,21 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let cell = &nb["cells"][0];
         assert_eq!(cell["cell_type"].as_str(), Some("markdown"));
 
         // attachments.diagram.png.image/png = base64 of fake_png
         let attachment_b64 = cell["attachments"]["diagram.png"]["image/png"]
             .as_str()
-            .unwrap_or_else(|| panic!("expected attachments.diagram.png.image/png, got:\n{cell:#?}"));
+            .unwrap_or_else(|| {
+                panic!("expected attachments.diagram.png.image/png, got:\n{cell:#?}")
+            });
         use base64::Engine as _;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(attachment_b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(attachment_b64)
+            .unwrap();
         assert_eq!(decoded, &fake_png[..]);
 
         // The markdown body now references attachment:diagram.png.
@@ -550,9 +617,13 @@ mod tests {
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
         assert!(result.starts_with("Synced to"), "got: {result}");
 
-        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
+        let nb: Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp_ipynb).unwrap()).unwrap();
         let cell = &nb["cells"][0];
-        assert!(cell.get("attachments").is_none(), "no attachment should be written for missing file, got: {cell}");
+        assert!(
+            cell.get("attachments").is_none(),
+            "no attachment should be written for missing file, got: {cell}"
+        );
     }
 
     #[test]
@@ -618,4 +689,750 @@ display(A)
         assert!(cells[1].code.contains("display(A)"));
     }
 
+    #[test]
+    fn convert_to_ipynb_output_path_only_swaps_the_suffix() {
+        // Regression: deriving the output path with `.replace(".jl", …)`
+        // corrupted any path with `.jl` mid-name — `my.jl.backup.jl`
+        // became `my.ipynb.backup.ipynb`. Only the trailing `.jl` may
+        // be swapped. The header points at a non-.ipynb path so the
+        // jl-derived fallback is what's exercised.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let jl_path = tmp_dir.path().join("my.jl.backup.jl");
+        let src = "# ═══ Nothelix Notebook: not-a-notebook.txt ═══\n# Cells: 1\n\n@cell 0 :julia\nx = 1\n";
+        std::fs::write(&jl_path, src).unwrap();
+
+        let result = convert_to_ipynb(jl_path.to_string_lossy().into());
+        let expected = tmp_dir.path().join("my.jl.backup.ipynb");
+        assert_eq!(
+            result,
+            format!("Synced to {}", expected.display()),
+            "suffix-only swap expected"
+        );
+        assert!(expected.exists());
+    }
+
+    #[test]
+    fn export_paths_only_swap_the_suffix() {
+        // Same regression for the exporters: a directory containing
+        // `.jl` in its name must not be rewritten.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let dir = tmp_dir.path().join("proj.jl");
+        std::fs::create_dir(&dir).unwrap();
+        let jl_path = dir.join("nb.jl");
+        let src = "# ═══ Nothelix Notebook: nb.ipynb ═══\n# Cells: 1\n\n@cell 0 :julia\nx = 1\n";
+        std::fs::write(&jl_path, src).unwrap();
+
+        let md = export_to_markdown(jl_path.to_string_lossy().into());
+        assert_eq!(md, format!("Exported to {}", dir.join("nb.md").display()));
+        assert!(dir.join("nb.md").exists());
+
+        let typ = export_to_typst(jl_path.to_string_lossy().into());
+        assert_eq!(typ, format!("Exported to {}", dir.join("nb.typ").display()));
+        assert!(dir.join("nb.typ").exists());
+    }
+
+    #[test]
+    fn convert_to_ipynb_stamps_deterministic_ids_on_fresh_cells() {
+        // No original notebook exists, so every cell is fresh and must
+        // get an nbformat-4.5 id. Converting the same content twice
+        // (in different directories) must yield the same ids — the
+        // fixpoint property depends on it.
+        let ids_for = |dir: &std::path::Path| -> Vec<String> {
+            let ipynb = dir.join("missing-orig.ipynb");
+            let jl = dir.join("nb.jl");
+            let src = format!(
+                "# ═══ Nothelix Notebook: {} ═══\n# Cells: 2\n\n@cell 0 :julia\nx = 1\n\n@markdown 1\n# hello\n",
+                ipynb.display()
+            );
+            std::fs::write(&jl, src).unwrap();
+            let result = convert_to_ipynb(jl.to_string_lossy().into());
+            assert!(result.starts_with("Synced to"), "got: {result}");
+            let nb: Value =
+                serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+            nb["cells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| {
+                    c["id"]
+                        .as_str()
+                        .expect("fresh cell must carry an id")
+                        .to_string()
+                })
+                .collect()
+        };
+
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let ids_a = ids_for(a.path());
+        let ids_b = ids_for(b.path());
+        assert_eq!(ids_a, ids_b, "ids must be deterministic across conversions");
+        assert_ne!(ids_a[0], ids_a[1], "distinct cells get distinct ids");
+        for id in &ids_a {
+            assert!(
+                (1..=64).contains(&id.len())
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "id violates nbformat grammar: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn convert_to_ipynb_preserves_original_cell_id() {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "code",
+                "id": "keep-me_1",
+                "execution_count": null,
+                "metadata": {},
+                "outputs": [],
+                "source": ["x = 1"]
+            }]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl = tmp_dir.path().join("nb.jl");
+        let src = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 1\n\n@cell 0 :julia\nx = 1\n",
+            ipynb.display()
+        );
+        std::fs::write(&jl, src).unwrap();
+
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        assert_eq!(nb["cells"][0]["id"].as_str(), Some("keep-me_1"));
+    }
+
+    #[test]
+    fn raw_cells_round_trip() {
+        // nbformat raw cells must survive ipynb → jl → ipynb instead of
+        // being coerced to code cells.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let raw_text = "\\begin{align}\nE = mc^2\n\\end{align}";
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {"kernelspec": {"language": "julia", "name": "julia-1.10", "display_name": "Julia"}},
+            "cells": [
+                {"cell_type": "code", "id": "c0", "execution_count": null, "metadata": {}, "outputs": [], "source": ["x = 1"]},
+                {"cell_type": "raw", "id": "r1", "metadata": {"format": "text/latex"}, "source": [raw_text]}
+            ]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_content.starts_with("ERROR"), "{jl_content}");
+        assert!(
+            jl_content.contains("@raw 1\n# \\begin{align}"),
+            "raw marker + commented body expected:\n{jl_content}"
+        );
+
+        let jl = tmp_dir.path().join("nb.jl");
+        std::fs::write(&jl, &jl_content).unwrap();
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][1];
+        assert_eq!(cell["cell_type"].as_str(), Some("raw"));
+        assert_eq!(source_to_string(&cell["source"]), raw_text);
+        assert_eq!(
+            cell["id"].as_str(),
+            Some("r1"),
+            "matched raw cell keeps its id"
+        );
+        assert_eq!(cell["metadata"]["format"].as_str(), Some("text/latex"));
+        assert!(
+            cell.get("outputs").is_none(),
+            "raw cells carry no outputs: {cell}"
+        );
+        assert!(
+            cell.get("execution_count").is_none(),
+            "raw cells carry no execution_count: {cell}"
+        );
+    }
+
+    #[test]
+    fn markdown_attachments_extract_to_sidecar_on_ipynb_to_jl() {
+        // The symmetric half of embed_markdown_attachments: on ipynb→jl
+        // the base64 attachment lands in .nothelix/images/ and the cell
+        // body gets an `# @image` marker instead of the (transport-only)
+        // `![](attachment:…)` ref line.
+        use base64::Engine as _;
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "markdown",
+                "id": "md0",
+                "metadata": {},
+                "source": ["Look at this:\n", "\n", "![](attachment:fig.png)"],
+                "attachments": {"fig.png": {"image/png": b64}}
+            }]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_content.starts_with("ERROR"), "{jl_content}");
+        assert!(
+            jl_content.contains("# @image .nothelix/images/fig.png"),
+            "marker expected:\n{jl_content}"
+        );
+        assert!(
+            !jl_content.contains("![](attachment:"),
+            "ref line must be extracted:\n{jl_content}"
+        );
+
+        let extracted = tmp_dir.path().join(".nothelix/images/fig.png");
+        assert_eq!(
+            std::fs::read(&extracted).unwrap(),
+            png,
+            "extracted bytes must match"
+        );
+
+        // …and the way back re-embeds the same attachment.
+        let jl = tmp_dir.path().join("nb.jl");
+        std::fs::write(&jl, &jl_content).unwrap();
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(
+            cell["attachments"]["fig.png"]["image/png"].as_str(),
+            Some(b64.as_str())
+        );
+        assert_eq!(
+            cell["id"].as_str(),
+            Some("md0"),
+            "attachment cell still matches its original"
+        );
+        let body = source_to_string(&cell["source"]);
+        assert!(
+            body.contains("![](attachment:fig.png)"),
+            "re-embedded body references the attachment:\n{body}"
+        );
+    }
+
+    #[test]
+    fn attachment_traversal_key_is_sandboxed_to_images_dir() {
+        // A hostile .ipynb can put path traversal in the attachments
+        // map key. Extraction must keep every write inside
+        // .nothelix/images/ — only the final path component of the key
+        // is used — and the sanitized name must round-trip.
+        use base64::Engine as _;
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let nb_dir = tmp_dir.path().join("nbdir");
+        std::fs::create_dir(&nb_dir).unwrap();
+        let ipynb = nb_dir.join("nb.ipynb");
+        let png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "markdown",
+                "id": "md0",
+                "metadata": {},
+                "source": [
+                    "prose\n", "\n",
+                    "![](attachment:../../escape.png)\n",
+                    "![](attachment:..\\..\\evil.png)\n",
+                    "![](attachment:..)"
+                ],
+                "attachments": {
+                    "../../escape.png": {"image/png": b64},
+                    "..\\..\\evil.png": {"image/png": b64},
+                    "..": {"image/png": b64}
+                }
+            }]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_content.starts_with("ERROR"), "{jl_content}");
+
+        // Nothing escaped the sidecar dir.
+        assert!(
+            !tmp_dir.path().join("escape.png").exists(),
+            "traversal escaped the sandbox"
+        );
+        assert!(
+            !tmp_dir.path().join("evil.png").exists(),
+            "backslash traversal escaped the sandbox"
+        );
+        assert!(!nb_dir.join("escape.png").exists());
+        // The sanitized names landed inside .nothelix/images/.
+        assert_eq!(
+            std::fs::read(nb_dir.join(".nothelix/images/escape.png")).unwrap(),
+            png
+        );
+        assert_eq!(
+            std::fs::read(nb_dir.join(".nothelix/images/evil.png")).unwrap(),
+            png
+        );
+        assert!(
+            jl_content.contains("# @image .nothelix/images/escape.png"),
+            "{jl_content}"
+        );
+        assert!(
+            jl_content.contains("# @image .nothelix/images/evil.png"),
+            "{jl_content}"
+        );
+        // The `..` key sanitizes to nothing → not extracted, ref kept.
+        assert!(
+            jl_content.contains("# ![](attachment:..)"),
+            "unextractable ref must stay:\n{jl_content}"
+        );
+
+        // Round-trip: the re-embedded notebook carries the safe names,
+        // and the unextractable entry survives via its kept ref line.
+        let jl = nb_dir.join("nb.jl");
+        std::fs::write(&jl, &jl_content).unwrap();
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(
+            cell["attachments"]["escape.png"]["image/png"].as_str(),
+            Some(b64.as_str())
+        );
+        assert_eq!(
+            cell["attachments"]["evil.png"]["image/png"].as_str(),
+            Some(b64.as_str())
+        );
+        assert_eq!(
+            cell["attachments"][".."]["image/png"].as_str(),
+            Some(b64.as_str()),
+            "unextractable entry must be carried through: {cell}"
+        );
+        assert!(
+            cell["attachments"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .all(|k| k != "../../escape.png"),
+            "hostile key must not survive re-embedding: {cell}"
+        );
+    }
+
+    #[test]
+    fn alt_texted_attachment_refs_round_trip_without_duplication() {
+        // Vanilla Jupyter writes `![image.png](attachment:image.png)` —
+        // alt text equal to the filename, not the empty-alt form we
+        // emit. Extraction must strip that ref (no leftover line in the
+        // .jl body) and re-embedding must produce exactly one ref line,
+        // not append a second one.
+        use base64::Engine as _;
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "markdown",
+                "id": "md0",
+                "metadata": {},
+                "source": ["Some prose.\n", "\n", "![image.png](attachment:image.png)"],
+                "attachments": {"image.png": {"image/png": b64}}
+            }]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_content.starts_with("ERROR"), "{jl_content}");
+        assert!(
+            !jl_content.contains("](attachment:"),
+            "alt-texted ref must be extracted:\n{jl_content}"
+        );
+        assert!(
+            jl_content.contains("# @image .nothelix/images/image.png"),
+            "{jl_content}"
+        );
+
+        let jl = tmp_dir.path().join("nb.jl");
+        std::fs::write(&jl, &jl_content).unwrap();
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(
+            cell["attachments"]["image.png"]["image/png"].as_str(),
+            Some(b64.as_str())
+        );
+        assert_eq!(
+            cell["id"].as_str(),
+            Some("md0"),
+            "alt-texted cell still matches its original"
+        );
+        let body = source_to_string(&cell["source"]);
+        let ref_lines = body
+            .lines()
+            .filter(|l| l.contains("](attachment:image.png)"))
+            .count();
+        assert_eq!(
+            ref_lines, 1,
+            "exactly one ref after round-trip, no duplication:\n{body}"
+        );
+    }
+
+    #[test]
+    fn mixed_decodable_and_undecodable_attachments_survive() {
+        // One attachment decodes, the other has a garbage payload. The
+        // undecodable one must not be lost: its ref line stays in the
+        // body and the original entry rides through the round-trip.
+        use base64::Engine as _;
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let png: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{
+                "cell_type": "markdown",
+                "id": "md0",
+                "metadata": {},
+                "source": [
+                    "prose\n", "\n",
+                    "![](attachment:good.png)\n",
+                    "![](attachment:bad.bin)"
+                ],
+                "attachments": {
+                    "good.png": {"image/png": b64},
+                    "bad.bin": {"application/octet-stream": "!!!not-base64!!!"}
+                }
+            }]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let jl_content = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_content.starts_with("ERROR"), "{jl_content}");
+        assert!(
+            jl_content.contains("# @image .nothelix/images/good.png"),
+            "{jl_content}"
+        );
+        assert!(
+            jl_content.contains("# ![](attachment:bad.bin)"),
+            "undecodable ref must stay in the body:\n{jl_content}"
+        );
+        assert!(
+            !jl_content.contains("![](attachment:good.png)"),
+            "decodable ref must be extracted:\n{jl_content}"
+        );
+
+        let jl = tmp_dir.path().join("nb.jl");
+        std::fs::write(&jl, &jl_content).unwrap();
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cell = &nb["cells"][0];
+        assert_eq!(
+            cell["id"].as_str(),
+            Some("md0"),
+            "partially-extracted cell still matches its original"
+        );
+        assert_eq!(
+            cell["attachments"]["good.png"]["image/png"].as_str(),
+            Some(b64.as_str())
+        );
+        assert_eq!(
+            cell["attachments"]["bad.bin"]["application/octet-stream"].as_str(),
+            Some("!!!not-base64!!!"),
+            "undecodable entry must be carried through verbatim: {cell}"
+        );
+        let body = source_to_string(&cell["source"]);
+        assert!(
+            body.contains("![](attachment:bad.bin)"),
+            "undecodable ref survives:\n{body}"
+        );
+        assert!(
+            body.contains("![](attachment:good.png)"),
+            "re-embedded ref present:\n{body}"
+        );
+    }
+
+    #[test]
+    fn attachment_filename_collisions_resolve_deterministically() {
+        // Two cells attach different bytes under the same filename. The
+        // second extraction must pick a reproducible content-derived
+        // name, and re-running the conversion must not invent new names.
+        use base64::Engine as _;
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let bytes_a: [u8; 4] = [1, 2, 3, 4];
+        let bytes_b: [u8; 4] = [9, 8, 7, 6];
+        let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [
+                {"cell_type": "markdown", "metadata": {}, "source": ["first"],
+                 "attachments": {"fig.png": {"image/png": b64(&bytes_a)}}},
+                {"cell_type": "markdown", "metadata": {}, "source": ["second"],
+                 "attachments": {"fig.png": {"image/png": b64(&bytes_b)}}}
+            ]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        let first = notebook_convert_sync(ipynb.to_string_lossy().into());
+        let second = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert_eq!(first, second, "extraction must be reproducible");
+
+        assert!(
+            first.contains("# @image .nothelix/images/fig.png"),
+            "{first}"
+        );
+        let suffixed = first
+            .lines()
+            .find(|l| l.starts_with("# @image .nothelix/images/fig-"))
+            .expect("collision must get a content-suffixed name");
+        let rel = suffixed.strip_prefix("# @image ").unwrap();
+        assert!(rel.ends_with(".png"), "extension preserved: {rel}");
+
+        assert_eq!(
+            std::fs::read(tmp_dir.path().join(".nothelix/images/fig.png")).unwrap(),
+            bytes_a
+        );
+        assert_eq!(std::fs::read(tmp_dir.path().join(rel)).unwrap(), bytes_b);
+    }
+
+    #[test]
+    fn outputs_survive_cell_reorder() {
+        // Positional matching alone loses outputs when the user moves a
+        // cell in the .jl; the content-search fallback must find the
+        // original wherever it now lives.
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let orig = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [
+                {"cell_type": "code", "id": "id-a", "execution_count": 1, "metadata": {},
+                 "outputs": [{"output_type": "stream", "name": "stdout", "text": "from a\n"}],
+                 "source": ["a = 1"]},
+                {"cell_type": "code", "id": "id-b", "execution_count": 2, "metadata": {},
+                 "outputs": [{"output_type": "stream", "name": "stdout", "text": "from b\n"}],
+                 "source": ["b = 2"]}
+            ]
+        });
+        std::fs::write(&ipynb, serde_json::to_string_pretty(&orig).unwrap()).unwrap();
+
+        // The user swapped the two cells (and the renumber pass
+        // restamped indices 0/1), so index-based matching points at the
+        // wrong originals.
+        let jl = tmp_dir.path().join("nb.jl");
+        let src = format!(
+            "# ═══ Nothelix Notebook: {} ═══\n# Cells: 2\n\n@cell 0 :julia\nb = 2\n\n@cell 1 :julia\na = 1\n",
+            ipynb.display()
+        );
+        std::fs::write(&jl, src).unwrap();
+
+        let result = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(result.starts_with("Synced to"), "got: {result}");
+        let nb: Value = serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        let cells = nb["cells"].as_array().unwrap();
+
+        assert_eq!(source_to_string(&cells[0]["source"]), "b = 2");
+        assert_eq!(cells[0]["outputs"][0]["text"].as_str(), Some("from b\n"));
+        assert_eq!(cells[0]["id"].as_str(), Some("id-b"));
+        assert_eq!(cells[0]["execution_count"].as_i64(), Some(2));
+
+        assert_eq!(source_to_string(&cells[1]["source"]), "a = 1");
+        assert_eq!(cells[1]["outputs"][0]["text"].as_str(), Some("from a\n"));
+        assert_eq!(cells[1]["id"].as_str(), Some("id-a"));
+        assert_eq!(cells[1]["execution_count"].as_i64(), Some(1));
+
+        // The reordered notebook is itself a fixpoint seed.
+        assert_fixpoint("reordered", &nb);
+    }
+
+    /// Drive `ipynb → jl → ipynb` and require a fixpoint: re-converting
+    /// the produced .ipynb yields a byte-identical .jl, and the .ipynb
+    /// written from that second .jl equals the first as JSON values.
+    fn assert_fixpoint(name: &str, nb: &Value) {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let ipynb = tmp_dir.path().join("nb.ipynb");
+        let jl = tmp_dir.path().join("nb.jl");
+        std::fs::write(&ipynb, serde_json::to_string_pretty(nb).unwrap()).unwrap();
+
+        let jl_1 = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert!(!jl_1.starts_with("ERROR"), "{name}: {jl_1}");
+        std::fs::write(&jl, &jl_1).unwrap();
+        let r = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(r.starts_with("Synced to"), "{name}: {r}");
+        let ipynb_1: Value =
+            serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+
+        let jl_2 = notebook_convert_sync(ipynb.to_string_lossy().into());
+        assert_eq!(jl_2, jl_1, "{name}: second .jl must be byte-identical");
+        std::fs::write(&jl, &jl_2).unwrap();
+        let r = convert_to_ipynb(jl.to_string_lossy().into());
+        assert!(r.starts_with("Synced to"), "{name}: {r}");
+        let ipynb_2: Value =
+            serde_json::from_str(&std::fs::read_to_string(&ipynb).unwrap()).unwrap();
+        assert_eq!(
+            ipynb_2, ipynb_1,
+            "{name}: second .ipynb must equal the first"
+        );
+    }
+
+    fn synthesized_corpus() -> Vec<(String, Value)> {
+        use base64::Engine as _;
+        let meta = serde_json::json!({
+            "kernelspec": {"language": "julia", "name": "julia-1.10", "display_name": "Julia 1.10"}
+        });
+        let nb = |name: &str, cells: Value| -> (String, Value) {
+            (
+                name.to_string(),
+                serde_json::json!({
+                    "nbformat": 4,
+                    "nbformat_minor": 5,
+                    "metadata": meta,
+                    "cells": cells
+                }),
+            )
+        };
+        let png_b64 = base64::engine::general_purpose::STANDARD
+            .encode([0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+        vec![
+            nb(
+                "raw-cells",
+                serde_json::json!([
+                    {"cell_type": "code", "id": "c0", "execution_count": null, "metadata": {}, "outputs": [], "source": ["x = 1"]},
+                    {"cell_type": "raw", "id": "r1", "metadata": {"format": "text/latex"},
+                     "source": ["\\begin{align}\n", "E = mc^2\n", "\\end{align}"]}
+                ]),
+            ),
+            nb(
+                "markdown-attachments",
+                serde_json::json!([
+                    {"cell_type": "markdown", "id": "md0", "metadata": {},
+                     "source": ["A figure:\n", "\n", "![](attachment:fig.png)"],
+                     "attachments": {"fig.png": {"image/png": png_b64}}}
+                ]),
+            ),
+            nb(
+                "alt-text-refs",
+                serde_json::json!([
+                    {"cell_type": "markdown", "id": "alt0", "metadata": {},
+                     "source": ["Vanilla Jupyter shape:\n", "\n", "![image.png](attachment:image.png)"],
+                     "attachments": {"image.png": {"image/png": png_b64}}}
+                ]),
+            ),
+            nb(
+                "mixed-attachments",
+                serde_json::json!([
+                    {"cell_type": "markdown", "id": "mx0", "metadata": {},
+                     "source": ["prose\n", "\n", "![](attachment:good.png)\n", "![](attachment:bad.bin)"],
+                     "attachments": {
+                         "good.png": {"image/png": png_b64},
+                         "bad.bin": {"application/octet-stream": "!!!not-base64!!!"}
+                     }}
+                ]),
+            ),
+            nb(
+                "traversal-key",
+                serde_json::json!([
+                    {"cell_type": "markdown", "id": "tr0", "metadata": {},
+                     "source": ["prose\n", "\n", "![](attachment:../../escape.png)\n", "![](attachment:..)"],
+                     "attachments": {
+                         "../../escape.png": {"image/png": png_b64},
+                         "..": {"image/png": png_b64}
+                     }}
+                ]),
+            ),
+            nb(
+                "missing-ids",
+                serde_json::json!([
+                    {"cell_type": "code", "execution_count": 1, "metadata": {},
+                     "outputs": [{"output_type": "stream", "name": "stdout", "text": "hi\n"}],
+                     "source": ["println(\"hi\")"]},
+                    {"cell_type": "markdown", "metadata": {}, "source": ["## heading"]},
+                    {"cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": ["y = 2"]}
+                ]),
+            ),
+            nb(
+                "exotic-outputs",
+                serde_json::json!([
+                    {"cell_type": "code", "id": "xo0", "execution_count": 3, "metadata": {},
+                     "outputs": [
+                        {"output_type": "stream", "name": "stdout", "text": ["line 1\n", "line 2\n"]},
+                        {"output_type": "display_data", "metadata": {},
+                         "data": {"image/png": png_b64, "text/plain": ["a plot"]}},
+                        {"output_type": "execute_result", "execution_count": 3, "metadata": {},
+                         "data": {"text/plain": ["42"]}},
+                        {"output_type": "error", "ename": "UndefVarError", "evalue": "z not defined",
+                         "traceback": ["UndefVarError: z not defined", "Stacktrace: [1] top-level scope"]}
+                     ],
+                     "source": ["compute(z)"]}
+                ]),
+            ),
+            nb(
+                "empty-cells",
+                serde_json::json!([
+                    {"cell_type": "code", "id": "e0", "execution_count": null, "metadata": {}, "outputs": [], "source": []},
+                    {"cell_type": "markdown", "id": "e1", "metadata": {}, "source": []},
+                    {"cell_type": "raw", "id": "e2", "metadata": {}, "source": []}
+                ]),
+            ),
+            nb(
+                "duplicate-sources",
+                serde_json::json!([
+                    {"cell_type": "code", "id": "d0", "execution_count": 1, "metadata": {},
+                     "outputs": [{"output_type": "stream", "name": "stdout", "text": "first\n"}],
+                     "source": ["repeat()"]},
+                    {"cell_type": "code", "id": "d1", "execution_count": 2, "metadata": {},
+                     "outputs": [{"output_type": "stream", "name": "stdout", "text": "second\n"}],
+                     "source": ["repeat()"]}
+                ]),
+            ),
+        ]
+    }
+
+    #[test]
+    fn corpus_fixpoint_ipynb_jl_ipynb() {
+        let mut corpus = synthesized_corpus();
+
+        // Every parseable .ipynb shipped in examples/ joins the corpus.
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples");
+        if let Ok(entries) = std::fs::read_dir(&examples) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().is_some_and(|e| e == "ipynb") {
+                    if let Ok(nb) = std::fs::read_to_string(&p)
+                        .map_err(|e| e.to_string())
+                        .and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| e.to_string()))
+                    {
+                        corpus.push((p.display().to_string(), nb));
+                    }
+                }
+            }
+        }
+
+        for (name, nb) in &corpus {
+            assert_fixpoint(name, nb);
+        }
+    }
 }

@@ -81,6 +81,13 @@
      (define before-hash (string-trim (car (string-split rest "#"))))
      (define idx (or (string->number before-hash) 0))
      (list "markdown" idx label)]
+    [(string-starts-with? line "@raw ")
+     (define rest (strip-trailing-newline
+                    (substring line (string-length "@raw ") (string-length line))))
+     (define label (extract-comment-label rest))
+     (define before-hash (string-trim (car (string-split rest "#"))))
+     (define idx (or (string->number before-hash) 0))
+     (list "raw" idx label)]
     [(string-starts-with? line "@typst ")
      (define rest (strip-trailing-newline
                     (substring line (string-length "@typst ") (string-length line))))
@@ -91,7 +98,7 @@
     [else (list "unknown" 0 "")]))
 
 ;;@doc
-;; Scan the document for all @cell and @markdown markers.
+;; Scan the document for all @cell, @markdown, @raw, and @typst markers.
 ;; Returns a list of (line-number kind-label cell-index header-text) tuples.
 (define (get-all-cells)
   (define focus (editor-focus))
@@ -106,6 +113,7 @@
           (cond
             [(or (string-starts-with? line "@cell ")
                  (string-starts-with? line "@markdown ")
+                 (string-starts-with? line "@raw ")
                  (string-starts-with? line "@typst "))
              (define parsed (parse-cell-header line))
              (define kind-label (list-ref parsed 0))
@@ -132,6 +140,8 @@
         (let ([line (doc-get-line rope total-lines idx)])
           (if (or (string-starts-with? line "@cell ")
                   (string-starts-with? line "@markdown ")
+                  (string-starts-with? line "@raw ")
+                  (string-starts-with? line "@typst ")
                   (string-starts-with? line "# ═══")
                   (string-contains? line "# ─── Output"))
               (reverse lines)

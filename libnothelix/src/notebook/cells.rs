@@ -1,9 +1,9 @@
 //! `.jl` cell parser + the `JlCell` type it produces.
 //!
 //! Notebook `.jl` files use a comment-based marker syntax that this
-//! module knows how to walk. Each section is delimited by `@cell` or
-//! `@markdown` (or `@typst`) markers; everything between markers is
-//! the cell body. We also strip `# @image <path>` lines from bodies
+//! module knows how to walk. Each section is delimited by `@cell`,
+//! `@markdown`, `@raw` or `@typst` markers; everything between markers
+//! is the cell body. We also strip `# @image <path>` lines from bodies
 //! and stash them on the cell so the converter can lift them into
 //! `display_data` outputs / `attachments`.
 
@@ -17,6 +17,10 @@ pub enum CellKind {
     Code,
     Markdown,
     Typst,
+    /// nbformat `raw` cell — content passes through conversion verbatim
+    /// (never executed, never rendered as markdown). Stored in the .jl
+    /// with `# `-prefixed lines exactly like markdown bodies.
+    Raw,
 }
 
 pub struct JlCell {
@@ -49,6 +53,18 @@ pub(super) fn extract_marker_comment(rest: &str) -> String {
         }
     }
     String::new()
+}
+
+/// Derive a sibling path by swapping a trailing `.jl` for `new_ext`
+/// (`".ipynb"`, `".md"`, …). Only the suffix is swapped — a plain
+/// `.replace(".jl", …)` would also rewrite `.jl` occurrences mid-path
+/// (`my.jl.backup.jl`, `proj.jl/nb.jl`) and corrupt the destination.
+/// Paths without the suffix get the extension appended.
+pub(super) fn jl_sibling_path(jl_path: &str, new_ext: &str) -> String {
+    match jl_path.strip_suffix(".jl") {
+        Some(stem) => format!("{stem}{new_ext}"),
+        None => format!("{jl_path}{new_ext}"),
+    }
 }
 
 /// Read and parse an `.ipynb` file.
@@ -84,7 +100,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         }
     }
     if source_path.is_empty() {
-        source_path = jl_path.replace(".jl", ".ipynb");
+        source_path = jl_sibling_path(jl_path, ".ipynb");
     }
 
     // Locate cell markers.
@@ -140,6 +156,26 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
             cells.push(JlCell {
                 index: idx,
                 kind: CellKind::Markdown,
+                code: String::new(),
+                start_line: i,
+                marker_comment: extract_marker_comment(rest),
+                images: Vec::new(),
+            });
+        } else if line.trim_end() == "@raw" {
+            cells.push(JlCell {
+                index: 0,
+                kind: CellKind::Raw,
+                code: String::new(),
+                start_line: i,
+                marker_comment: String::new(),
+                images: Vec::new(),
+            });
+        } else if let Some(rest) = line.strip_prefix("@raw ") {
+            let first = rest.split_whitespace().next().unwrap_or("");
+            let idx: isize = first.parse().unwrap_or(0);
+            cells.push(JlCell {
+                index: idx,
+                kind: CellKind::Raw,
                 code: String::new(),
                 start_line: i,
                 marker_comment: extract_marker_comment(rest),
@@ -230,14 +266,15 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         .collect();
 
     for (ci, (code_start, code_end)) in boundaries.into_iter().enumerate() {
-
         let is_marker_line = |line: &str| -> bool {
             let t = line.trim_end();
             t == "@cell"
                 || t == "@markdown"
+                || t == "@raw"
                 || t == "@typst"
                 || line.starts_with("@cell ")
                 || line.starts_with("@markdown ")
+                || line.starts_with("@raw ")
                 || line.starts_with("@typst ")
         };
 
@@ -285,7 +322,10 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
         // in the cell body (a markdown heading when the # prefix is stripped).
         if !cells[ci].marker_comment.is_empty() {
             let comment = &cells[ci].marker_comment;
-            let prefix_line = if cells[ci].kind == CellKind::Markdown || cells[ci].kind == CellKind::Typst {
+            let prefix_line = if matches!(
+                cells[ci].kind,
+                CellKind::Markdown | CellKind::Typst | CellKind::Raw
+            ) {
                 format!("# {comment}")
             } else {
                 comment.to_string()

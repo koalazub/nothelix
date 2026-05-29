@@ -90,11 +90,11 @@
        (if (= i 0) -1 (string->number (substring str 0 i)))])))
 
 ;;@doc
-;; Scan the buffer for the highest `N` in any `@cell N` or
-;; `@markdown N` marker. Returns `N + 1` so the caller can use it as
-;; the next free index. Returns `0` when the buffer has no markers
-;; yet (fresh notebook). Holes in the sequence are fine — we just
-;; take the max.
+;; Scan the buffer for the highest `N` in any `@cell N`, `@markdown N`,
+;; `@raw N`, or `@typst N` marker. Returns `N + 1` so the caller can
+;; use it as the next free index. Returns `0` when the buffer has no
+;; markers yet (fresh notebook). Holes in the sequence are fine — we
+;; just take the max.
 (define (next-cell-index rope total-lines)
   (define (scan-after-prefix line prefix)
     (define plen (string-length prefix))
@@ -110,6 +110,8 @@
              (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@cell ")))]
             [(string-starts-with? line "@markdown ")
              (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@markdown ")))]
+            [(string-starts-with? line "@raw ")
+             (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@raw ")))]
             [(string-starts-with? line "@typst ")
              (loop (+ line-idx 1) (max max-idx (scan-after-prefix line "@typst ")))]
             [else (loop (+ line-idx 1) max-idx)])))))
@@ -340,11 +342,14 @@
 ;; ─── Renumber cells ───────────────────────────────────────────────────────────
 
 ;;@doc
-;; Walk the buffer top-to-bottom and rewrite every `@cell N …` and
-;; `@markdown N` marker so the `N`s form a contiguous 0-indexed
-;; sequence. Called automatically after file saves (`:write` and
-;; friends) and `:sync-to-ipynb`, and also exposed as an explicit
-;; `:renumber-cells` command.
+;; Walk the buffer top-to-bottom and rewrite every `@cell N …`,
+;; `@markdown N`, `@raw N`, and `@typst N` marker so the `N`s form a
+;; contiguous 0-indexed sequence. Called automatically after file
+;; saves (`:write` and friends) and `:sync-to-ipynb`, and also exposed
+;; as an explicit `:renumber-cells` command. Every marker kind the
+;; converter emits participates — skipping one (as an older version
+;; did with `@raw`) renumbers around it and corrupts the indices the
+;; `.jl ↔ .ipynb` sync relies on.
 ;;
 ;; Saves and restores the cursor's (line, column) before/after the
 ;; edit pass so `:write` / `:fmt` can't fling the cursor back to the
@@ -373,8 +378,11 @@
     (define saved-line-start (text.rope-line->char rope saved-line))
     (define saved-col (- saved-char saved-line-start))
 
-    ;; First pass: collect (line-idx, kind, rest-of-line) triples
-    ;; in forward order so we can compute the final 0-indexed sequence.
+    ;; First pass: collect (line-idx, marker-prefix, line) triples in
+    ;; forward order so we can compute the final 0-indexed sequence.
+    ;; All four marker kinds participate — `@cell`, `@markdown`,
+    ;; `@raw`, `@typst` — so a notebook with raw cells renumbers as a
+    ;; single contiguous sequence instead of skipping them.
     (define markers
       (let loop ([line-idx 0] [acc '()])
         (if (>= line-idx total-lines)
@@ -383,14 +391,38 @@
               (cond
                 [(string-starts-with? line "@cell ")
                  (loop (+ line-idx 1)
-                       (cons (list line-idx 'code line) acc))]
+                       (cons (list line-idx "@cell " line) acc))]
                 [(string-starts-with? line "@markdown ")
                  (loop (+ line-idx 1)
-                       (cons (list line-idx 'md line) acc))]
+                       (cons (list line-idx "@markdown " line) acc))]
+                [(string-starts-with? line "@raw ")
+                 (loop (+ line-idx 1)
+                       (cons (list line-idx "@raw " line) acc))]
                 [(string-starts-with? line "@typst ")
                  (loop (+ line-idx 1)
-                       (cons (list line-idx 'typst line) acc))]
+                       (cons (list line-idx "@typst " line) acc))]
                 [else (loop (+ line-idx 1) acc)])))))
+    ;; Rewrite "<prefix>OLD REST" → "<prefix>NEW REST", preserving
+    ;; everything after the index digits (the ` :julia` suffix, any
+    ;; trailing `# label` comments). Shared by all marker kinds.
+    (define (renumbered-marker-line prefix current i)
+      (define after-prefix
+        (substring current (string-length prefix) (string-length current)))
+      (define trimmed
+        (if (string-suffix? after-prefix "\n")
+            (substring after-prefix 0 (- (string-length after-prefix) 1))
+            after-prefix))
+      (define rest-after-digits
+        (let scan ([j 0])
+          (cond
+            [(>= j (string-length trimmed))
+             (substring trimmed j (string-length trimmed))]
+            [(let ([c (string-ref trimmed j)])
+               (and (char>=? c #\0) (char<=? c #\9)))
+             (scan (+ j 1))]
+            [else
+             (substring trimmed j (string-length trimmed))])))
+      (string-append prefix (number->string i) rest-after-digits))
     ;; Compute the new content for each marker with its target index
     ;; in forward order, then reverse to apply back-to-front.
     (define indexed
@@ -399,80 +431,13 @@
             (reverse acc)
             (let* ([m (car ms)]
                    [line-idx (car m)]
-                   [kind (cadr m)]
+                   [prefix (cadr m)]
                    [current (caddr m)]
                    [current-trimmed
                     (if (string-suffix? current "\n")
                         (substring current 0 (- (string-length current) 1))
                         current)]
-                   [new-line
-                    (case kind
-                      [(code)
-                       ;; Preserve everything after the index (e.g.
-                       ;; the ` :julia` suffix, any trailing comments).
-                       ;; Parse "@cell OLD REST" → "@cell NEW REST".
-                       (define after-prefix
-                         (substring current
-                                    (string-length "@cell ")
-                                    (string-length current)))
-                       (define trimmed
-                         (if (string-suffix? after-prefix "\n")
-                             (substring after-prefix 0
-                                        (- (string-length after-prefix) 1))
-                             after-prefix))
-                       (define rest-after-digits
-                         (let scan ([j 0])
-                           (cond
-                             [(>= j (string-length trimmed))
-                              (substring trimmed j (string-length trimmed))]
-                             [(let ([c (string-ref trimmed j)])
-                                (and (char>=? c #\0) (char<=? c #\9)))
-                              (scan (+ j 1))]
-                             [else
-                              (substring trimmed j (string-length trimmed))])))
-                       (string-append "@cell " (number->string i) rest-after-digits)]
-                      [(md)
-                       ;; Preserve any trailing label after the index.
-                       (define md-after
-                         (substring current
-                                    (string-length "@markdown ")
-                                    (string-length current)))
-                       (define md-trimmed
-                         (if (string-suffix? md-after "\n")
-                             (substring md-after 0
-                                        (- (string-length md-after) 1))
-                             md-after))
-                       (define md-rest
-                         (let scan ([j 0])
-                           (cond
-                             [(>= j (string-length md-trimmed))
-                              (substring md-trimmed j (string-length md-trimmed))]
-                             [(let ([c (string-ref md-trimmed j)])
-                                (and (char>=? c #\0) (char<=? c #\9)))
-                              (scan (+ j 1))]
-                             [else
-                              (substring md-trimmed j (string-length md-trimmed))])))
-                       (string-append "@markdown " (number->string i) md-rest)]
-                      [(typst)
-                       (define ty-after
-                         (substring current
-                                    (string-length "@typst ")
-                                    (string-length current)))
-                       (define ty-trimmed
-                         (if (string-suffix? ty-after "\n")
-                             (substring ty-after 0 (- (string-length ty-after) 1))
-                             ty-after))
-                       (define ty-rest
-                         (let scan ([j 0])
-                           (cond
-                             [(>= j (string-length ty-trimmed))
-                              (substring ty-trimmed j (string-length ty-trimmed))]
-                             [(let ([c (string-ref ty-trimmed j)])
-                                (and (char>=? c #\0) (char<=? c #\9)))
-                              (scan (+ j 1))]
-                             [else
-                              (substring ty-trimmed j (string-length ty-trimmed))])))
-                       (string-append "@typst " (number->string i) ty-rest)])])
+                   [new-line (renumbered-marker-line prefix current i)])
               (loop (cdr ms) (+ i 1)
                     ;; Only queue the line for rewrite if the new
                     ;; content actually differs from what's there —

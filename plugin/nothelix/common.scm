@@ -40,20 +40,29 @@
       ""))
 
 ;;@doc
-;; Return #true if `line-text` starts with a cell or markdown marker.
-;; Also matches bare `@cell` / `@markdown` lines (no trailing space,
-;; no arguments), which users sometimes type before the autofill
-;; hook gets a chance to expand them — treating these as markers
-;; means cell extraction still terminates at the right line instead
-;; of dumping bare `@cell` into the Julia kernel and blowing up on
-;; a `MethodError: no method matching var"@cell"`.
+;; Return #true if `line-text` starts with a cell, markdown, raw, or
+;; typst marker.
+;; Also matches bare `@cell` / `@markdown` / `@raw` / `@typst` lines
+;; (no trailing space, no arguments), which users sometimes type
+;; before the autofill hook gets a chance to expand them — treating
+;; these as markers means cell extraction still terminates at the
+;; right line instead of dumping bare `@cell` into the Julia kernel
+;; and blowing up on a `MethodError: no method matching var"@cell"`.
 ;; (-> string? boolean?)
 (define (cell-marker? line-text)
+  ;; Rope-derived lines keep their trailing "\n", so bare markers must
+  ;; match both forms — same handling as cell-marker-line? below.
   (or (string=? line-text "@cell")
+      (string=? line-text "@cell\n")
       (string=? line-text "@markdown")
+      (string=? line-text "@markdown\n")
+      (string=? line-text "@raw")
+      (string=? line-text "@raw\n")
       (string=? line-text "@typst")
+      (string=? line-text "@typst\n")
       (string-starts-with? line-text "@cell ")
       (string-starts-with? line-text "@markdown ")
+      (string-starts-with? line-text "@raw ")
       (string-starts-with? line-text "@typst ")))
 
 ;;@doc
@@ -72,12 +81,15 @@
       (let ([line (text.rope->line rope line-idx)])
         (or (text.rope-starts-with? line "@cell ")
             (text.rope-starts-with? line "@markdown ")
+            (text.rope-starts-with? line "@raw ")
             (text.rope-starts-with? line "@typst ")
             (let ([s (text.rope->string line)])
               (or (string=? s "@cell")
                   (string=? s "@cell\n")
                   (string=? s "@markdown")
                   (string=? s "@markdown\n")
+                  (string=? s "@raw")
+                  (string=? s "@raw\n")
                   (string=? s "@typst")
                   (string=? s "@typst\n")))))
       #false))

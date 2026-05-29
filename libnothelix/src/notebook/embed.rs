@@ -8,6 +8,8 @@
 //!
 //!   - [`embed_markdown_attachments`] for markdown cells (base64
 //!     in-band, rewrites the body to use `![](attachment:…)`)
+//!   - [`extract_markdown_attachments`] — its inverse on ipynb→jl,
+//!     writing attachments out to `.nothelix/images/` sidecar files
 //!   - [`read_sidecar_image_output`] for code cells (looks for the
 //!     cached png that nothelix wrote during a prior execution)
 //!   - [`mime_for_extension`] / [`is_animated_mime`] (the MIME lookup
@@ -79,6 +81,167 @@ pub(super) fn embed_markdown_attachments(
     body.push_str("\n\n");
     body.push_str(&image_lines.join("\n"));
     (body, Value::Object(attachments))
+}
+
+/// Whether `line` is exactly an `![ALT](attachment:NAME)` ref — the
+/// empty-alt form [`embed_markdown_attachments`] appends or the
+/// alt-texted form vanilla Jupyter writes (`![image.png](attachment:image.png)`).
+/// The converter strips these from both sides when deciding if a
+/// markdown cell still matches its original — refs are transport
+/// artifacts, not user prose.
+pub(super) fn is_attachment_ref_line(line: &str) -> bool {
+    attachment_ref_name(line).is_some()
+}
+
+/// Parse a line that consists solely of `![ALT](attachment:NAME)` and
+/// return NAME. ALT may be empty (the form this module emits) or any
+/// bracket-free text (vanilla Jupyter uses the filename). Scanner, not
+/// regex: prefix `![`, the literal `](attachment:` separator, then a
+/// non-empty paren-free name closed by `)` at end of line.
+pub(super) fn attachment_ref_name(line: &str) -> Option<&str> {
+    let inner = line.trim().strip_prefix("![")?.strip_suffix(')')?;
+    let (alt, name) = inner.split_once("](attachment:")?;
+    if name.is_empty() || name.contains(['(', ')']) || alt.contains(['[', ']']) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Reduce an attachment-map key to a safe sidecar filename: only the
+/// final path component survives (both `/` and `\` count as
+/// separators), and `.`, `..`, or an empty result are rejected.
+/// Attachment keys come verbatim from the `.ipynb` JSON, so a hostile
+/// notebook can place traversal sequences there — sanitizing here is
+/// what confines every sidecar write to `.nothelix/images/`.
+fn sanitize_attachment_filename(key: &str) -> Option<&str> {
+    let name = key.rsplit(['/', '\\']).next()?;
+    match name {
+        "" | "." | ".." => None,
+        _ => Some(name),
+    }
+}
+
+/// Inverse of [`embed_markdown_attachments`]: write each base64
+/// attachment of a markdown cell to `.nothelix/images/` next to the
+/// notebook and return the body without its `![](attachment:…)` ref
+/// lines plus the relative sidecar paths. The caller re-emits the
+/// paths as `# @image` markers, so the next .jl → .ipynb conversion
+/// re-embeds the same bytes — together the pair forms the lossless
+/// attachment round-trip.
+///
+/// Filename collisions are content-addressed: an existing file with
+/// identical bytes is reused, different bytes get a deterministic
+/// `-<hash>` suffix so two cells can attach distinct images under the
+/// same name. Attachment keys are sanitized to their final path
+/// component before any filesystem write (see
+/// [`sanitize_attachment_filename`]) so a hostile key can't escape
+/// `.nothelix/images/`.
+///
+/// Attachments that can't be extracted — undecodable base64 payloads
+/// or keys that sanitize to nothing — are left alone entirely: their
+/// `![…](attachment:…)` ref line stays in the body, and the converter
+/// carries the original attachment entry through on the way back for
+/// every name still referenced in the body. Exact guarantee: an
+/// attachment entry survives `.ipynb → .jl → .ipynb` iff its ref line
+/// is still present in the cell body when converting back.
+pub(super) fn extract_markdown_attachments(
+    markdown_body: &str,
+    attachments: Option<&Value>,
+    ipynb_path: &str,
+) -> (String, Vec<String>) {
+    let Some(map) = attachments.and_then(Value::as_object) else {
+        return (markdown_body.to_string(), Vec::new());
+    };
+
+    let images_dir = Path::new(ipynb_path)
+        .parent()
+        .map(|p| p.join(".nothelix").join("images"))
+        .unwrap_or_else(|| Path::new(".nothelix").join("images"));
+
+    let mut rel_paths = Vec::new();
+    let mut extracted: Vec<&str> = Vec::new();
+    for (filename, mime_map) in map {
+        let Some(safe_name) = sanitize_attachment_filename(filename) else {
+            continue;
+        };
+        let Some(bytes) = attachment_bytes(filename, mime_map) else {
+            continue;
+        };
+        if fs::create_dir_all(&images_dir).is_err() {
+            continue;
+        }
+        let Some(written_name) = write_content_addressed(&images_dir, safe_name, &bytes) else {
+            continue;
+        };
+        extracted.push(filename);
+        rel_paths.push(format!(".nothelix/images/{written_name}"));
+    }
+    if extracted.is_empty() {
+        return (markdown_body.to_string(), Vec::new());
+    }
+
+    let body = markdown_body
+        .lines()
+        .filter(|l| !attachment_ref_name(l).is_some_and(|n| extracted.contains(&n)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (body, rel_paths)
+}
+
+/// Decode an attachment's base64 payload, preferring the MIME entry
+/// that matches the filename's extension (the one [`embed_markdown_attachments`]
+/// writes). nbformat allows mimebundle values as line arrays and
+/// base64 with embedded newlines; both are normalized before decoding.
+fn attachment_bytes(filename: &str, mime_map: &Value) -> Option<Vec<u8>> {
+    let map = mime_map.as_object()?;
+    let entry = map.get(mime_for_extension(filename)).or_else(|| {
+        map.iter()
+            .find(|(k, _)| k.as_str() != "application/x-nothelix-animation")
+            .map(|(_, v)| v)
+    })?;
+    let joined: String = match entry {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => parts.iter().filter_map(Value::as_str).collect(),
+        _ => return None,
+    };
+    let compact: String = joined.chars().filter(|c| !c.is_whitespace()).collect();
+    BASE64
+        .decode(compact.as_bytes())
+        .ok()
+        .filter(|b| !b.is_empty())
+}
+
+/// Write `bytes` into `dir` as `filename`, disambiguating clashes by
+/// content: identical bytes reuse the existing file, different bytes
+/// land under `<stem>-<hash><ext>`. Returns the filename actually used.
+fn write_content_addressed(dir: &Path, filename: &str, bytes: &[u8]) -> Option<String> {
+    let target = dir.join(filename);
+    if matches!(fs::read(&target), Ok(existing) if existing == bytes) {
+        return Some(filename.to_string());
+    }
+    if !target.exists() {
+        return fs::write(&target, bytes)
+            .ok()
+            .map(|()| filename.to_string());
+    }
+
+    let (stem, ext) = match filename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (filename, String::new()),
+    };
+    let hashed = format!("{stem}-{:016x}{ext}", content_hash(bytes));
+    let hashed_target = dir.join(&hashed);
+    if matches!(fs::read(&hashed_target), Ok(existing) if existing == bytes) {
+        return Some(hashed);
+    }
+    fs::write(&hashed_target, bytes).ok().map(|()| hashed)
+}
+
+fn content_hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
 }
 
 /// Map a filename's extension to its IANA MIME type. Falls back to

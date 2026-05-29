@@ -114,4 +114,3 @@ fn line_assigns_to(line: &str, var_name: &str) -> bool {
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
-
