@@ -181,3 +181,53 @@ pub(super) fn scan_type_name(msg: &str, i: &mut usize) -> String {
         raw.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenize_method_error_with_types() {
+        let tokens = tokenize_error(
+            "MethodError",
+            "no method matching +(::Vector{Float64}, ::Int64)",
+        );
+        assert_eq!(tokens.error_type, "MethodError");
+        assert_eq!(tokens.func_name, "+");
+        assert_eq!(tokens.types, vec!["Vector", "Int64"]);
+    }
+
+    #[test]
+    fn tokenize_undef_var() {
+        let tokens = tokenize_error("UndefVarError", "myvar not defined");
+        assert_eq!(tokens.error_type, "UndefVarError");
+        assert_eq!(tokens.message, "myvar not defined");
+    }
+
+    #[test]
+    fn tokenize_qualified_type() {
+        let tokens = tokenize_error("MethodError", "no method matching norm(::Base.Missing)");
+        assert_eq!(tokens.func_name, "norm");
+        assert!(tokens.types.contains(&"Missing".to_string()));
+    }
+
+    #[test]
+    fn tokenize_typeof() {
+        let tokens = tokenize_error(
+            "MethodError",
+            "no method matching /(::Int64, ::typeof(sqrt))",
+        );
+        assert_eq!(tokens.func_name, "/");
+        assert!(tokens.types.iter().any(|t| t.contains("typeof(sqrt)")));
+    }
+
+    #[test]
+    fn tokenize_raw_string() {
+        let tokens = tokenize_error(
+            "",
+            "BoundsError: attempt to access 3-element Vector{Int64} at index [0]",
+        );
+        assert_eq!(tokens.error_type, "BoundsError");
+        assert!(tokens.message.contains("index [0]"));
+    }
+}
