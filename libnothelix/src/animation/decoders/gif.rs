@@ -20,8 +20,7 @@ impl GifSource {
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
-            width = buf.width() as u16;
-            height = buf.height() as u16;
+            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
             let raw = buf.as_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);

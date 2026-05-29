@@ -39,3 +39,16 @@ static REGISTRY: OnceLock<Mutex<AnimationRegistry>> = OnceLock::new();
 pub fn registry() -> &'static Mutex<AnimationRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(AnimationRegistry::new()))
 }
+
+/// Acquire the registry mutex, recovering from poison.
+///
+/// The registry is just `HashMap<u64, AnimationEngine>` — there's no
+/// invariant a paniced thread could have left in an unsafe state. The
+/// engines themselves carry per-tick state with no cross-engine
+/// invariants. So on poison we proceed with the inner guard rather than
+/// propagate the panic across the FFI boundary (which is UB in C).
+pub fn lock_registry() -> std::sync::MutexGuard<'static, AnimationRegistry> {
+    registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}

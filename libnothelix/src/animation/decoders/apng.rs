@@ -26,13 +26,11 @@ impl ApngSource {
 
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
-        let mut width = dims.0 as u16;
-        let mut height = dims.1 as u16;
+        let (mut width, mut height) = crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
-            width = buf.width() as u16;
-            height = buf.height() as u16;
+            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
             let raw = buf.as_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);
@@ -61,8 +59,7 @@ impl ApngSource {
             let raw = rgba8.into_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);
-            width = w as u16;
-            height = h as u16;
+            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(w, h)?;
             frames.push(DecodedFrame {
                 rgba,
                 width,

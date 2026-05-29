@@ -39,10 +39,18 @@ inventory::collect!(RendererEntry);
 pub fn select_renderer(caps: &TerminalCaps) -> Box<dyn AnimationRenderer> {
     let mut entries: Vec<&RendererEntry> = inventory::iter::<RendererEntry>.into_iter().collect();
     entries.sort_by_key(|e| e.priority);
-    for e in entries {
-        if let Some(r) = (e.factory)(caps) {
-            return r;
-        }
-    }
-    panic!("static fallback renderer must always succeed");
+    entries
+        .into_iter()
+        .find_map(|e| (e.factory)(caps))
+        // The static-fallback renderer registers with `priority = MAX`
+        // and unconditionally returns `Some(_)`, so the iterator always
+        // yields. If this fires, the inventory registration was lost
+        // (build-system regression) — surface the invariant explicitly
+        // rather than panicking via index.
+        .unwrap_or_else(|| {
+            unreachable!(
+                "static fallback renderer must always succeed — \
+                 inventory registration was lost",
+            )
+        })
 }

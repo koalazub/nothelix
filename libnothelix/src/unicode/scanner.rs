@@ -313,8 +313,7 @@ impl<'a> Scanner<'a> {
             {
                 content_pos += 1;
             }
-            let placed = if content_pos < self.bytes.len() {
-                let ch = self.text[content_pos..].chars().next().unwrap();
+            let placed = if let Some(ch) = self.text[content_pos..].chars().next() {
                 if ch.is_ascii_alphanumeric() {
                     let replacement = format!("{fence}{ch}");
                     self.overlays.push(Overlay::at(content_pos, replacement));
@@ -666,10 +665,9 @@ impl<'a> Scanner<'a> {
     /// the next row starts with a scanner-special char like `\` or `^`,
     /// where overlaying the first grapheme would clash with another overlay.
     fn scan_row_separator(&mut self, i: usize) -> usize {
-        if self.env_stack.is_empty() {
+        let Some(env) = self.env_stack.last_mut() else {
             return i + 1;
-        }
-        let env = self.env_stack.last_mut().unwrap();
+        };
         env.row += 1;
         let row = env.row;
         let total_rows = env.total_rows;
@@ -687,8 +685,7 @@ impl<'a> Scanner<'a> {
             {
                 j += 1;
             }
-            let placed = if j < self.bytes.len() {
-                let ch = self.text[j..].chars().next().unwrap();
+            let placed = if let Some(ch) = self.text[j..].chars().next() {
                 if ch.is_ascii_alphanumeric() {
                     let replacement = format!("{row_fence}{ch}");
                     self.overlays.push(Overlay::at(j, replacement));

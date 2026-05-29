@@ -39,6 +39,22 @@ pub enum DecoderError {
 
 pub type DecoderFactory = fn(&[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError>;
 
+/// Narrow image dimensions returned by upstream decoders (`u32` each)
+/// to the terminal-cell-counted (`u16`, `u16`) form the renderer takes.
+/// An image with either dimension ≥ 65 536 px is rejected as malformed
+/// — no terminal can usefully render that, and silently truncating
+/// would leave decoded RGBA buffers misaligned with the reported
+/// (width, height) pair.
+pub fn fit_dimensions_to_u16(width: u32, height: u32) -> Result<(u16, u16), DecoderError> {
+    let w = u16::try_from(width).map_err(|_| {
+        DecoderError::Malformed(format!("image width {width} exceeds u16 limit"))
+    })?;
+    let h = u16::try_from(height).map_err(|_| {
+        DecoderError::Malformed(format!("image height {height} exceeds u16 limit"))
+    })?;
+    Ok((w, h))
+}
+
 pub struct DecoderEntry {
     pub mime: &'static str,
     pub factory: DecoderFactory,

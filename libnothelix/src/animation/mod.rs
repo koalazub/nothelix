@@ -47,7 +47,7 @@ pub unsafe extern "C" fn nothelix_animation_register(
         max_fps: 60,
     };
     let r = renderer::select_renderer(&caps);
-    let mut reg = registry::registry().lock().unwrap();
+    let mut reg = registry::lock_registry();
     let id = reg.allocate_id();
     let eng = engine::AnimationEngine::new(id, dec, r, 64 * 1024 * 1024);
     reg.insert(id, eng);
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn nothelix_animation_tick(
     {
         return -10;
     }
-    let mut reg = registry::registry().lock().unwrap();
+    let mut reg = registry::lock_registry();
     let eng = match reg.get_mut(engine_id) {
         Some(e) => e,
         None => return -1,
@@ -123,13 +123,12 @@ pub unsafe extern "C" fn nothelix_animation_free_buffer(ptr: *mut u8, len: usize
 /// later calls become no-ops.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
-    if let Ok(mut reg) = registry::registry().lock() {
-        if let Some(mut eng) = reg.drop_engine(engine_id) {
-            // Emit teardown bytes to clean up the renderer; we drop them since
-            // the caller can call drop without first requesting teardown bytes
-            // (the plugin sends teardown via tick output during normal flow).
-            let _ = eng.teardown();
-        }
+    let mut reg = registry::lock_registry();
+    if let Some(mut eng) = reg.drop_engine(engine_id) {
+        // Emit teardown bytes to clean up the renderer; we drop them since
+        // the caller can call drop without first requesting teardown bytes
+        // (the plugin sends teardown via tick output during normal flow).
+        let _ = eng.teardown();
     }
 }
 
@@ -139,7 +138,7 @@ pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
 /// touching state. No raw pointers are dereferenced.
 #[no_mangle]
 pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bool) -> i32 {
-    let mut reg = registry::registry().lock().unwrap();
+    let mut reg = registry::lock_registry();
     if let Some(eng) = reg.get_mut(engine_id) {
         let now = Instant::now();
         if paused { eng.pause(now) } else { eng.resume(now) }
@@ -166,7 +165,7 @@ pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bo
 pub mod steel_api {
     use super::decoder::lookup_decoder;
     use super::engine::AnimationEngine;
-    use super::registry::registry;
+    use super::registry::lock_registry;
     use super::renderer::{select_renderer, TerminalCaps};
     use std::time::Instant;
 
@@ -190,10 +189,7 @@ pub mod steel_api {
             max_fps: 60,
         };
         let r = select_renderer(&caps);
-        let mut reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return -1,
-        };
+        let mut reg = lock_registry();
         let id = reg.allocate_id();
         let eng = AnimationEngine::new(id, dec, r, 64 * 1024 * 1024);
         reg.insert(id, eng);
@@ -212,13 +208,9 @@ pub mod steel_api {
     /// (animation-tick-bytes)`) from advancing the engine multiple times
     /// per frame.
     pub fn animation_tick(engine_id: isize) -> isize {
-        let mut reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return -1,
-        };
-        let eng = match reg.get_mut(engine_id as u64) {
-            Some(e) => e,
-            None => return -2,
+        let mut reg = lock_registry();
+        let Some(eng) = reg.get_mut(engine_id as u64) else {
+            return -2;
         };
         eng.tick(Instant::now());
         0
@@ -229,14 +221,10 @@ pub mod steel_api {
     /// `Vec<u8>` when the last tick had no new frame to emit (status 1) or
     /// when the engine has never been ticked.
     pub fn animation_tick_bytes(engine_id: isize) -> Vec<u8> {
-        let reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
-        match reg.get(engine_id as u64) {
-            Some(e) => e.last_tick_bytes.clone(),
-            None => Vec::new(),
-        }
+        lock_registry()
+            .get(engine_id as u64)
+            .map(|e| e.last_tick_bytes.clone())
+            .unwrap_or_default()
     }
 
     /// Return the status code from the last `animation_tick_bytes` call on `engine_id`.
@@ -246,73 +234,54 @@ pub mod steel_api {
     ///  -1 = decode error
     ///  -2 = engine_id not found (never registered or already dropped)
     pub fn animation_tick_status(engine_id: isize) -> isize {
-        let reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return -2,
-        };
-        match reg.get(engine_id as u64) {
-            Some(e) => e.last_tick_meta.status,
-            None => -2,
-        }
+        lock_registry()
+            .get(engine_id as u64)
+            .map_or(-2, |e| e.last_tick_meta.status)
     }
 
     /// Return the frame height (in terminal cells) from the last tick.
     pub fn animation_tick_height(engine_id: isize) -> isize {
-        let reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return 0,
-        };
-        reg.get(engine_id as u64)
-            .map(|e| e.last_tick_meta.height)
-            .unwrap_or(0)
+        lock_registry()
+            .get(engine_id as u64)
+            .map_or(0, |e| e.last_tick_meta.height)
     }
 
     /// Return the suggested delay until the next tick (milliseconds) from the last tick.
     pub fn animation_tick_delay_ms(engine_id: isize) -> isize {
-        let reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return 0,
-        };
-        reg.get(engine_id as u64)
-            .map(|e| e.last_tick_meta.next_delay_ms)
-            .unwrap_or(0)
+        lock_registry()
+            .get(engine_id as u64)
+            .map_or(0, |e| e.last_tick_meta.next_delay_ms)
     }
 
     /// Return the frame index from the last tick.
     pub fn animation_tick_frame_index(engine_id: isize) -> isize {
-        let reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return 0,
-        };
-        reg.get(engine_id as u64)
-            .map(|e| e.last_tick_meta.frame_index)
-            .unwrap_or(0)
+        lock_registry()
+            .get(engine_id as u64)
+            .map_or(0, |e| e.last_tick_meta.frame_index)
     }
 
     /// Set pause state for the engine. Returns 0 on success, -1 if not found.
     pub fn animation_set_pause(engine_id: isize, paused: bool) -> isize {
-        let mut reg = match registry().lock() {
-            Ok(r) => r,
-            Err(_) => return -2,
+        let mut reg = lock_registry();
+        let Some(eng) = reg.get_mut(engine_id as u64) else {
+            return -1;
         };
-        if let Some(eng) = reg.get_mut(engine_id as u64) {
-            let now = Instant::now();
-            if paused { eng.pause(now) } else { eng.resume(now) }
-            0
+        let now = Instant::now();
+        if paused {
+            eng.pause(now);
         } else {
-            -1
+            eng.resume(now);
         }
+        0
     }
 
     /// Drop the engine and return any renderer teardown bytes (e.g. Kitty
     /// "delete image" escapes) so the caller can flush them to the terminal.
     pub fn animation_drop(engine_id: isize) -> Vec<u8> {
-        if let Ok(mut reg) = registry().lock() {
-            if let Some(mut eng) = reg.drop_engine(engine_id as u64) {
-                return eng.teardown();
-            }
-        }
-        Vec::new()
+        lock_registry()
+            .drop_engine(engine_id as u64)
+            .map(|mut eng| eng.teardown())
+            .unwrap_or_default()
     }
 }
 
