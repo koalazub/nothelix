@@ -12,6 +12,7 @@ use std::fmt::Write;
 use std::sync::OnceLock;
 
 mod hints;
+mod scanners;
 mod tokenize;
 mod types;
 mod util;
@@ -358,51 +359,23 @@ fn extract_not_callable_type(msg: &str) -> Option<String> {
 /// and stops at `#` comments. Used to narrow "not callable" enrichment
 /// when Julia's error omits the offending name.
 fn scan_call_identifiers(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
+    let mut s = scanners::Scanner::new(source);
     let mut names = Vec::new();
-    let mut i = 0;
-    let mut in_str = false;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_str {
-            if b == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b == b'"' {
-                in_str = false;
-            }
-            i += 1;
-            continue;
-        }
-        if b == b'"' {
-            in_str = true;
-            i += 1;
-            continue;
-        }
+    while let Some(b) = s.peek() {
         if b == b'#' {
             break;
         }
-        // Start of an identifier?
-        if b.is_ascii_alphabetic() || b == b'_' {
-            let start = i;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' || c == b'!' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            // Followed immediately by `(`?
-            if i < bytes.len() && bytes[i] == b'(' {
-                if let Ok(name) = std::str::from_utf8(&bytes[start..i]) {
-                    names.push(name.to_string());
-                }
+        if b == b'"' {
+            s.skip_string_literal();
+            continue;
+        }
+        if let Some(name) = s.scan_identifier() {
+            if s.peek() == Some(b'(') {
+                names.push(name.to_string());
             }
             continue;
         }
-        i += 1;
+        s.advance();
     }
     names
 }
@@ -450,73 +423,29 @@ fn scan_types_from_call(msg: &str) -> Vec<String> {
     types
 }
 
-/// Find the index of the `)` that matches the `(` at `open_idx`.
-/// Caller must ensure `bytes[open_idx] == b'('`.
+/// Thin alias for the parenthesis-specialised matcher in `scanners`,
+/// kept so older callsites read naturally.
 fn find_matching_close(bytes: &[u8], open_idx: usize) -> Option<usize> {
-    if bytes.get(open_idx).copied() != Some(b'(') {
-        return None;
-    }
-    let mut depth: i32 = 1;
-    let mut i = open_idx + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
+    scanners::find_matching_paren(bytes, open_idx)
 }
 
 /// Extract argument expressions from a function call in source code.
 /// Source: "B = similar(n, Float64)" with func "similar" → ["n", "Float64"]
 fn scan_call_args(source: &str, func: &str) -> Vec<String> {
-    let idx = match source.find(func) {
-        Some(i) => i,
-        None => return Vec::new(),
+    let idx = source.find(func).map(|i| i + func.len());
+    let Some(after_func) = idx.map(|i| &source[i..]) else {
+        return Vec::new();
     };
-    let after = &source[idx + func.len()..];
-    let paren_start = match after.find('(') {
-        Some(i) => i + 1,
-        None => return Vec::new(),
+    let Some(paren_open) = after_func.find('(') else {
+        return Vec::new();
     };
-    // Find matching close paren
-    let bytes = after.as_bytes();
-    let mut depth = 1;
-    let mut i = paren_start;
-    while i < bytes.len() && depth > 0 {
-        if bytes[i] == b'(' { depth += 1; }
-        if bytes[i] == b')' { depth -= 1; }
-        if depth > 0 { i += 1; }
-    }
-    let args_str = &after[paren_start..i];
-
-    // Split on commas (respecting nested parens/brackets)
-    let mut args = Vec::new();
-    let mut current = String::new();
-    let mut nest = 0i32;
-    for ch in args_str.chars() {
-        match ch {
-            '(' | '[' | '{' => { nest += 1; current.push(ch); }
-            ')' | ']' | '}' => { nest -= 1; current.push(ch); }
-            ',' if nest == 0 => {
-                let trimmed = current.trim().to_string();
-                if !trimmed.is_empty() { args.push(trimmed); }
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-    let trimmed = current.trim().to_string();
-    if !trimmed.is_empty() { args.push(trimmed); }
-    args
+    let Some(paren_close) = scanners::find_matching_paren(after_func.as_bytes(), paren_open)
+    else {
+        return Vec::new();
+    };
+    scanners::split_top_level_commas(&after_func[paren_open + 1..paren_close])
 }
+
 
 /// Scan for "(M, N)" dimension pairs in an error message.
 /// Returns strings like "(8, 8)", "(5, 5)".
@@ -867,24 +796,18 @@ fn extract_undef_var(msg: &str) -> String {
     if let Some(start) = msg.find('`') {
         if let Some(end) = msg[start + 1..].find('`') {
             let cand = &msg[start + 1..start + 1 + end];
-            if is_identifier(cand) {
+            if scanners::is_identifier(cand) {
                 return cand.to_string();
             }
         }
     }
     // Fallback: first whitespace-delimited word that looks like an ident.
     for word in msg.split_whitespace() {
-        if is_identifier(word) {
+        if scanners::is_identifier(word) {
             return word.to_string();
         }
     }
     String::new()
-}
-
-fn is_identifier(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // ─── Structured formatting ───────────────────────────────────────────────────
