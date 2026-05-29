@@ -74,9 +74,7 @@ pub enum VarContext {
     },
     /// Cell is in the kernel's `CELLS` registry (source parsed by
     /// `@cell`) but hasn't executed — AST says it would define the var.
-    PendingRegistered {
-        defined_in_cell: i64,
-    },
+    PendingRegistered { defined_in_cell: i64 },
     /// Static `.jl` scan found an assignment in a cell the kernel hasn't
     /// seen yet. Carries the exact line for user navigation.
     StaticSource {
@@ -89,9 +87,13 @@ pub enum VarContext {
 impl VarContext {
     pub fn defined_in_cell(&self) -> i64 {
         match self {
-            Self::Executed { defined_in_cell, .. }
+            Self::Executed {
+                defined_in_cell, ..
+            }
             | Self::PendingRegistered { defined_in_cell }
-            | Self::StaticSource { defined_in_cell, .. } => *defined_in_cell,
+            | Self::StaticSource {
+                defined_in_cell, ..
+            } => *defined_in_cell,
         }
     }
 }

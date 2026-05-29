@@ -41,8 +41,7 @@ fn main() {
         .unwrap_or(false);
 
     let build_id = if std::env::var("NOTHELIX_CI_BUILD").is_ok() {
-        let date = std::env::var("NOTHELIX_BUILD_DATE")
-            .unwrap_or_else(|_| "00000000".to_string());
+        let date = std::env::var("NOTHELIX_BUILD_DATE").unwrap_or_else(|_| "00000000".to_string());
         format!("ci-{date}-{short_sha}")
     } else if dirty {
         format!("dev-{short_sha}-dirty")

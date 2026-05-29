@@ -93,7 +93,10 @@ pub(super) fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> S
             .map(|c| format!("@cell {c}"))
             .collect::<Vec<_>>()
             .join(", ");
-        let _ = writeln!(out, "   = note: this cell depends on {cells} which haven't been executed");
+        let _ = writeln!(
+            out,
+            "   = note: this cell depends on {cells} which haven't been executed"
+        );
     }
 
     // ── Call chain ──
@@ -102,7 +105,11 @@ pub(super) fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> S
         out.push_str("   |\n");
         out.push_str("   = note: call chain:\n");
         for (i, entry) in chain.iter().enumerate() {
-            let pfx = if i == 0 { "   |   → " } else { "   |     → " };
+            let pfx = if i == 0 {
+                "   |   → "
+            } else {
+                "   |     → "
+            };
             let _ = writeln!(out, "{pfx}{entry}");
         }
     }
@@ -115,7 +122,11 @@ pub(super) fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> S
 /// and so future variant additions stay isolated.
 fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell: i64) {
     match ctx {
-        VarContext::StaticSource { defined_in_cell, line_text, .. } => {
+        VarContext::StaticSource {
+            defined_in_cell,
+            line_text,
+            ..
+        } => {
             let relation = match defined_in_cell.cmp(&error_cell) {
                 std::cmp::Ordering::Greater => "later in the notebook",
                 std::cmp::Ordering::Less => "earlier in the notebook",
@@ -140,7 +151,10 @@ fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell:
                 );
             }
         }
-        VarContext::Executed { defined_in_cell, status } => {
+        VarContext::Executed {
+            defined_in_cell,
+            status,
+        } => {
             let _ = writeln!(
                 out,
                 "   = note: `{var}` is defined in @cell {defined_in_cell} (status: {status})"
@@ -161,7 +175,6 @@ fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell:
         }
     }
 }
-
 
 // ─── Raw formatting ──────────────────────────────────────────────────────────
 
@@ -263,4 +276,3 @@ pub(super) fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
 
     out
 }
-

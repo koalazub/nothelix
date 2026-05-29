@@ -67,7 +67,11 @@ pub(super) fn extract_not_callable_type(msg: &str) -> Option<String> {
     let after = &msg[start + "objects of type ".len()..];
     let end = after.find(" are not callable")?;
     let t = after[..end].trim();
-    if t.is_empty() { None } else { Some(t.to_string()) }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
 }
 
 /// Find every `identifier(` call in a source line. Skips string content

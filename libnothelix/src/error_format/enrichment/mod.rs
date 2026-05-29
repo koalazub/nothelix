@@ -56,7 +56,8 @@ pub(super) fn extract_var_name(s: &str) -> String {
             || bytes[i] == b'.' // struct field access
             || bytes[i] == 0xCC // unicode combining (for things like x̂)
             || bytes[i] == 0xC3 // extended latin
-            || bytes[i] > 127)  // any non-ASCII (Julia unicode vars)
+            || bytes[i] > 127)
+    // any non-ASCII (Julia unicode vars)
     {
         i += 1;
     }

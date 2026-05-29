@@ -83,7 +83,8 @@ fn build_tiny_gif() -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
-        enc.set_repeat(::image::codecs::gif::Repeat::Infinite).unwrap();
+        enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
+            .unwrap();
         for k in 0..4u8 {
             let mut img = RgbaImage::new(32, 32);
             for p in img.pixels_mut() {

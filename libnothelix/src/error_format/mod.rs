@@ -86,7 +86,9 @@ impl Enricher for StaticCellScanEnricher {
         if err.error_type != "UndefVarError" || !err.cell_context.is_empty() {
             return;
         }
-        let Some(path) = ctx.notebook_path else { return };
+        let Some(path) = ctx.notebook_path else {
+            return;
+        };
         if path.is_empty() {
             return;
         }
@@ -273,7 +275,11 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("E021"), "got:\n{}", out);
         assert!(out.contains("^^^"));
         assert!(out.contains("stdlib:LinearAlgebra"));
@@ -316,10 +322,23 @@ mod tests {
                 }
             }
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("@cell 2"), "should reference defining cell, got:\n{out}");
-        assert!(out.contains("not yet executed"), "should say not executed, got:\n{out}");
-        assert!(out.contains("run @cell 2 first"), "should suggest running it, got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("@cell 2"),
+            "should reference defining cell, got:\n{out}"
+        );
+        assert!(
+            out.contains("not yet executed"),
+            "should say not executed, got:\n{out}"
+        );
+        assert!(
+            out.contains("run @cell 2 first"),
+            "should suggest running it, got:\n{out}"
+        );
     }
 
     #[test]
@@ -339,7 +358,11 @@ mod tests {
                 }
             }
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("@cell 1"), "got:\n{out}");
         assert!(out.contains("status: error"), "got:\n{out}");
     }
@@ -355,7 +378,11 @@ mod tests {
             "cell_line": 1,
             "unexecuted_deps": [1, 2]
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("@cell 1"), "got:\n{out}");
         assert!(out.contains("@cell 2"), "got:\n{out}");
         assert!(out.contains("haven't been executed"), "got:\n{out}");
@@ -371,8 +398,15 @@ mod tests {
             "cell_index": 1,
             "cell_line": 1
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(!out.contains("@cell"), "should have no cell context, got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            !out.contains("@cell"),
+            "should have no cell context, got:\n{out}"
+        );
         assert!(!out.contains("haven't been executed"), "got:\n{out}");
     }
 
@@ -388,12 +422,28 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("S_hat"), "should use actual var name, got:\n{out}");
-        assert!(out.contains("(8, 8)"), "should show dimensions, got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("S_hat"),
+            "should use actual var name, got:\n{out}"
+        );
+        assert!(
+            out.contains("(8, 8)"),
+            "should show dimensions, got:\n{out}"
+        );
         assert!(out.contains("K"), "should use actual var name, got:\n{out}");
-        assert!(out.contains("(5, 5)"), "should show dimensions, got:\n{out}");
-        assert!(out.contains("size(S_hat, 2) == size(K, 1)"), "should show concrete check, got:\n{out}");
+        assert!(
+            out.contains("(5, 5)"),
+            "should show dimensions, got:\n{out}"
+        );
+        assert!(
+            out.contains("size(S_hat, 2) == size(K, 1)"),
+            "should show concrete check, got:\n{out}"
+        );
     }
 
     #[test]
@@ -406,7 +456,11 @@ mod tests {
             "cell_index": 2,
             "cell_line": 1
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("`A`"), "got:\n{out}");
         assert!(out.contains("`b`"), "got:\n{out}");
     }
@@ -421,7 +475,11 @@ mod tests {
             "cell_index": 1,
             "cell_line": 3
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("prices"), "should name the array, got:\n{out}");
         assert!(out.contains("5 elements"), "should show count, got:\n{out}");
     }
@@ -441,10 +499,20 @@ mod tests {
             "cell_index": 3,
             "cell_line": 5
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("`n`"), "should show actual arg name, got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("`n`"),
+            "should show actual arg name, got:\n{out}"
+        );
         assert!(out.contains("Int64"), "should show type, got:\n{out}");
-        assert!(out.contains("typeof(n)"), "should suggest typeof check, got:\n{out}");
+        assert!(
+            out.contains("typeof(n)"),
+            "should suggest typeof check, got:\n{out}"
+        );
     }
 
     #[test]
@@ -461,10 +529,23 @@ mod tests {
             "cell_index": 19,
             "cell_line": 3
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("`eigenvalues`"), "should show actual arg name, got:\n{out}");
-        assert!(out.contains("Vector{ComplexF64}"), "should show Vector type, got:\n{out}");
-        assert!(out.contains("typeof(eigenvalues)"), "should suggest typeof check, got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("`eigenvalues`"),
+            "should show actual arg name, got:\n{out}"
+        );
+        assert!(
+            out.contains("Vector{ComplexF64}"),
+            "should show Vector type, got:\n{out}"
+        );
+        assert!(
+            out.contains("typeof(eigenvalues)"),
+            "should suggest typeof check, got:\n{out}"
+        );
     }
 
     // scan_types_from_call white-box test moved into
@@ -485,7 +566,11 @@ mod tests {
             "cell_index": 25,
             "cell_line": 16
         }"##;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(
             out.contains("bracket balance on this line"),
             "should name the balance issue, got:\n{out}"
@@ -506,7 +591,11 @@ mod tests {
             "cell_index": 1,
             "cell_line": 3
         }"##;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(
             out.contains("unclosed") && out.contains("`[`"),
             "should identify the unclosed `[`, got:\n{out}"
@@ -524,7 +613,11 @@ mod tests {
             "cell_index": 0,
             "cell_line": 1
         }"##;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(
             !out.contains("bracket balance"),
             "bracket inside string must not trigger imbalance note, got:\n{out}"
@@ -549,8 +642,15 @@ mod tests {
                 "Vector{ComplexF64}": [{"name": "X", "cell": 17}]
             }
         }"##;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("called something of type Vector{ComplexF64}"), "got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("called something of type Vector{ComplexF64}"),
+            "got:\n{out}"
+        );
         assert!(
             out.contains("`X` — Vector{ComplexF64} assigned in cell 17"),
             "should name X and cell 17, got:\n{out}"
@@ -570,9 +670,19 @@ mod tests {
             "cell_index": 3,
             "cell_line": 2
         }"##;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
-        assert!(out.contains("names called in the source line"), "got:\n{out}");
-        assert!(out.contains("`foo()`") && out.contains("`bar()`"), "got:\n{out}");
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
+        assert!(
+            out.contains("names called in the source line"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("`foo()`") && out.contains("`bar()`"),
+            "got:\n{out}"
+        );
     }
 
     #[test]
@@ -597,7 +707,11 @@ mod tests {
                 {"name": "C1", "type": "Circulant{Int64, Vector{Int64}}", "cell": 17}
             ]
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(
             out.contains("in-scope variables by type"),
             "should include scope block, got:\n{out}"
@@ -629,9 +743,16 @@ mod tests {
             "cell_index": 19,
             "cell_line": 3
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("`eigenvalues`"), "got:\n{out}");
-        assert!(!out.contains("in-scope variables by type"), "should not render empty scope block, got:\n{out}");
+        assert!(
+            !out.contains("in-scope variables by type"),
+            "should not render empty scope block, got:\n{out}"
+        );
     }
 
     #[test]
@@ -644,7 +765,11 @@ mod tests {
             "cell_index": 1,
             "cell_line": 2
         }"#;
-        let out = format_error(&FormatContext { error_json: json, raw_error: "", notebook_path: None });
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: None,
+        });
         assert!(out.contains("`data`"), "got:\n{out}");
         assert!(out.contains("`label`"), "got:\n{out}");
         assert!(out.contains("typeof(data)"), "got:\n{out}");

@@ -27,7 +27,10 @@ pub(super) struct Scanner<'a> {
                     // enrichment scanners may grow into them.
 impl<'a> Scanner<'a> {
     pub fn new(s: &'a str) -> Self {
-        Self { bytes: s.as_bytes(), pos: 0 }
+        Self {
+            bytes: s.as_bytes(),
+            pos: 0,
+        }
     }
 
     pub fn pos(&self) -> usize {

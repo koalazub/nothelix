@@ -89,7 +89,9 @@ fn scan_binary_operands(source: &str) -> Vec<String> {
 
     // Try common binary operators in length-descending order so that
     // `.\` is matched as a unit rather than being treated as `.` + `\`.
-    for op in &[" .* ", " ./ ", " .\\ ", " * ", " / ", " \\ ", " .+ ", " .- "] {
+    for op in &[
+        " .* ", " ./ ", " .\\ ", " * ", " / ", " \\ ", " .+ ", " .- ",
+    ] {
         if let Some(idx) = expr.find(op) {
             let lhs = expr[..idx].trim();
             let rhs = expr[idx + op.len()..].trim();
@@ -115,19 +117,31 @@ mod tests {
         assert!(out.contains("`S_hat` is (8, 8)"), "got:\n{out}");
         assert!(out.contains("`K` is (5, 5)"), "got:\n{out}");
         assert!(out.contains("size(S_hat, 2) == size(K, 1)"), "got:\n{out}");
-        assert!(out.contains("check with: size(S_hat), size(K)"), "got:\n{out}");
+        assert!(
+            out.contains("check with: size(S_hat), size(K)"),
+            "got:\n{out}"
+        );
     }
 
     #[test]
     fn scan_dimension_pairs_extracts_sizes() {
-        assert_eq!(scan_dimension_pairs("(8, 8), (5, 5)"), vec!["(8, 8)", "(5, 5)"]);
-        assert_eq!(scan_dimension_pairs("nope (text) here"), Vec::<String>::new());
+        assert_eq!(
+            scan_dimension_pairs("(8, 8), (5, 5)"),
+            vec!["(8, 8)", "(5, 5)"]
+        );
+        assert_eq!(
+            scan_dimension_pairs("nope (text) here"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn scan_binary_operands_handles_multiplication() {
         assert_eq!(scan_binary_operands("S_hat * K"), vec!["S_hat", "K"]);
-        assert_eq!(scan_binary_operands("result = S_hat * K"), vec!["S_hat", "K"]);
+        assert_eq!(
+            scan_binary_operands("result = S_hat * K"),
+            vec!["S_hat", "K"]
+        );
     }
 
     #[test]

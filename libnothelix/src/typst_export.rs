@@ -82,7 +82,9 @@ fn md_line_to_typst(line: &str) -> String {
             out.push_str("$ ");
             out.push_str(&latex_to_typst_math(&line[start..i]));
             out.push_str(" $");
-            if i + 1 < len { i += 2; }
+            if i + 1 < len {
+                i += 2;
+            }
             continue;
         }
 
@@ -96,7 +98,9 @@ fn md_line_to_typst(line: &str) -> String {
             out.push('$');
             out.push_str(&latex_to_typst_math(&line[start..i]));
             out.push('$');
-            if i < len { i += 1; }
+            if i < len {
+                i += 1;
+            }
             continue;
         }
 
@@ -117,7 +121,9 @@ fn md_line_to_typst(line: &str) -> String {
             out.push('*');
             out.push_str(&line[start..i]);
             out.push('*');
-            if i + 1 < len { i += 2; }
+            if i + 1 < len {
+                i += 2;
+            }
             continue;
         }
 
@@ -131,7 +137,9 @@ fn md_line_to_typst(line: &str) -> String {
             out.push('_');
             out.push_str(&line[start..i]);
             out.push('_');
-            if i < len { i += 1; }
+            if i < len {
+                i += 1;
+            }
             continue;
         }
 
@@ -164,7 +172,12 @@ pub fn latex_to_typst_math(latex: &str) -> String {
                 })
                 .filter(|r| !r.trim().is_empty())
                 .collect();
-            s = format!("{}cases(\n  {}\n){}", &s[..start], rows.join(",\n  "), &s[end + 11..]);
+            s = format!(
+                "{}cases(\n  {}\n){}",
+                &s[..start],
+                rows.join(",\n  "),
+                &s[end + 11..]
+            );
         } else {
             break;
         }
@@ -182,7 +195,12 @@ pub fn latex_to_typst_math(latex: &str) -> String {
                     .map(|row| row.split('&').map(str::trim).collect::<Vec<_>>().join(", "))
                     .filter(|r| !r.trim().is_empty())
                     .collect();
-                s = format!("{}mat({}){}", &s[..start], rows.join("; "), &s[end + close.len()..]);
+                s = format!(
+                    "{}mat({}){}",
+                    &s[..start],
+                    rows.join("; "),
+                    &s[end + close.len()..]
+                );
             } else {
                 break;
             }
@@ -274,9 +292,13 @@ pub fn latex_to_typst_math(latex: &str) -> String {
 
     // \mathbf{v} → bold(v), \mathbb{R} → RR, \mathcal{F} → cal(F)
     for (cmd, func) in &[
-        ("mathbf", "bold"), ("textbf", "bold"), ("boldsymbol", "bold"),
-        ("mathcal", "cal"), ("cal", "cal"),
-        ("mathfrak", "frak"), ("frak", "frak"),
+        ("mathbf", "bold"),
+        ("textbf", "bold"),
+        ("boldsymbol", "bold"),
+        ("mathcal", "cal"),
+        ("cal", "cal"),
+        ("mathfrak", "frak"),
+        ("frak", "frak"),
         ("mathbb", "bb"),
     ] {
         let pat = format!("\\{cmd}{{");
@@ -319,9 +341,11 @@ pub fn latex_to_typst_math(latex: &str) -> String {
         while let Some(idx) = s[pos..].find(&from) {
             let abs = pos + idx;
             let after = abs + from.len();
-            if s.as_bytes().get(after).is_none_or(|b| !b.is_ascii_alphabetic()) {
-                let needs_space = abs > 0
-                    && s.as_bytes()[abs - 1].is_ascii_alphanumeric();
+            if s.as_bytes()
+                .get(after)
+                .is_none_or(|b| !b.is_ascii_alphabetic())
+            {
+                let needs_space = abs > 0 && s.as_bytes()[abs - 1].is_ascii_alphanumeric();
                 let prefix = if needs_space { " " } else { "" };
                 s = format!("{}{prefix}{name}{}", &s[..abs], &s[after..]);
                 pos = abs + prefix.len() + name.len();
@@ -363,30 +387,115 @@ pub fn latex_to_typst_math(latex: &str) -> String {
 
 static GREEK_AND_SYMBOLS: &[&str] = &[
     // Greek lowercase
-    "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta",
-    "vartheta", "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho",
-    "sigma", "tau", "upsilon", "phi", "varphi", "chi", "psi", "omega",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "vartheta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "rho",
+    "sigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "varphi",
+    "chi",
+    "psi",
+    "omega",
     // Greek uppercase
-    "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon",
-    "Phi", "Psi", "Omega",
+    "Gamma",
+    "Delta",
+    "Theta",
+    "Lambda",
+    "Xi",
+    "Pi",
+    "Sigma",
+    "Upsilon",
+    "Phi",
+    "Psi",
+    "Omega",
     // Math operators (LaTeX \cos → Typst cos, etc.)
-    "cos", "sin", "tan", "cot", "sec", "csc",
-    "arccos", "arcsin", "arctan",
-    "cosh", "sinh", "tanh",
-    "exp", "log", "ln", "lg",
-    "lim", "liminf", "limsup",
-    "max", "min", "sup", "inf",
-    "det", "dim", "ker", "arg",
-    "deg", "gcd", "hom", "mod",
+    "cos",
+    "sin",
+    "tan",
+    "cot",
+    "sec",
+    "csc",
+    "arccos",
+    "arcsin",
+    "arctan",
+    "cosh",
+    "sinh",
+    "tanh",
+    "exp",
+    "log",
+    "ln",
+    "lg",
+    "lim",
+    "liminf",
+    "limsup",
+    "max",
+    "min",
+    "sup",
+    "inf",
+    "det",
+    "dim",
+    "ker",
+    "arg",
+    "deg",
+    "gcd",
+    "hom",
+    "mod",
     // Signal processing / engineering
-    "sinc", "rect", "sgn", "sign", "diag",
-    "Re", "Im", "conj", "tr", "rank",
-    "var", "cov", "corr",
+    "sinc",
+    "rect",
+    "sgn",
+    "sign",
+    "diag",
+    "Re",
+    "Im",
+    "conj",
+    "tr",
+    "rank",
+    "var",
+    "cov",
+    "corr",
     // Symbols
-    "infty", "infinity", "partial", "nabla", "forall", "exists", "ell",
-    "cdot", "times", "approx", "equiv", "sim", "propto",
-    "sum", "prod", "int", "iint", "iiint", "oint",
-    "star", "ast", "circ", "oplus", "otimes",
+    "infty",
+    "infinity",
+    "partial",
+    "nabla",
+    "forall",
+    "exists",
+    "ell",
+    "cdot",
+    "times",
+    "approx",
+    "equiv",
+    "sim",
+    "propto",
+    "sum",
+    "prod",
+    "int",
+    "iint",
+    "iiint",
+    "oint",
+    "star",
+    "ast",
+    "circ",
+    "oplus",
+    "otimes",
 ];
 
 /// Find the matching `}` for content starting after the opening `{`.
@@ -415,10 +524,19 @@ mod tests {
     fn display_math_block() {
         let md = "$$\ny_n = x_n - \\alpha^2\\, x_{n-2}\n$$";
         let typst = md_to_typst(md);
-        assert!(typst.contains("alpha"), "should convert \\alpha, got:\n{typst}");
-        assert!(typst.contains("_(n-2)"), "should convert subscript, got:\n{typst}");
+        assert!(
+            typst.contains("alpha"),
+            "should convert \\alpha, got:\n{typst}"
+        );
+        assert!(
+            typst.contains("_(n-2)"),
+            "should convert subscript, got:\n{typst}"
+        );
         assert!(!typst.contains("$$"), "should not have $$, got:\n{typst}");
-        assert!(!typst.contains("\\alpha"), "should strip backslash, got:\n{typst}");
+        assert!(
+            !typst.contains("\\alpha"),
+            "should strip backslash, got:\n{typst}"
+        );
     }
 
     #[test]
@@ -437,8 +555,14 @@ mod tests {
 
     #[test]
     fn bold_italic() {
-        assert_eq!(md_line_to_typst("This is **bold** text"), "This is *bold* text");
-        assert_eq!(md_line_to_typst("This is *italic* text"), "This is _italic_ text");
+        assert_eq!(
+            md_line_to_typst("This is **bold** text"),
+            "This is *bold* text"
+        );
+        assert_eq!(
+            md_line_to_typst("This is *italic* text"),
+            "This is _italic_ text"
+        );
     }
 
     #[test]
@@ -449,7 +573,8 @@ mod tests {
 
     #[test]
     fn cases_conversion() {
-        let latex = "h_n = \\begin{cases} 1 & 0 \\leq n \\leq 2 \\\\ 0 & \\text{otherwise} \\end{cases}";
+        let latex =
+            "h_n = \\begin{cases} 1 & 0 \\leq n \\leq 2 \\\\ 0 & \\text{otherwise} \\end{cases}";
         let result = latex_to_typst_math(latex);
         assert!(result.contains("cases("), "got:\n{result}");
         assert!(result.contains("\"otherwise\""), "got:\n{result}");

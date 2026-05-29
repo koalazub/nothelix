@@ -15,17 +15,23 @@ use nothelix::animation::renderers::static_fallback::StaticFallbackRenderer;
 /// Inline fixture builder (the test fixture lives behind #[cfg(test)] so the
 /// bench rebuilds the same 4-frame 32x32 GIF here).
 fn tiny_gif_bytes() -> Vec<u8> {
-    use ::image::{Frame, Delay, RgbaImage, codecs::gif::GifEncoder};
+    use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
-        enc.set_repeat(::image::codecs::gif::Repeat::Infinite).unwrap();
+        enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
+            .unwrap();
         for k in 0..4u8 {
             let mut img = RgbaImage::new(32, 32);
             for p in img.pixels_mut() {
                 *p = ::image::Rgba([k * 60, 0, 255 - k * 60, 255]);
             }
-            let frame = Frame::from_parts(img, 0, 0, Delay::from_saturating_duration(Duration::from_millis(100)));
+            let frame = Frame::from_parts(
+                img,
+                0,
+                0,
+                Delay::from_saturating_duration(Duration::from_millis(100)),
+            );
             enc.encode_frame(frame).unwrap();
         }
     }
@@ -45,17 +51,28 @@ fn main() {
 
 /// Build a 4-frame animated GIF at the given dimension.
 fn animated_gif(side: u32, frames: u32) -> Vec<u8> {
-    use ::image::{Frame, Delay, RgbaImage, codecs::gif::GifEncoder};
+    use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
-        enc.set_repeat(::image::codecs::gif::Repeat::Infinite).unwrap();
+        enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
+            .unwrap();
         for k in 0..frames as u8 {
             let mut img = RgbaImage::new(side, side);
             for p in img.pixels_mut() {
-                *p = ::image::Rgba([k.wrapping_mul(60), 0, 255u8.wrapping_sub(k.wrapping_mul(60)), 255]);
+                *p = ::image::Rgba([
+                    k.wrapping_mul(60),
+                    0,
+                    255u8.wrapping_sub(k.wrapping_mul(60)),
+                    255,
+                ]);
             }
-            let frame = Frame::from_parts(img, 0, 0, Delay::from_saturating_duration(Duration::from_millis(100)));
+            let frame = Frame::from_parts(
+                img,
+                0,
+                0,
+                Delay::from_saturating_duration(Duration::from_millis(100)),
+            );
             enc.encode_frame(frame).unwrap();
         }
     }
@@ -67,7 +84,11 @@ fn bench_large_frame() {
     let bytes = animated_gif(480, 4);
     println!("  source size: {} bytes", bytes.len());
     let dec = GifSource::open(&bytes).unwrap();
-    let caps = TerminalCaps { kitty_graphics: true, kitty_animation_protocol: false, max_fps: 60 };
+    let caps = TerminalCaps {
+        kitty_graphics: true,
+        kitty_animation_protocol: false,
+        max_fps: 60,
+    };
     let r = KittyReplayRenderer::try_new(&caps).unwrap();
     let mut eng = AnimationEngine::new(99, dec, r, 64 * 1024 * 1024);
 
@@ -94,7 +115,10 @@ fn bench_large_frame() {
         if frames > 0 { frame_bytes / frames as usize } else { 0 },
     );
     let cpu_pct = (tick_total.as_secs_f64() / 4.0) * 100.0; // 4 sec wall-clock for 40 ticks @ 100ms
-    println!("  → at 10 fps native rate, CPU budget: {:.4}% of one core", cpu_pct);
+    println!(
+        "  → at 10 fps native rate, CPU budget: {:.4}% of one core",
+        cpu_pct
+    );
 }
 
 fn time<F: FnMut()>(label: &str, iters: u32, mut f: F) -> Duration {
@@ -257,5 +281,12 @@ fn bench_steady_state_fps() {
         work_time,
         (work_time.as_secs_f64() / 1.0) * 100.0
     );
-    println!("  → mean wire bytes per emitted frame: {} B", if frames_emitted > 0 { total_bytes / frames_emitted as usize } else { 0 });
+    println!(
+        "  → mean wire bytes per emitted frame: {} B",
+        if frames_emitted > 0 {
+            total_bytes / frames_emitted as usize
+        } else {
+            0
+        }
+    );
 }

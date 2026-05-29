@@ -93,8 +93,16 @@ impl Selector {
         flat_none: Vec<String>,
     ) -> Self {
         match nested {
-            Some(s) => Self { all: s.all, any: s.any, none: s.none },
-            None => Self { all: flat_all, any: Vec::new(), none: flat_none },
+            Some(s) => Self {
+                all: s.all,
+                any: s.any,
+                none: s.none,
+            },
+            None => Self {
+                all: flat_all,
+                any: Vec::new(),
+                none: flat_none,
+            },
         }
     }
 
@@ -121,15 +129,13 @@ static HINTS: OnceLock<Vec<ErrorHint>> = OnceLock::new();
 
 pub fn hints() -> &'static [ErrorHint] {
     HINTS.get_or_init(|| {
-        let file: HintsFile =
-            toml::from_str(HINTS_TOML).unwrap_or(HintsFile { hint: vec![] });
+        let file: HintsFile = toml::from_str(HINTS_TOML).unwrap_or(HintsFile { hint: vec![] });
 
         let mut loaded: Vec<ErrorHint> = file
             .hint
             .into_iter()
             .map(|h| {
-                let selector =
-                    Selector::from_raw(h.r#match, h.match_tokens, h.exclude_tokens);
+                let selector = Selector::from_raw(h.r#match, h.match_tokens, h.exclude_tokens);
                 ErrorHint {
                     id: h.id,
                     match_type: h.match_type,

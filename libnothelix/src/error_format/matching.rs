@@ -10,10 +10,7 @@ use super::tokenize::ErrorTokens;
 
 /// Find the best-matching hint for the given tokens. `None` when no
 /// hint's selector matches the full `"error_type: message"` string.
-pub(super) fn find_hint<'a>(
-    hints: &'a [ErrorHint],
-    tokens: &ErrorTokens,
-) -> Option<&'a ErrorHint> {
+pub(super) fn find_hint<'a>(hints: &'a [ErrorHint], tokens: &ErrorTokens) -> Option<&'a ErrorHint> {
     let full_text = format!("{}: {}", tokens.error_type, tokens.message);
     let mut best: Option<(isize, &ErrorHint)> = None;
 

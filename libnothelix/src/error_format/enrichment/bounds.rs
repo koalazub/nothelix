@@ -29,7 +29,11 @@ fn scan_element_count(msg: &str) -> Option<String> {
         .rfind(|c: char| !c.is_ascii_digit())
         .map_or(0, |i| i + 1);
     let num = &before[start..];
-    if num.is_empty() { None } else { Some(num.to_string()) }
+    if num.is_empty() {
+        None
+    } else {
+        Some(num.to_string())
+    }
 }
 
 /// Find the variable being indexed in source like "arr[i]" → "arr".
@@ -37,7 +41,11 @@ fn scan_indexed_var(source: &str) -> Option<String> {
     let bracket = source.find('[')?;
     let before = source[..bracket].trim();
     let name = extract_var_name(before);
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 #[cfg(test)]
@@ -46,7 +54,11 @@ mod tests {
 
     #[test]
     fn enrich_names_indexed_var_and_length() {
-        let out = enrich("BoundsError: attempt to access 5-element Vector{Int64} at index [9]", "arr[9]").unwrap();
+        let out = enrich(
+            "BoundsError: attempt to access 5-element Vector{Int64} at index [9]",
+            "arr[9]",
+        )
+        .unwrap();
         assert!(out.contains("`arr` has 5 elements"), "got:\n{out}");
         assert!(out.contains("valid indices: 1 to 5"), "got:\n{out}");
     }
