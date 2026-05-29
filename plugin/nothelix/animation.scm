@@ -25,20 +25,11 @@
 (require (prefix-in helix. "helix/commands.scm"))
 (require-builtin steel/time)
 
-;; The animation FFI lives only on a freshly-rebuilt fork binary. Older
-;; binaries (any `hx` installed before the animation patch landed) have
-;; no `add-or-replace-animating-raw-content!` symbol at all, so a bare
-;; reference would fail at module-load time and take the whole plugin
-;; down. Wrap every fork-FFI call in `with-handler` + `eval` so the
-;; symbol is resolved at runtime and missing-FFI errors are caught and
-;; turned into silent no-ops — same graceful-degrade pattern math-
-;; render.scm uses for its line-annotation FFIs. Replays land as
-;; static (or not at all) until the user rebuilds; nothing crashes.
-(define (try-add-or-replace-animating-raw-content! bytes id height char-idx is-anim?)
-  (with-handler
-    (lambda (_) #false)
-    (eval `(helix.static.add-or-replace-animating-raw-content!
-             ,bytes ,id ,height ,char-idx ,is-anim?))))
+;; Fork-only FFI. `nothelix-doctor` + the in-editor health check warn
+;; the user when `hx` predates this symbol; on a stale binary the
+;; plugin fails to load, which is the desired outcome — better a loud
+;; failure caught by `:nothelix-status` than silent "animations don't
+;; play and nobody knows why".
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -76,6 +67,10 @@
 ;; default and every mutation rebinds *animations* via set!.
 (define *animations* (hash))
 (define *first-hint-shown?* #f)
+;; True while the hx terminal window holds focus. Flipped by the
+;; `terminal-focus-{gained,lost}` hooks below; AND'd into the tick
+;; gate so animations don't burn CPU when the user has alt-tabbed.
+(define *terminal-focused?* #t)
 
 (define (animation-engine-count)
   (length (hash-keys->list *animations*)))
@@ -99,6 +94,7 @@
 
 (define (animation-state-active? st)
   (and st
+       *terminal-focused?*
        (hash-try-get st 'focused?)
        (hash-try-get st 'visible?)
        (not (hash-try-get st 'manual-paused?))
@@ -195,7 +191,7 @@
        (when (> (bytes-length bytes) 0)
          (define char-idx (hash-try-get st 'char-idx))
          (define height (animation-tick-height eid))
-         (try-add-or-replace-animating-raw-content!
+         (helix.static.add-or-replace-animating-raw-content!
            bytes
            eid
            height
@@ -242,19 +238,11 @@
 ;;; Hooks
 ;;; ---------------------------------------------------------------------------
 
-;; The fork-only events `document-focus-{lost,gained}` and
-;; `viewport-changed` only exist on a hx binary that includes the
-;; pause-when-offscreen patch. Older binaries throw `Unknown event
-;; type` and abort plugin load. Wrap the registrations in `with-
-;; handler` so missing events degrade to "no auto-pause" — animations
-;; still play, they just keep ticking when the doc isn't focused
-;; until the user rebuilds hx.
-(define (try-register-hook! event handler)
-  (with-handler
-    (lambda (_) #false)
-    (register-hook! event handler)))
-
-(try-register-hook! "document-focus-lost"
+;; Fork-only events `document-focus-{lost,gained}` and
+;; `viewport-changed`. On a stale `hx` these throw `Unknown event
+;; type` at plugin-load; the doctor and `:nothelix-status` warn the
+;; user before they get here.
+(register-hook! "document-focus-lost"
   (lambda (doc-id)
     (for-each
       (lambda (eid)
@@ -263,7 +251,7 @@
           (state-update! eid (lambda (s) (hash-insert s 'focused? #f)))))
       (hash-keys->list *animations*))))
 
-(try-register-hook! "document-focus-gained"
+(register-hook! "document-focus-gained"
   (lambda (doc-id)
     (for-each
       (lambda (eid)
@@ -273,7 +261,7 @@
           (schedule-tick eid)))
       (hash-keys->list *animations*))))
 
-(try-register-hook! "viewport-changed"
+(register-hook! "viewport-changed"
   (lambda (_view-id doc-id anchor height)
     (define visible-end (+ anchor (* (max 1 height) 200))) ; ~200 chars/row heuristic
     (for-each
@@ -289,6 +277,22 @@
           (when (and newly-visible? (not was-visible?))
             (schedule-tick eid))))
       (hash-keys->list *animations*))))
+
+;; Whole-window focus. Without this, alt-tabbing to a browser leaves
+;; `'focused?` true on the active doc and animations keep ticking off-
+;; screen. On focus loss we flip the global gate so every engine's
+;; `animation-state-active?` returns false; on regain we re-arm by
+;; calling `schedule-tick` on each engine (the gate decides whether
+;; the tick actually runs — engines whose doc is now backgrounded or
+;; whose cell isn't visible stay paused).
+(register-hook! "terminal-focus-lost"
+  (lambda ()
+    (set! *terminal-focused?* #f)))
+
+(register-hook! "terminal-focus-gained"
+  (lambda ()
+    (set! *terminal-focused?* #t)
+    (for-each schedule-tick (hash-keys->list *animations*))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Discoverability

@@ -43,6 +43,7 @@ const FORK_INDICATORS: &[&str] = &[
     "add-or-replace-animating-raw-content",
     "DocumentFocusGained",
     "ViewportChanged",
+    "TerminalFocusGained",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,7 +295,8 @@ mod tests {
             // match-arm strings.
             "add-or-replace-animating-raw-content \
              DocumentFocusGained \
-             ViewportChanged",
+             ViewportChanged \
+             TerminalFocusGained",
         )
         .unwrap();
         (steel_home, share, hx)
@@ -410,6 +412,7 @@ mod tests {
             .expect("expected fork-symbols-missing");
         assert!(issue.message.contains("DocumentFocusGained"));
         assert!(issue.message.contains("ViewportChanged"));
+        assert!(issue.message.contains("TerminalFocusGained"));
         assert!(!issue.message.contains("add-or-replace-animating-raw-content"));
     }
 
@@ -427,6 +430,7 @@ mod tests {
             &hx,
             "this binary has: add-or-replace-animating-raw-content \
              plus event types DocumentFocusGained ViewportChanged \
+             TerminalFocusGained \
              — the kebab-case strings are inlined and absent",
         )
         .unwrap();
