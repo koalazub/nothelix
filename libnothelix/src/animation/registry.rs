@@ -9,7 +9,10 @@ pub struct AnimationRegistry {
 
 impl AnimationRegistry {
     pub fn new() -> Self {
-        Self { next_id: 1, engines: HashMap::new() }
+        Self {
+            next_id: 1,
+            engines: HashMap::new(),
+        }
     }
     pub fn allocate_id(&mut self) -> u64 {
         let id = self.next_id;
@@ -31,7 +34,9 @@ impl AnimationRegistry {
 }
 
 impl Default for AnimationRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 static REGISTRY: OnceLock<Mutex<AnimationRegistry>> = OnceLock::new();

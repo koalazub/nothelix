@@ -1,4 +1,6 @@
-use crate::animation::decoder::{DecodedFrame, AnimationMetadata, AnimatedDecoder, DecoderError, DecoderEntry};
+use crate::animation::decoder::{
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,26 +11,28 @@ pub struct WebPSource {
 
 impl WebPSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::AnimationDecoder;
         use ::image::codecs::webp::WebPDecoder;
+        use ::image::AnimationDecoder;
         use ::image::ImageDecoder;
 
         // Static WebP files don't surface through `into_frames` (the AnimationDecoder
         // path yields zero frames), so we inspect the file twice: once for animated
         // frames, and if none surface, fall back to a single-frame static decode.
         let cursor1 = std::io::BufReader::new(std::io::Cursor::new(bytes));
-        let dec_anim = WebPDecoder::new(cursor1)
-            .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+        let dec_anim =
+            WebPDecoder::new(cursor1).map_err(|e| DecoderError::Malformed(e.to_string()))?;
         let dims = dec_anim.dimensions();
         let frames_iter = dec_anim.into_frames();
 
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
-        let (mut width, mut height) = crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
+        let (mut width, mut height) =
+            crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
-            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
+            (width, height) =
+                crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
             let raw = buf.as_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);
@@ -49,8 +53,8 @@ impl WebPSource {
         // Static WebP fallback: re-open and decode the single full image.
         if frames.is_empty() {
             let cursor2 = std::io::BufReader::new(std::io::Cursor::new(bytes));
-            let dec_static = WebPDecoder::new(cursor2)
-                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let dec_static =
+                WebPDecoder::new(cursor2).map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let (w, h) = dec_static.dimensions();
             let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
             dec_static
@@ -71,7 +75,11 @@ impl WebPSource {
         }
 
         let frame_count = frames.len() as u64;
-        let total = if frame_count <= 1 { Duration::ZERO } else { acc };
+        let total = if frame_count <= 1 {
+            Duration::ZERO
+        } else {
+            acc
+        };
         let native_fps = if total.as_millis() == 0 {
             0.0
         } else {
@@ -108,9 +116,7 @@ impl AnimatedDecoder for WebPSource {
         let t = if total.as_millis() == 0 {
             Duration::ZERO
         } else {
-            Duration::from_millis(
-                (elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1),
-            )
+            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
         };
         let mut chosen = &self.frames[0];
         for f in &self.frames {
@@ -178,8 +184,16 @@ mod tests {
     fn content_id_stable_across_calls() {
         let bytes = build_static_webp();
         let mut dec = WebPSource::open(&bytes).unwrap();
-        let a = dec.frame_at(Duration::from_millis(0)).unwrap().unwrap().content_id;
-        let b = dec.frame_at(Duration::from_millis(50)).unwrap().unwrap().content_id;
+        let a = dec
+            .frame_at(Duration::from_millis(0))
+            .unwrap()
+            .unwrap()
+            .content_id;
+        let b = dec
+            .frame_at(Duration::from_millis(50))
+            .unwrap()
+            .unwrap()
+            .content_id;
         assert_eq!(a, b);
     }
 

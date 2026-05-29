@@ -1,5 +1,5 @@
 // Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// the registered fn's signature to take owned types (`String`, `RVec<u8>`),
 // not borrows. The owned type is load-bearing for the FFI dispatcher.
 #![allow(clippy::needless_pass_by_value)]
 
@@ -61,6 +61,7 @@
 
 use std::fmt::Write;
 
+use abi_stable::std_types::RVec;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::graphics::ensure_png;
@@ -133,10 +134,11 @@ pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
     build_virtual_transmission(&b64, image_id as u32)
 }
 
-/// Like `kitty_placeholder_payload` but accepts raw image bytes directly,
+/// Like `kitty_placeholder_payload` but accepts raw image bytes directly
+/// (as the `RVec<u8>` stock steel-core marshals bytevector arguments to),
 /// skipping the base64 decode round-trip. Used when image data comes from
 /// a sidecar file rather than a JSON string.
-pub fn kitty_placeholder_payload_bytes(raw_data: Vec<u8>, image_id: isize) -> String {
+pub fn kitty_placeholder_payload_bytes(raw_data: RVec<u8>, image_id: isize) -> String {
     let png_data = ensure_png(&raw_data);
     let b64 = BASE64.encode(&png_data);
     build_virtual_transmission(&b64, image_id as u32)
@@ -163,7 +165,10 @@ fn build_virtual_transmission(b64: &str, image_id: u32) -> String {
             // q=2  suppress OK/ERROR responses
             // U=1  virtual placement via Unicode placeholders
             // i=   image id (low 24 bits carry through the SGR colour encoding)
-            let _ = write!(out, "\x1b_Ga=T,f=100,t=d,q=2,U=1,i={image_id},m={more};{s}\x1b\\");
+            let _ = write!(
+                out,
+                "\x1b_Ga=T,f=100,t=d,q=2,U=1,i={image_id},m={more};{s}\x1b\\"
+            );
         } else {
             let _ = write!(out, "\x1b_Gm={more};{s}\x1b\\");
         }
@@ -243,10 +248,19 @@ mod tests {
     fn payload_has_virtual_placement_flag() {
         let b64 = BASE64.encode(b"\x89PNG\r\n\x1a\nfakepngdata");
         let payload = kitty_placeholder_payload(b64, 1001);
-        assert!(payload.contains("U=1"), "payload must set U=1 (virtual placement)");
+        assert!(
+            payload.contains("U=1"),
+            "payload must set U=1 (virtual placement)"
+        );
         assert!(payload.contains("i=1001"), "payload must set image id");
-        assert!(payload.starts_with("\x1b_G"), "payload must be an APC escape");
-        assert!(payload.ends_with("\x1b\\"), "payload must terminate with ST");
+        assert!(
+            payload.starts_with("\x1b_G"),
+            "payload must be an APC escape"
+        );
+        assert!(
+            payload.ends_with("\x1b\\"),
+            "payload must terminate with ST"
+        );
     }
 
     #[test]
@@ -257,7 +271,10 @@ mod tests {
         let b64 = BASE64.encode([b"\x89PNG\r\n\x1a\n".as_slice(), big.as_bytes()].concat());
         let payload = kitty_placeholder_payload(b64, 1);
         let chunk_count = payload.matches("\x1b_G").count();
-        assert!(chunk_count >= 2, "expected multi-chunk transmission, got {chunk_count}");
+        assert!(
+            chunk_count >= 2,
+            "expected multi-chunk transmission, got {chunk_count}"
+        );
         assert!(payload.contains("m=1"), "non-final chunk should carry m=1");
         assert!(payload.contains("m=0"), "final chunk should carry m=0");
     }
@@ -275,9 +292,15 @@ mod tests {
         // being embedded in the row text. set_string strips ESC so
         // embedded escapes would render as literal `[38;2;...m` text.
         let s = kitty_placeholder_rows(1001, 2, 1);
-        assert!(!s.contains('\x1b'), "placeholder rows must not contain escape bytes");
+        assert!(
+            !s.contains('\x1b'),
+            "placeholder rows must not contain escape bytes"
+        );
         assert!(!s.contains("[38;2"), "placeholder rows must not embed SGR");
-        assert!(!s.contains("[39m"), "placeholder rows must not embed SGR reset");
+        assert!(
+            !s.contains("[39m"),
+            "placeholder rows must not embed SGR reset"
+        );
     }
 
     #[test]

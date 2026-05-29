@@ -47,7 +47,14 @@ pub struct AnimationFormats {
 
 impl Default for AnimationFormats {
     fn default() -> Self {
-        Self { gif: true, apng: true, webp: true, mp4: true, webm: true, lottie: false }
+        Self {
+            gif: true,
+            apng: true,
+            webp: true,
+            mp4: true,
+            webm: true,
+            lottie: false,
+        }
     }
 }
 
@@ -67,8 +74,7 @@ mod tests {
         assert!(!c.enabled);
         assert_eq!(c.max_fps, 144);
         assert!(!c.formats.mp4);
-        assert!(c.formats.gif);     // default kept
+        assert!(c.formats.gif); // default kept
         assert_eq!(c.decode_cache_mb, 64); // default kept
     }
-
 }

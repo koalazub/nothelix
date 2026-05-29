@@ -1,4 +1,6 @@
-use crate::animation::decoder::{DecodedFrame, AnimationMetadata, AnimatedDecoder, DecoderError, DecoderEntry};
+use crate::animation::decoder::{
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,9 +11,9 @@ pub struct ApngSource {
 
 impl ApngSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
+        use ::image::codecs::png::PngDecoder;
         use ::image::AnimationDecoder;
         use ::image::ImageDecoder;
-        use ::image::codecs::png::PngDecoder;
 
         // First pass: try the animated path. PNGs that are not APNGs surface
         // through `into_frames()` with zero frames; for those we fall back to
@@ -26,11 +28,13 @@ impl ApngSource {
 
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
-        let (mut width, mut height) = crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
+        let (mut width, mut height) =
+            crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
-            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
+            (width, height) =
+                crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
             let raw = buf.as_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);
@@ -72,7 +76,11 @@ impl ApngSource {
         }
 
         let frame_count = frames.len() as u64;
-        let total = if frame_count <= 1 { Duration::ZERO } else { acc };
+        let total = if frame_count <= 1 {
+            Duration::ZERO
+        } else {
+            acc
+        };
         let native_fps = if total.as_millis() == 0 {
             0.0
         } else {
@@ -109,9 +117,7 @@ impl AnimatedDecoder for ApngSource {
         let t = if total.as_millis() == 0 {
             Duration::ZERO
         } else {
-            Duration::from_millis(
-                (elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1),
-            )
+            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
         };
         let mut chosen = &self.frames[0];
         for f in &self.frames {
@@ -146,9 +152,9 @@ mod tests {
     fn build_tiny_apng() -> Vec<u8> {
         use png::{BitDepth, ColorType, Encoder};
         let palette = [
-            [255u8, 0, 0, 255],   // red
-            [0, 255, 0, 255],     // green
-            [0, 0, 255, 255],     // blue
+            [255u8, 0, 0, 255], // red
+            [0, 255, 0, 255],   // green
+            [0, 0, 255, 255],   // blue
         ];
         let mut buf = Vec::new();
         {
@@ -205,7 +211,12 @@ mod tests {
         let mut dec = ApngSource::open(&bytes).unwrap();
         let mut ids = std::collections::HashSet::new();
         for ms in [0, 100, 200] {
-            ids.insert(dec.frame_at(Duration::from_millis(ms)).unwrap().unwrap().content_id);
+            ids.insert(
+                dec.frame_at(Duration::from_millis(ms))
+                    .unwrap()
+                    .unwrap()
+                    .content_id,
+            );
         }
         assert_eq!(ids.len(), 3);
     }

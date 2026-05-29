@@ -1,7 +1,7 @@
 //! Graphics protocol detection and Kitty escape sequence generation.
 
 // Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// the registered fn's signature to take owned types (`String`, `RVec<u8>`),
 // not borrows. The owned type is load-bearing for the FFI dispatcher.
 #![allow(clippy::needless_pass_by_value)]
 
@@ -47,7 +47,10 @@ pub fn kitty_escape_for_b64_png(b64: &str, image_id: u32, rows: u32) -> String {
         let more = if i < total - 1 { 1 } else { 0 };
 
         if i == 0 {
-            let _ = write!(out, "\x1b_Ga=T,f=100,t=d,q=2,I={image_id},r={rows},m={more};{s}\x1b\\");
+            let _ = write!(
+                out,
+                "\x1b_Ga=T,f=100,t=d,q=2,I={image_id},r={rows},m={more};{s}\x1b\\"
+            );
         } else {
             let _ = write!(out, "\x1b_Gm={more};{s}\x1b\\");
         }

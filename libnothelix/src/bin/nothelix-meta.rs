@@ -5,6 +5,7 @@
 //! Output format:
 //!   BUILD_ID=<build-id-from-libnothelix>
 //!   LIBNOTHELIX_VERSION=<cargo pkg version>
+//!   FFI_VERSION=<NOTHELIX_FFI_VERSION from lib.rs>
 //!
 //! CI writes this output to `libnothelix.meta` next to the dylib in
 //! the release tarball; the install script copies it to
@@ -13,4 +14,5 @@
 fn main() {
     println!("BUILD_ID={}", nothelix::build_id());
     println!("LIBNOTHELIX_VERSION={}", env!("CARGO_PKG_VERSION"));
+    println!("FFI_VERSION={}", nothelix::NOTHELIX_FFI_VERSION);
 }

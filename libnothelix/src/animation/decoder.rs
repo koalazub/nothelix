@@ -46,12 +46,10 @@ pub type DecoderFactory = fn(&[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderE
 /// would leave decoded RGBA buffers misaligned with the reported
 /// (width, height) pair.
 pub fn fit_dimensions_to_u16(width: u32, height: u32) -> Result<(u16, u16), DecoderError> {
-    let w = u16::try_from(width).map_err(|_| {
-        DecoderError::Malformed(format!("image width {width} exceeds u16 limit"))
-    })?;
-    let h = u16::try_from(height).map_err(|_| {
-        DecoderError::Malformed(format!("image height {height} exceeds u16 limit"))
-    })?;
+    let w = u16::try_from(width)
+        .map_err(|_| DecoderError::Malformed(format!("image width {width} exceeds u16 limit")))?;
+    let h = u16::try_from(height)
+        .map_err(|_| DecoderError::Malformed(format!("image height {height} exceeds u16 limit")))?;
     Ok((w, h))
 }
 

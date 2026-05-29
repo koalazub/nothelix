@@ -49,14 +49,34 @@ struct EnvState {
 fn is_big_operator(name: &str) -> bool {
     matches!(
         name,
-        "sum" | "prod" | "coprod"
-        | "int" | "iint" | "iiint" | "iiiint" | "oint" | "oiint" | "oiiint"
-        | "bigcup" | "bigcap" | "bigvee" | "bigwedge"
-        | "bigoplus" | "bigotimes" | "bigodot"
-        | "biguplus" | "bigsqcup"
-        | "lim" | "liminf" | "limsup"
-        | "min" | "max" | "sup" | "inf"
-        | "argmin" | "argmax"
+        "sum"
+            | "prod"
+            | "coprod"
+            | "int"
+            | "iint"
+            | "iiint"
+            | "iiiint"
+            | "oint"
+            | "oiint"
+            | "oiiint"
+            | "bigcup"
+            | "bigcap"
+            | "bigvee"
+            | "bigwedge"
+            | "bigoplus"
+            | "bigotimes"
+            | "bigodot"
+            | "biguplus"
+            | "bigsqcup"
+            | "lim"
+            | "liminf"
+            | "limsup"
+            | "min"
+            | "max"
+            | "sup"
+            | "inf"
+            | "argmin"
+            | "argmax"
     )
 }
 
@@ -67,14 +87,51 @@ fn is_big_operator(name: &str) -> bool {
 fn is_math_operator(name: &str) -> bool {
     matches!(
         name,
-        "cos" | "sin" | "tan" | "cot" | "sec" | "csc"
-        | "arccos" | "arcsin" | "arctan" | "arccot" | "arcsec" | "arccsc"
-        | "cosh" | "sinh" | "tanh" | "coth" | "sech" | "csch"
-        | "exp" | "log" | "ln" | "lg"
-        | "max" | "min" | "sup" | "inf" | "lim" | "liminf" | "limsup"
-        | "det" | "dim" | "arg" | "ker" | "gcd" | "lcm"
-        | "Pr" | "deg" | "hom" | "mod" | "bmod" | "pmod"
-        | "sinc" | "erf" | "tr" | "rank"
+        "cos"
+            | "sin"
+            | "tan"
+            | "cot"
+            | "sec"
+            | "csc"
+            | "arccos"
+            | "arcsin"
+            | "arctan"
+            | "arccot"
+            | "arcsec"
+            | "arccsc"
+            | "cosh"
+            | "sinh"
+            | "tanh"
+            | "coth"
+            | "sech"
+            | "csch"
+            | "exp"
+            | "log"
+            | "ln"
+            | "lg"
+            | "max"
+            | "min"
+            | "sup"
+            | "inf"
+            | "lim"
+            | "liminf"
+            | "limsup"
+            | "det"
+            | "dim"
+            | "arg"
+            | "ker"
+            | "gcd"
+            | "lcm"
+            | "Pr"
+            | "deg"
+            | "hom"
+            | "mod"
+            | "bmod"
+            | "pmod"
+            | "sinc"
+            | "erf"
+            | "tr"
+            | "rank"
     )
 }
 
@@ -163,9 +220,7 @@ impl<'a> Scanner<'a> {
         // materialise (e.g. `\sum f(x)` — no limits at all). Clear the
         // flag so later `_`/`^` in the summand aren't mis-treated as
         // limits.
-        if self.pending_limits > 0
-            && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b'_' | b'^')
-        {
+        if self.pending_limits > 0 && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b'_' | b'^') {
             self.pending_limits = 0;
         }
 
@@ -197,11 +252,7 @@ impl<'a> Scanner<'a> {
         // supers like `^N` (ℝᴺ), `^T` (transpose), `^k`, etc. Let
         // `map_lookup` in `scan_inline_superscript` decide — unmapped bytes
         // fall through untouched.
-        if b[i] == b'^'
-            && i + 1 < len
-            && b[i + 1] != b'{'
-            && b[i + 1] != b'\\'
-            && b[i + 1] != b'^'
+        if b[i] == b'^' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'^'
         {
             return self.scan_inline_superscript(i);
         }
@@ -210,11 +261,7 @@ impl<'a> Scanner<'a> {
             return self.scan_braced_subscript(i);
         }
         // _x
-        if b[i] == b'_'
-            && i + 1 < len
-            && b[i + 1] != b'{'
-            && b[i + 1] != b'\\'
-            && b[i + 1] != b'_'
+        if b[i] == b'_' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'_'
         {
             return self.scan_inline_subscript(i);
         }
@@ -249,9 +296,8 @@ impl<'a> Scanner<'a> {
             // delimiters — in a text editor there's nothing to scale, so we
             // hide just the command and let the delimiter that follows
             // render unchanged.
-            "left" | "right" | "bigl" | "bigr" | "Bigl" | "Bigr"
-            | "biggl" | "biggr" | "Biggl" | "Biggr"
-            | "big" | "Big" | "bigg" | "Bigg" => {
+            "left" | "right" | "bigl" | "bigr" | "Bigl" | "Bigr" | "biggl" | "biggr" | "Biggl"
+            | "Biggr" | "big" | "Big" | "bigg" | "Bigg" => {
                 Overlay::hide_range(&mut self.overlays, cmd_start, name_end);
                 name_end
             }
@@ -260,10 +306,8 @@ impl<'a> Scanner<'a> {
             // diacritic. Handle them via a dedicated scanner that hides the
             // wrapper and attaches the combining mark to the content's
             // last grapheme.
-            "tilde" | "widetilde" | "bar" | "overline" | "hat" | "widehat"
-            | "vec" | "dot" | "ddot" | "mathring" => {
-                self.scan_combining_mark_command(cmd_start, name_end, name)
-            }
+            "tilde" | "widetilde" | "bar" | "overline" | "hat" | "widehat" | "vec" | "dot"
+            | "ddot" | "mathring" => self.scan_combining_mark_command(cmd_start, name_end, name),
             _ => self.scan_simple_command(cmd_start, name_end, name),
         }
     }
@@ -559,12 +603,7 @@ impl<'a> Scanner<'a> {
     /// `\tilde{X}`, `\hat{X}`, `\bar{X}`, `\vec{X}`, etc. — hide the
     /// command wrapper and attach the combining mark to the content's last
     /// grapheme so `\tilde{x}` renders as `x̃`, not `~{x}` or a loose mark.
-    fn scan_combining_mark_command(
-        &mut self,
-        cmd_start: usize,
-        i: usize,
-        name: &str,
-    ) -> usize {
+    fn scan_combining_mark_command(&mut self, cmd_start: usize, i: usize, name: &str) -> usize {
         let combining: &'static str = match name {
             "tilde" | "widetilde" => "\u{0303}",
             "bar" | "overline" => "\u{0304}",
@@ -685,9 +724,7 @@ impl<'a> Scanner<'a> {
         Overlay::hide_range(&mut self.overlays, i, i + 2);
         if !row_fence.is_empty() {
             let mut j = i + 2;
-            while j < self.bytes.len()
-                && matches!(self.bytes[j], b' ' | b'\t' | b'\n' | b'\r')
-            {
+            while j < self.bytes.len() && matches!(self.bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
                 j += 1;
             }
             let placed = if let Some(ch) = self.text[j..].chars().next() {
@@ -754,10 +791,8 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        let supers: Vec<Option<&'static str>> = content
-            .chars()
-            .map(|c| map_lookup(SUPER_MAP, c))
-            .collect();
+        let supers: Vec<Option<&'static str>> =
+            content.chars().map(|c| map_lookup(SUPER_MAP, c)).collect();
         let any_mapped = supers.iter().any(Option::is_some);
 
         if any_mapped && is_simple_brace_content(content) {
@@ -851,10 +886,8 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        let subs: Vec<Option<&'static str>> = content
-            .chars()
-            .map(|c| map_lookup(SUB_MAP, c))
-            .collect();
+        let subs: Vec<Option<&'static str>> =
+            content.chars().map(|c| map_lookup(SUB_MAP, c)).collect();
         let any_mapped = subs.iter().any(Option::is_some);
 
         if any_mapped && is_simple_brace_content(content) {

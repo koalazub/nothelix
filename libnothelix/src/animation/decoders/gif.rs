@@ -1,4 +1,6 @@
-use crate::animation::decoder::{DecodedFrame, AnimationMetadata, AnimatedDecoder, DecoderError, DecoderEntry};
+use crate::animation::decoder::{
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +11,7 @@ pub struct GifSource {
 
 impl GifSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::{AnimationDecoder, codecs::gif::GifDecoder};
+        use ::image::{codecs::gif::GifDecoder, AnimationDecoder};
         let dec = GifDecoder::new(std::io::Cursor::new(bytes))
             .map_err(|e| DecoderError::Malformed(e.to_string()))?;
         let frames_iter = dec.into_frames();
@@ -20,7 +22,8 @@ impl GifSource {
         for (idx, f) in frames_iter.enumerate() {
             let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
             let buf = f.buffer();
-            (width, height) = crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
+            (width, height) =
+                crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
             let raw = buf.as_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
             let content_id = hash_bytes(&rgba);
@@ -38,7 +41,11 @@ impl GifSource {
             });
         }
         let frame_count = frames.len() as u64;
-        let total = if frame_count == 0 { Duration::ZERO } else { acc };
+        let total = if frame_count == 0 {
+            Duration::ZERO
+        } else {
+            acc
+        };
         let native_fps = if total.as_millis() == 0 {
             0.0
         } else {
@@ -63,7 +70,9 @@ inventory::submit! {
 }
 
 impl AnimatedDecoder for GifSource {
-    fn metadata(&self) -> AnimationMetadata { self.metadata.clone() }
+    fn metadata(&self) -> AnimationMetadata {
+        self.metadata.clone()
+    }
 
     fn frame_at(&mut self, elapsed: Duration) -> Result<Option<DecodedFrame>, DecoderError> {
         if self.frames.is_empty() {
@@ -73,9 +82,7 @@ impl AnimatedDecoder for GifSource {
         let t = if total.as_millis() == 0 {
             Duration::ZERO
         } else {
-            Duration::from_millis(
-                (elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1),
-            )
+            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
         };
         let mut chosen = &self.frames[0];
         for f in &self.frames {
@@ -88,7 +95,9 @@ impl AnimatedDecoder for GifSource {
         Ok(Some(chosen.clone()))
     }
 
-    fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> { Ok(()) }
+    fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> {
+        Ok(())
+    }
 }
 
 fn hash_bytes(bytes: &[u8]) -> u64 {

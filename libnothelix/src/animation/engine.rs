@@ -4,9 +4,16 @@ use crate::animation::renderer::{AnimationRenderer, RenderContext};
 use std::time::{Duration, Instant};
 
 pub enum PlaybackState {
-    Playing { started_at: Instant, accumulated_paused: Duration },
-    Paused { at_offset: Duration },
-    Errored { reason: String },
+    Playing {
+        started_at: Instant,
+        accumulated_paused: Duration,
+    },
+    Paused {
+        at_offset: Duration,
+    },
+    Errored {
+        reason: String,
+    },
     Finished,
 }
 
@@ -77,11 +84,19 @@ impl AnimationEngine {
         }
     }
 
-    pub fn metadata(&self) -> &AnimationMetadata { &self.metadata }
-    pub fn state(&self) -> &PlaybackState { &self.state }
+    pub fn metadata(&self) -> &AnimationMetadata {
+        &self.metadata
+    }
+    pub fn state(&self) -> &PlaybackState {
+        &self.state
+    }
 
     pub fn pause(&mut self, now: Instant) {
-        if let PlaybackState::Playing { started_at, accumulated_paused } = &self.state {
+        if let PlaybackState::Playing {
+            started_at,
+            accumulated_paused,
+        } = &self.state
+        {
             let elapsed = now
                 .saturating_duration_since(*started_at)
                 .saturating_sub(*accumulated_paused);
@@ -100,7 +115,11 @@ impl AnimationEngine {
     }
 
     pub fn tick(&mut self, now: Instant) -> Option<TickOutput> {
-        let elapsed = if let PlaybackState::Playing { started_at, accumulated_paused } = &self.state {
+        let elapsed = if let PlaybackState::Playing {
+            started_at,
+            accumulated_paused,
+        } = &self.state
+        {
             now.saturating_duration_since(*started_at)
                 .saturating_sub(*accumulated_paused)
         } else {
@@ -127,7 +146,9 @@ impl AnimationEngine {
                 return None;
             }
             Err(e) => {
-                self.state = PlaybackState::Errored { reason: e.to_string() };
+                self.state = PlaybackState::Errored {
+                    reason: e.to_string(),
+                };
                 self.last_tick_meta = TickMetaSnapshot {
                     status: -1,
                     height: 0,
@@ -173,7 +194,11 @@ impl AnimationEngine {
 }
 
 fn compute_next_delay(meta: &AnimationMetadata) -> u32 {
-    let fps = if meta.native_fps > 0.0 { meta.native_fps } else { 30.0 };
+    let fps = if meta.native_fps > 0.0 {
+        meta.native_fps
+    } else {
+        30.0
+    };
     ((1000.0 / fps).round() as u32).max(8)
 }
 

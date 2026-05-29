@@ -19,7 +19,8 @@ mod fixtures {
         let mut buf = Vec::new();
         {
             let mut enc = GifEncoder::new(&mut buf);
-            enc.set_repeat(::image::codecs::gif::Repeat::Infinite).unwrap();
+            enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
+                .unwrap();
             for k in 0..4u8 {
                 let mut img = RgbaImage::new(32, 32);
                 for p in img.pixels_mut() {
@@ -50,11 +51,7 @@ mod fixtures {
 
     pub fn animated_apng() -> Vec<u8> {
         use png::{BitDepth, ColorType, Encoder};
-        let palette = [
-            [255u8, 0, 0, 255],
-            [0, 255, 0, 255],
-            [0, 0, 255, 255],
-        ];
+        let palette = [[255u8, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
         let mut buf = Vec::new();
         {
             let mut enc = Encoder::new(&mut buf, 4, 4);
@@ -159,9 +156,7 @@ fn malformed_bytes_for_known_mime_returns_decode_error() {
 #[test]
 fn null_pointers_return_minus_ten() {
     let mut id: u64 = 0;
-    let rc = unsafe {
-        nothelix_animation_register(std::ptr::null(), std::ptr::null(), 0, &mut id)
-    };
+    let rc = unsafe { nothelix_animation_register(std::ptr::null(), std::ptr::null(), 0, &mut id) };
     assert_eq!(rc, -10);
 }
 
@@ -265,7 +260,7 @@ fn pause_freezes_elapsed_so_resume_does_not_skip_frames() {
 
 #[test]
 fn steel_api_register_drop_round_trip() {
-    let id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif());
+    let id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif().into());
     assert!(id > 0);
     let teardown = steel_api::animation_drop(id);
     // Teardown bytes are renderer-dependent; for static-fallback it's empty.
@@ -275,7 +270,7 @@ fn steel_api_register_drop_round_trip() {
 
 #[test]
 fn dropped_engine_id_yields_negative_status() {
-    let id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif());
+    let id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif().into());
     assert!(id > 0);
     let _ = steel_api::animation_drop(id);
     let status = steel_api::animation_tick_status(id);
@@ -290,7 +285,7 @@ fn registering_animated_mime_through_steel_api_uses_animated_decoder_path() {
     // The Steel-side caller wouldn't know whether libnothelix has a real
     // decoder or just the registry stub for that MIME. Exercise the
     // happy paths and a stub path:
-    let gif_id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif());
+    let gif_id = steel_api::animation_register("image/gif".into(), fixtures::tiny_gif().into());
     assert!(gif_id > 0);
 
     // video/mp4 has a decoder in the registry but the open() returns
@@ -300,7 +295,7 @@ fn registering_animated_mime_through_steel_api_uses_animated_decoder_path() {
         // Synthesize a few bytes that can't actually parse as MP4 — even
         // if openh264 is wired, the bytes are wrong, so we must surface
         // a negative code, not register an empty engine.
-        let mp4_id = steel_api::animation_register("video/mp4".into(), vec![0u8; 32]);
+        let mp4_id = steel_api::animation_register("video/mp4".into(), vec![0u8; 32].into());
         assert!(mp4_id < 0, "stub or real decoder must reject garbage bytes");
     }
 

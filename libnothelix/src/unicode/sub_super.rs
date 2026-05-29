@@ -144,4 +144,3 @@ pub(super) fn latex_font_to_julia(cmd: &str, letter: &str) -> Option<&'static st
         .ok()
         .map(|i| SYMBOLS[i].1)
 }
-

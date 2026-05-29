@@ -23,8 +23,8 @@ use crate::unicode::math_regions::find_math_regions;
 
 /// Environments whose rows should live on their own lines.
 const BLOCK_ENVS: &[&str] = &[
-    "cases", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "matrix",
-    "aligned", "align", "split", "gathered", "gather",
+    "cases", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "matrix", "aligned", "align", "split",
+    "gathered", "gather",
 ];
 
 /// Format the given document text. Two passes:
@@ -115,7 +115,9 @@ fn join_cases_continuations(lines: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for raw in lines {
         let body = raw.trim_end_matches('\r');
-        let content = if let Some(c) = body.strip_prefix("# ") { c } else {
+        let content = if let Some(c) = body.strip_prefix("# ") {
+            c
+        } else {
             out.push((*raw).to_string());
             continue;
         };
@@ -139,7 +141,9 @@ fn join_cases_continuations(lines: &[&str]) -> Vec<String> {
 fn emit_reformatted_block_line(line: &str, out: &mut String) {
     let body = line.trim_end_matches('\r');
     let cr = if line.len() > body.len() { "\r" } else { "" };
-    let content = if let Some(c) = body.strip_prefix("# ") { c } else {
+    let content = if let Some(c) = body.strip_prefix("# ") {
+        c
+    } else {
         out.push_str(line);
         out.push('\n');
         return;
@@ -257,10 +261,8 @@ fn rewrite_line(line: &str) -> Option<String> {
         None => (line, ""),
     };
 
-    let (comment_prefix, content) = match line_body.strip_prefix("# ") {
-        Some(c) => ("# ", c),
-        None => return None,
-    };
+    let comment_prefix = "# ";
+    let content = line_body.strip_prefix(comment_prefix)?;
 
     // Skip if the line already ends in a dangling `\begin{X}` (multi-line
     // env already in progress) — only single-line envs need rewriting.
@@ -376,7 +378,7 @@ fn emit_multiline_form(
         push_line(prose_before);
     }
     // Always use `$$` for the block form so the existing multi-line
-    // concealer in `conceal.rs::compute_conceal_overlays_for_comments`
+    // concealer in `conceal.rs::compute_conceal_overlays_for_comments_with_options`
     // picks it up.
     push_line("$$");
     if !math_prefix.is_empty() {
@@ -443,7 +445,8 @@ struct RegionDelimSpan {
 fn classify_region_delim(content: &str, region_start: usize, region_end: usize) -> RegionDelimSpan {
     let bytes = content.as_bytes();
     let outer_start = if region_start >= 2
-        && (&bytes[region_start - 2..region_start] == b"\\(" || &bytes[region_start - 2..region_start] == b"$$")
+        && (&bytes[region_start - 2..region_start] == b"\\("
+            || &bytes[region_start - 2..region_start] == b"$$")
     {
         region_start - 2
     } else if region_start >= 1 && bytes[region_start - 1] == b'$' {
@@ -453,7 +456,8 @@ fn classify_region_delim(content: &str, region_start: usize, region_end: usize) 
     };
 
     let outer_end = if region_end + 1 < bytes.len()
-        && (&bytes[region_end..region_end + 2] == b"\\)" || &bytes[region_end..region_end + 2] == b"$$")
+        && (&bytes[region_end..region_end + 2] == b"\\)"
+            || &bytes[region_end..region_end + 2] == b"$$")
     {
         region_end + 2
     } else if region_end < bytes.len() && bytes[region_end] == b'$' {
@@ -462,7 +466,10 @@ fn classify_region_delim(content: &str, region_start: usize, region_end: usize) 
         region_end
     };
 
-    RegionDelimSpan { outer_start, outer_end }
+    RegionDelimSpan {
+        outer_start,
+        outer_end,
+    }
 }
 
 #[cfg(test)]
@@ -476,10 +483,19 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         // Expect each structural piece on its own comment line.
         assert!(lines.iter().any(|l| l.trim() == "# $$"), "out:\n{out}");
-        assert!(lines.iter().any(|l| l.trim() == "# X(\\omega) ="), "out:\n{out}");
-        assert!(lines.iter().any(|l| l.trim() == "# \\begin{cases}"), "out:\n{out}");
+        assert!(
+            lines.iter().any(|l| l.trim() == "# X(\\omega) ="),
+            "out:\n{out}"
+        );
+        assert!(
+            lines.iter().any(|l| l.trim() == "# \\begin{cases}"),
+            "out:\n{out}"
+        );
         assert!(lines.iter().any(|l| l.contains("1 - x & a")), "out:\n{out}");
-        assert!(lines.iter().any(|l| l.trim() == "# \\end{cases}"), "out:\n{out}");
+        assert!(
+            lines.iter().any(|l| l.trim() == "# \\end{cases}"),
+            "out:\n{out}"
+        );
     }
 
     #[test]
@@ -511,7 +527,10 @@ mod tests {
         let out = format_math(input.to_string());
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.first().copied(), Some("# before"));
-        assert!(lines.last().map(|l| l.trim() == "# after").unwrap_or(false), "out:\n{out}");
+        assert!(
+            lines.last().map(|l| l.trim() == "# after").unwrap_or(false),
+            "out:\n{out}"
+        );
     }
 
     #[test]
@@ -532,10 +551,17 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         // Expect the single content line to fan out into: X_k = …, \text{ and }, Y_k = …
         assert!(
-            lines.iter().filter(|l| l.starts_with("# ") && !l.contains("$$")).count() >= 3,
+            lines
+                .iter()
+                .filter(|l| l.starts_with("# ") && !l.contains("$$"))
+                .count()
+                >= 3,
             "expected 3+ content lines, got:\n{out}"
         );
-        assert!(lines.iter().any(|l| l.trim() == "# \\text{ and }"), "out:\n{out}");
+        assert!(
+            lines.iter().any(|l| l.trim() == "# \\text{ and }"),
+            "out:\n{out}"
+        );
         assert!(lines.iter().any(|l| l.contains("X_k")), "out:\n{out}");
         assert!(lines.iter().any(|l| l.contains("Y_k")), "out:\n{out}");
     }
@@ -553,8 +579,14 @@ mod tests {
         let out = format_math(input.to_string());
         // Each structural piece — \begin, each row, \end — should be its own line.
         let lines: Vec<&str> = out.lines().collect();
-        assert!(lines.iter().any(|l| l.trim() == "# \\begin{aligned}"), "out:\n{out}");
-        assert!(lines.iter().any(|l| l.trim() == "# \\end{aligned}"), "out:\n{out}");
+        assert!(
+            lines.iter().any(|l| l.trim() == "# \\begin{aligned}"),
+            "out:\n{out}"
+        );
+        assert!(
+            lines.iter().any(|l| l.trim() == "# \\end{aligned}"),
+            "out:\n{out}"
+        );
     }
 
     #[test]

@@ -33,7 +33,11 @@ impl FrameCache {
             return;
         }
         // Replace existing entry for the same frame_index.
-        if let Some(pos) = self.entries.iter().position(|(i, _)| *i == frame.frame_index) {
+        if let Some(pos) = self
+            .entries
+            .iter()
+            .position(|(i, _)| *i == frame.frame_index)
+        {
             if let Some(old) = self.entries.remove(pos) {
                 self.used_bytes = self.used_bytes.saturating_sub(old.1.rgba.len());
             }

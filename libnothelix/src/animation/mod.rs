@@ -1,6 +1,6 @@
 // Steel's `register_fn` (used by the `steel_api` submodule) marshals
 // values from the Steel VM and requires the registered fn's signature
-// to take owned types (`String`, `Vec<u8>`), not borrows. The owned type
+// to take owned types (`String`, `RVec<u8>`), not borrows. The owned type
 // is load-bearing for the FFI dispatcher.
 #![allow(clippy::needless_pass_by_value)]
 
@@ -86,7 +86,9 @@ pub unsafe extern "C" fn nothelix_animation_tick(
         Some(e) => e,
         None => return -1,
     };
-    let out = if let Some(o) = eng.tick(Instant::now()) { o } else {
+    let out = if let Some(o) = eng.tick(Instant::now()) {
+        o
+    } else {
         *out_payload_ptr = std::ptr::null_mut();
         *out_payload_len = 0;
         *out_height = 0;
@@ -144,7 +146,11 @@ pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bo
     let mut reg = registry::lock_registry();
     if let Some(eng) = reg.get_mut(engine_id) {
         let now = Instant::now();
-        if paused { eng.pause(now) } else { eng.resume(now) }
+        if paused {
+            eng.pause(now)
+        } else {
+            eng.resume(now)
+        }
         0
     } else {
         -1
@@ -153,7 +159,9 @@ pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bo
 
 /// Steel-friendly wrappers around the animation registry.
 ///
-/// These use only Steel-marshallable types (`String`, `Vec<u8>`, `isize`, `bool`).
+/// These use only Steel-marshallable types (`String`, `isize`, `bool`, and
+/// bytevectors — `RVec<u8>` for arguments, `FFIValue::ByteVector` for returns,
+/// which is all stock steel-core supports for byte payloads).
 /// They are separate from the unsafe C-ABI `nothelix_animation_*` exports because
 /// Steel cannot call raw `extern "C"` functions through `register_fn`.
 ///
@@ -170,14 +178,16 @@ pub mod steel_api {
     use super::engine::AnimationEngine;
     use super::registry::lock_registry;
     use super::renderer::{select_renderer, TerminalCaps};
+    use abi_stable::std_types::RVec;
     use std::time::Instant;
+    use steel::steel_vm::ffi::FFIValue;
 
     /// Register an animation from raw bytes. Returns the `engine_id` (> 0) on
     /// success, or a negative error code:
     ///   -1 lock failure
     ///   -2 unknown MIME type
     ///   -3 decode failure
-    pub fn animation_register(mime: String, bytes: Vec<u8>) -> isize {
+    pub fn animation_register(mime: String, bytes: RVec<u8>) -> isize {
         let factory = match lookup_decoder(&mime) {
             Some(f) => f,
             None => return -2,
@@ -221,13 +231,14 @@ pub mod steel_api {
 
     /// Read the frame bytes captured by the most recent `animation_tick`.
     /// Pure accessor — does NOT advance the engine. Returns an empty
-    /// `Vec<u8>` when the last tick had no new frame to emit (status 1) or
-    /// when the engine has never been ticked.
-    pub fn animation_tick_bytes(engine_id: isize) -> Vec<u8> {
-        lock_registry()
+    /// bytevector when the last tick had no new frame to emit (status 1)
+    /// or when the engine has never been ticked.
+    pub fn animation_tick_bytes(engine_id: isize) -> FFIValue {
+        let bytes = lock_registry()
             .get(engine_id as u64)
             .map(|e| e.last_tick_bytes.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        FFIValue::ByteVector(RVec::from(bytes))
     }
 
     /// Return the status code from the last `animation_tick_bytes` call on `engine_id`.
@@ -280,11 +291,12 @@ pub mod steel_api {
 
     /// Drop the engine and return any renderer teardown bytes (e.g. Kitty
     /// "delete image" escapes) so the caller can flush them to the terminal.
-    pub fn animation_drop(engine_id: isize) -> Vec<u8> {
-        lock_registry()
+    pub fn animation_drop(engine_id: isize) -> FFIValue {
+        let bytes = lock_registry()
             .drop_engine(engine_id as u64)
             .map(|mut eng| eng.teardown())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        FFIValue::ByteVector(RVec::from(bytes))
     }
 }
 
@@ -310,13 +322,23 @@ mod ffi_tests {
         let mut height: u16 = 0;
         let mut delay: u32 = 0;
         let rc = unsafe {
-            nothelix_animation_tick(id, &mut payload_ptr, &mut payload_len, &mut height, &mut delay)
+            nothelix_animation_tick(
+                id,
+                &mut payload_ptr,
+                &mut payload_len,
+                &mut height,
+                &mut delay,
+            )
         };
         assert!(rc <= 1);
         if rc == 0 {
-            unsafe { nothelix_animation_free_buffer(payload_ptr, payload_len); }
+            unsafe {
+                nothelix_animation_free_buffer(payload_ptr, payload_len);
+            }
         }
-        unsafe { nothelix_animation_drop(id); }
+        unsafe {
+            nothelix_animation_drop(id);
+        }
     }
 
     #[test]
@@ -333,9 +355,8 @@ mod ffi_tests {
     #[test]
     fn null_args_return_minus_ten() {
         let mut id: u64 = 0;
-        let rc = unsafe {
-            nothelix_animation_register(std::ptr::null(), std::ptr::null(), 0, &mut id)
-        };
+        let rc =
+            unsafe { nothelix_animation_register(std::ptr::null(), std::ptr::null(), 0, &mut id) };
         assert_eq!(rc, -10);
     }
 }
@@ -344,10 +365,21 @@ mod ffi_tests {
 mod steel_api_tests {
     use super::steel_api;
     use crate::animation::decoders::gif_fixture::tiny_gif_bytes;
+    use abi_stable::std_types::RVec;
+    use steel::steel_vm::ffi::FFIValue;
+
+    /// Unwrap the `FFIValue::ByteVector` the byte-returning FFI fns
+    /// produce — any other variant is a wire-contract break.
+    fn bytevector(value: FFIValue) -> RVec<u8> {
+        match value {
+            FFIValue::ByteVector(bytes) => bytes,
+            other => panic!("expected ByteVector, got {other:?}"),
+        }
+    }
 
     #[test]
     fn steel_api_register_and_tick() {
-        let id = steel_api::animation_register("image/gif".into(), tiny_gif_bytes());
+        let id = steel_api::animation_register("image/gif".into(), tiny_gif_bytes().into());
         assert!(id > 0, "expected positive engine_id, got {id}");
 
         // Advance the engine. animation_tick returns 0 on success and
@@ -356,12 +388,15 @@ mod steel_api_tests {
         let advance_rc = steel_api::animation_tick(id);
         assert_eq!(advance_rc, 0, "tick advance failed: {advance_rc}");
 
-        let bytes = steel_api::animation_tick_bytes(id);
+        let bytes = bytevector(steel_api::animation_tick_bytes(id));
         let status = steel_api::animation_tick_status(id);
         // Status must be 0 (new frame) or 1 (no change); first tick is always 0.
         assert!(status <= 1, "unexpected status {status}");
         if status == 0 {
-            assert!(!bytes.is_empty(), "status 0 means bytes should be non-empty");
+            assert!(
+                !bytes.is_empty(),
+                "status 0 means bytes should be non-empty"
+            );
         }
 
         // Metadata accessors should return sane values.
@@ -378,13 +413,14 @@ mod steel_api_tests {
 
     #[test]
     fn steel_api_unknown_mime_returns_minus_two() {
-        let id: isize = steel_api::animation_register("image/nope".into(), vec![0u8; 16]);
+        let id: isize =
+            steel_api::animation_register("image/nope".into(), RVec::from(vec![0u8; 16]));
         assert_eq!(id, -2isize);
     }
 
     #[test]
     fn steel_api_pause_resume() {
-        let id = steel_api::animation_register("image/gif".into(), tiny_gif_bytes());
+        let id = steel_api::animation_register("image/gif".into(), tiny_gif_bytes().into());
         assert!(id > 0);
 
         let rc = steel_api::animation_set_pause(id, true);
@@ -398,7 +434,7 @@ mod steel_api_tests {
 
         let status = steel_api::animation_tick_status(id);
         assert_eq!(status, 2isize, "paused tick should publish status 2");
-        let bytes = steel_api::animation_tick_bytes(id);
+        let bytes = bytevector(steel_api::animation_tick_bytes(id));
         assert!(bytes.is_empty(), "paused tick should publish empty bytes");
 
         let rc = steel_api::animation_set_pause(id, false);

@@ -1,5 +1,5 @@
 // Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// the registered fn's signature to take owned types (`String`, `RVec<u8>`),
 // not borrows. The clippy lint is technically correct that some args
 // aren't consumed internally, but the owned type is load-bearing for the
 // FFI dispatcher.

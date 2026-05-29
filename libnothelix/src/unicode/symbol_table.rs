@@ -2603,4 +2603,3 @@ pub fn unicode_completions_for_prefix(prefix: String) -> String {
         .collect();
     json!(matches).to_string()
 }
-

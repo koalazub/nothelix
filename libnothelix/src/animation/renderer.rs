@@ -24,7 +24,9 @@ pub trait AnimationRenderer: Send {
     fn name(&self) -> &'static str;
     fn capabilities(&self) -> RendererCapabilities;
     fn transmit_frame(&mut self, frame: &DecodedFrame, ctx: &RenderContext) -> Vec<u8>;
-    fn teardown(&mut self, _engine_id: u64) -> Vec<u8> { Vec::new() }
+    fn teardown(&mut self, _engine_id: u64) -> Vec<u8> {
+        Vec::new()
+    }
 }
 
 pub type RendererFactory = fn(&TerminalCaps) -> Option<Box<dyn AnimationRenderer>>;

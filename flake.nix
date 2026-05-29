@@ -61,7 +61,7 @@
           cargoLock = {
             lockFile = "${helix-fork}/Cargo.lock";
             outputHashes = {
-              "steel-core-0.8.2" = "sha256-lqtx1q/AHntbZvF3rpWbicvxE3NGZU+VPMueECaVdSA=";
+              "steel-core-0.8.2" = "sha256-qPDz0ax290E7UEFTDfrmLmsn1r9dIuOxMiRmNrDkfZo=";
             };
           };
 
@@ -109,7 +109,7 @@
             lockFile = ./Cargo.lock;
             outputHashes = {
               # Same hash as nixoala/packages/helix — same steel rev
-              "steel-core-0.8.2" = "sha256-lqtx1q/AHntbZvF3rpWbicvxE3NGZU+VPMueECaVdSA=";
+              "steel-core-0.8.2" = "sha256-qPDz0ax290E7UEFTDfrmLmsn1r9dIuOxMiRmNrDkfZo=";
             };
           };
 

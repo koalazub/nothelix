@@ -7,9 +7,9 @@
 //!
 //! The Rust FFI layer exposes two entry points:
 //!   - `compute_conceal_overlays` — scan a whole document.
-//!   - `compute_conceal_overlays_for_comments` — scan only Julia comment
-//!     lines (lines starting with `# `), which is the format converted
-//!     notebooks use for their markdown cells.
+//!   - `compute_conceal_overlays_for_comments_with_options` — scan only
+//!     Julia comment lines (lines starting with `# `), which is the format
+//!     converted notebooks use for their markdown cells.
 //!
 //! Both return document-relative CHARACTER offsets (not byte offsets) so
 //! the Scheme layer can hand them straight to Helix's overlay API. Char
@@ -48,9 +48,10 @@ pub fn compute_conceal_overlays(text: String) -> String {
                             .and_then(|o| o.as_str())
                             .unwrap_or("");
                         let byte_off = region_start + offset as usize;
-                        let char_off = byte_to_char.get(byte_off).copied().unwrap_or_else(|| {
-                            text[..byte_off.min(text.len())].chars().count()
-                        });
+                        let char_off = byte_to_char
+                            .get(byte_off)
+                            .copied()
+                            .unwrap_or_else(|| text[..byte_off.min(text.len())].chars().count());
                         if char_off >= doc_char_len {
                             continue;
                         }
@@ -77,14 +78,9 @@ pub fn compute_conceal_overlays(text: String) -> String {
 ///
 /// Returns tab-separated format: `"char_offset\treplacement\n..."`
 /// All offsets are CHAR offsets (not byte offsets).
-pub fn compute_conceal_overlays_for_comments(text: String) -> String {
-    compute_conceal_overlays_for_comments_with_options(text, false)
-}
-
-/// Variant of [`compute_conceal_overlays_for_comments`] with
-/// caller-chosen scanner options. Exposed as the `-with-options` FFI so
-/// the math-render plugin can pass `hide_math_layout=true` per-call
-/// without a process-global flag.
+///
+/// Exposed as the `-with-options` FFI so the math-render plugin can pass
+/// `hide_math_layout=true` per-call without a process-global flag.
 pub fn compute_conceal_overlays_for_comments_with_options(
     text: String,
     hide_math_layout: bool,
@@ -98,9 +94,10 @@ pub fn compute_conceal_overlays_for_comments_with_options(
 
     // Helper: emit one overlay from a byte offset in the document.
     let mut emit = |doc_byte_offset: usize, repl: &str| {
-        let char_offset = byte_to_char.get(doc_byte_offset).copied().unwrap_or_else(|| {
-            text[..doc_byte_offset.min(text.len())].chars().count()
-        });
+        let char_offset = byte_to_char
+            .get(doc_byte_offset)
+            .copied()
+            .unwrap_or_else(|| text[..doc_byte_offset.min(text.len())].chars().count());
         if char_offset < doc_char_len {
             out.push_str(&char_offset.to_string());
             out.push('\t');
@@ -113,7 +110,9 @@ pub fn compute_conceal_overlays_for_comments_with_options(
     while i < lines.len() {
         let (line_byte_start, line) = lines[i];
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        let content = if let Some(c) = trimmed.strip_prefix("# ") { c } else {
+        let content = if let Some(c) = trimmed.strip_prefix("# ") {
+            c
+        } else {
             i += 1;
             continue;
         };
@@ -124,9 +123,7 @@ pub fn compute_conceal_overlays_for_comments_with_options(
             let open_line = i;
             let mut close_line = None;
             for (j, &(_, jline)) in lines.iter().enumerate().skip(i + 1) {
-                let jt = jline
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r');
+                let jt = jline.trim_end_matches('\n').trim_end_matches('\r');
                 if let Some(jc) = jt.strip_prefix("# ") {
                     if jc.trim() == "$$" {
                         close_line = Some(j);
@@ -222,7 +219,10 @@ pub fn compute_conceal_overlays_for_comments_with_options(
             // Hide opening delimiter (\( or $$ or $).
             if region_start >= 2
                 && matches!(
-                    (content_bytes[region_start - 2], content_bytes[region_start - 1]),
+                    (
+                        content_bytes[region_start - 2],
+                        content_bytes[region_start - 1]
+                    ),
                     (b'\\', b'(') | (b'$', b'$')
                 )
             {
@@ -257,7 +257,9 @@ pub fn compute_conceal_overlays_for_comments_with_options(
         {
             let mut j = 0;
             while j + 1 < content_bytes.len() {
-                if content_bytes[j] == b'\\' && matches!(content_bytes[j + 1], b'(' | b')' | b'[' | b']') {
+                if content_bytes[j] == b'\\'
+                    && matches!(content_bytes[j + 1], b'(' | b')' | b'[' | b']')
+                {
                     let inside_math = regions.iter().any(|&(start, end)| {
                         let region_open = start.saturating_sub(2);
                         let region_close = (end + 2).min(content_bytes.len());
@@ -278,7 +280,6 @@ pub fn compute_conceal_overlays_for_comments_with_options(
 
     out
 }
-
 
 /// Build a lookup table from byte offset → char offset. Every byte
 /// position maps to the char index of the character that contains that

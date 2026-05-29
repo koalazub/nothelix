@@ -1,7 +1,9 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::{TerminalCaps, AnimationRenderer, RendererEntry, RendererCapabilities, RenderContext};
 #[cfg(test)]
 use crate::animation::renderer::select_renderer;
+use crate::animation::renderer::{
+    AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
+};
 
 pub struct StaticFallbackRenderer {
     last_id: Option<u64>,
@@ -18,7 +20,9 @@ inventory::submit! {
 }
 
 impl AnimationRenderer for StaticFallbackRenderer {
-    fn name(&self) -> &'static str { "static-fallback" }
+    fn name(&self) -> &'static str {
+        "static-fallback"
+    }
 
     fn capabilities(&self) -> RendererCapabilities {
         RendererCapabilities {
@@ -70,7 +74,11 @@ mod tests {
         let mut r = StaticFallbackRenderer::try_new(&caps).unwrap();
         let bytes = r.transmit_frame(
             &make_frame(7),
-            &RenderContext { engine_id: 1, cell_position: (0, 0), previous_content_id: None },
+            &RenderContext {
+                engine_id: 1,
+                cell_position: (0, 0),
+                previous_content_id: None,
+            },
         );
         assert!(!bytes.is_empty());
         assert_eq!(&bytes[0..4], b"\x89PNG");
@@ -82,11 +90,19 @@ mod tests {
         let mut r = StaticFallbackRenderer::try_new(&caps).unwrap();
         let _ = r.transmit_frame(
             &make_frame(7),
-            &RenderContext { engine_id: 1, cell_position: (0, 0), previous_content_id: None },
+            &RenderContext {
+                engine_id: 1,
+                cell_position: (0, 0),
+                previous_content_id: None,
+            },
         );
         let bytes = r.transmit_frame(
             &make_frame(7),
-            &RenderContext { engine_id: 1, cell_position: (0, 0), previous_content_id: Some(7) },
+            &RenderContext {
+                engine_id: 1,
+                cell_position: (0, 0),
+                previous_content_id: Some(7),
+            },
         );
         assert!(bytes.is_empty());
     }

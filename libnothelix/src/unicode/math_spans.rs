@@ -23,13 +23,34 @@ use serde::Serialize;
 /// Big operators that take `_{sub}^{sup}` limits as their payload.
 /// Mirrors the list in `scanner::is_big_operator`; keep in sync.
 const BIG_OPS: &[&str] = &[
-    "sum", "prod", "coprod",
-    "int", "iint", "iiint", "iiiint", "oint", "oiint", "oiiint",
-    "bigcup", "bigcap", "bigvee", "bigwedge",
-    "bigoplus", "bigotimes", "bigodot", "biguplus", "bigsqcup",
-    "lim", "liminf", "limsup",
-    "min", "max", "sup", "inf",
-    "argmin", "argmax",
+    "sum",
+    "prod",
+    "coprod",
+    "int",
+    "iint",
+    "iiint",
+    "iiiint",
+    "oint",
+    "oiint",
+    "oiiint",
+    "bigcup",
+    "bigcap",
+    "bigvee",
+    "bigwedge",
+    "bigoplus",
+    "bigotimes",
+    "bigodot",
+    "biguplus",
+    "bigsqcup",
+    "lim",
+    "liminf",
+    "limsup",
+    "min",
+    "max",
+    "sup",
+    "inf",
+    "argmin",
+    "argmax",
 ];
 
 const FRAC_CMDS: &[&str] = &["frac", "dfrac", "tfrac"];
@@ -155,7 +176,8 @@ pub fn parse_math_spans(text: &str) -> Vec<MathSpan> {
 
 /// FFI entry point — parse and emit one span per line in tab-separated
 /// form. Matches the line-based wire shape the rest of the plugin uses
-/// (see `conceal::compute_conceal_overlays_for_comments`), so the
+/// (see `conceal::compute_conceal_overlays_for_comments_with_options`),
+/// so the
 /// Scheme consumer doesn't need a JSON parser.
 ///
 /// Format per line:
@@ -174,7 +196,14 @@ pub fn parse_math_spans_json(text: String) -> String {
     let mut out = String::with_capacity(spans.len() * 64 + text.len());
     for span in spans {
         match span {
-            MathSpan::BigOp { cmd, byte_start, byte_end, visual_col, sub_text, sup_text } => {
+            MathSpan::BigOp {
+                cmd,
+                byte_start,
+                byte_end,
+                visual_col,
+                sub_text,
+                sup_text,
+            } => {
                 out.push_str("big_op\t");
                 out.push_str(&cmd);
                 let _ = write!(out, "\t{byte_start}\t{byte_end}\t{visual_col}\t");
@@ -183,7 +212,14 @@ pub fn parse_math_spans_json(text: String) -> String {
                 escape_tsv_field(&sup_text, &mut out);
                 out.push('\n');
             }
-            MathSpan::Frac { cmd, byte_start, byte_end, visual_col, num_text, den_text } => {
+            MathSpan::Frac {
+                cmd,
+                byte_start,
+                byte_end,
+                visual_col,
+                num_text,
+                den_text,
+            } => {
                 out.push_str("frac\t");
                 out.push_str(&cmd);
                 let _ = write!(out, "\t{byte_start}\t{byte_end}\t{visual_col}\t");
@@ -342,7 +378,12 @@ mod tests {
         let spans = parse_math_spans("\\sum_{k=0}^{n} f(k)");
         assert_eq!(spans.len(), 1);
         match &spans[0] {
-            MathSpan::BigOp { cmd, sub_text, sup_text, .. } => {
+            MathSpan::BigOp {
+                cmd,
+                sub_text,
+                sup_text,
+                ..
+            } => {
                 assert_eq!(cmd, "sum");
                 assert_eq!(sub_text, "k=0");
                 assert_eq!(sup_text, "n");
@@ -356,7 +397,9 @@ mod tests {
         let spans = parse_math_spans("\\int_0^1 f(t) dt");
         assert_eq!(spans.len(), 1);
         match &spans[0] {
-            MathSpan::BigOp { sub_text, sup_text, .. } => {
+            MathSpan::BigOp {
+                sub_text, sup_text, ..
+            } => {
                 assert_eq!(sub_text, "0");
                 assert_eq!(sup_text, "1");
             }
@@ -369,7 +412,9 @@ mod tests {
         let spans = parse_math_spans("a + \\frac{x+1}{y} + b");
         assert_eq!(spans.len(), 1);
         match &spans[0] {
-            MathSpan::Frac { num_text, den_text, .. } => {
+            MathSpan::Frac {
+                num_text, den_text, ..
+            } => {
                 assert_eq!(num_text, "x+1");
                 assert_eq!(den_text, "y");
             }
@@ -409,17 +454,27 @@ mod tests {
         // column values must be strictly monotonic in source order.
         let spans = parse_math_spans("\\int_0^1 \\sum_{i=1}^n \\prod_{j=1}^m x");
         assert_eq!(spans.len(), 3);
-        let cols: Vec<usize> = spans.iter().map(|s| match s {
-            MathSpan::BigOp { visual_col, .. } | MathSpan::Frac { visual_col, .. } => *visual_col,
-        }).collect();
-        assert!(cols.windows(2).all(|w| w[0] < w[1]), "cols not monotonic: {cols:?}");
+        let cols: Vec<usize> = spans
+            .iter()
+            .map(|s| match s {
+                MathSpan::BigOp { visual_col, .. } | MathSpan::Frac { visual_col, .. } => {
+                    *visual_col
+                }
+            })
+            .collect();
+        assert!(
+            cols.windows(2).all(|w| w[0] < w[1]),
+            "cols not monotonic: {cols:?}"
+        );
     }
 
     #[test]
     fn greek_limits_round_trip_verbatim() {
         let spans = parse_math_spans("\\sum_{k\\in\\Z}^n c_k");
         match &spans[0] {
-            MathSpan::BigOp { sub_text, sup_text, .. } => {
+            MathSpan::BigOp {
+                sub_text, sup_text, ..
+            } => {
                 assert_eq!(sub_text, "k\\in\\Z");
                 assert_eq!(sup_text, "n");
             }

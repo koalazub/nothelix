@@ -6,9 +6,10 @@
 //!     → Unicode char table used by the `\alpha<Tab>` completion.
 //!   - [`latex_overlays`] — given the text inside a single math region,
 //!     return a JSON array of conceal overlays for that region.
-//!   - [`compute_conceal_overlays`] / [`compute_conceal_overlays_for_comments`]
-//!     — given a whole document, find math regions and return conceal
-//!     overlays with document-relative char offsets.
+//!   - [`compute_conceal_overlays`] /
+//!     [`compute_conceal_overlays_for_comments_with_options`] — given a
+//!     whole document, find math regions and return conceal overlays with
+//!     document-relative char offsets.
 //!
 //! Internal module layout:
 //!
@@ -23,26 +24,23 @@
 
 mod conceal;
 mod fence;
-pub(crate) mod typst_conceal;
 pub(crate) mod math_regions;
 pub(crate) mod math_spans;
 mod overlay;
 mod scanner;
 mod sub_super;
 mod symbol_table;
+pub(crate) mod typst_conceal;
 
-pub use conceal::{
-    compute_conceal_overlays, compute_conceal_overlays_for_comments,
-    compute_conceal_overlays_for_comments_with_options,
-};
+pub use conceal::{compute_conceal_overlays, compute_conceal_overlays_for_comments_with_options};
 pub use math_spans::parse_math_spans_json;
 pub use scanner::{latex_overlays, latex_overlays_with_options};
 pub use symbol_table::{unicode_completions_for_prefix, unicode_lookup};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::symbol_table::SYMBOLS;
+    use super::*;
 
     #[test]
     fn lookup_alpha() {
@@ -280,7 +278,10 @@ mod tests {
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
         // ∑ from \sum should appear; ⁿ (superscript n) should NOT.
-        assert!(replacements.contains(&"∑"), "expected ∑, got {replacements:?}");
+        assert!(
+            replacements.contains(&"∑"),
+            "expected ∑, got {replacements:?}"
+        );
         assert!(
             !replacements.contains(&"ⁿ"),
             "limit `^n` must not be shrunk to ⁿ; got {replacements:?}"
@@ -321,7 +322,10 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        assert!(replacements.contains(&"π"), "expected π from \\pi, got {replacements:?}");
+        assert!(
+            replacements.contains(&"π"),
+            "expected π from \\pi, got {replacements:?}"
+        );
     }
 
     #[test]
@@ -336,7 +340,10 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        assert!(replacements.contains(&"∫"), "expected ∫, got {replacements:?}");
+        assert!(
+            replacements.contains(&"∫"),
+            "expected ∫, got {replacements:?}"
+        );
         assert!(
             !replacements.contains(&"ᵃ") && !replacements.contains(&"ᵇ"),
             "integral bounds got shrunk: {replacements:?}"
@@ -356,7 +363,10 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        assert!(replacements.contains(&"∏"), "expected ∏, got {replacements:?}");
+        assert!(
+            replacements.contains(&"∏"),
+            "expected ∏, got {replacements:?}"
+        );
         assert!(
             !replacements.contains(&"ⁿ"),
             "paired-limit shrunk superscript: {replacements:?}"
@@ -376,8 +386,14 @@ mod tests {
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
         assert!(replacements.contains(&"α"), "missing α: {replacements:?}");
-        assert!(replacements.contains(&"²"), "inline super ^2 lost: {replacements:?}");
-        assert!(replacements.contains(&"³"), "inline super ^3 lost: {replacements:?}");
+        assert!(
+            replacements.contains(&"²"),
+            "inline super ^2 lost: {replacements:?}"
+        );
+        assert!(
+            replacements.contains(&"³"),
+            "inline super ^3 lost: {replacements:?}"
+        );
     }
 
     #[test]
@@ -514,7 +530,7 @@ mod tests {
     #[test]
     fn comment_conceal_simple_alpha() {
         let input = "# $\\alpha$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(!overlays.is_empty(), "Expected overlays, got none");
         // Should have α replacement
@@ -539,14 +555,17 @@ mod tests {
     #[test]
     fn comment_conceal_no_math_lines_skipped() {
         let input = "x = rand(10)\nprintln(\"value: $x\")\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
-        assert!(result.is_empty(), "Non-comment lines should produce no overlays");
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
+        assert!(
+            result.is_empty(),
+            "Non-comment lines should produce no overlays"
+        );
     }
 
     #[test]
     fn comment_conceal_mixed_code_and_comments() {
         let input = "x = 1\n# The value $\\beta$ is cool\ny = 2\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
             overlays.iter().any(|(_, r)| r == "β"),
@@ -559,7 +578,7 @@ mod tests {
     fn comment_conceal_dollar_in_code_ignored() {
         // Julia string interpolation — should NOT match across lines
         let input = "# cost is $5\n# price is $10\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         // $5 on one line should NOT match $10 on another
         // Each line has only one $, so no complete $...$ region
@@ -574,26 +593,36 @@ mod tests {
     fn comment_conceal_markdown_escape_backslashes_hidden() {
         // \(a\) is a markdown list marker — NOT math, but backslashes hidden
         let input = "# \\(a\\) Find the eigenvalues\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         let hidden: Vec<_> = overlays.iter().filter(|(_, r)| r.is_empty()).collect();
-        assert_eq!(hidden.len(), 2, "Expected 2 hidden backslashes, got: {:?}", overlays);
+        assert_eq!(
+            hidden.len(),
+            2,
+            "Expected 2 hidden backslashes, got: {:?}",
+            overlays
+        );
     }
 
     #[test]
     fn comment_conceal_square_bracket_escapes() {
         let input = "# Some text \\[2 marks\\]\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         let hidden: Vec<_> = overlays.iter().filter(|(_, r)| r.is_empty()).collect();
-        assert_eq!(hidden.len(), 2, "Expected 2 hidden backslashes for \\[...\\], got: {:?}", overlays);
+        assert_eq!(
+            hidden.len(),
+            2,
+            "Expected 2 hidden backslashes for \\[...\\], got: {:?}",
+            overlays
+        );
     }
 
     #[test]
     fn comment_conceal_real_backslash_parens_math() {
         // \(\alpha + \beta\) IS real math — should produce overlays
         let input = "# \\(\\alpha + \\beta\\)\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
             !overlays.is_empty(),
@@ -604,7 +633,7 @@ mod tests {
     #[test]
     fn comment_conceal_multiple_regions_one_line() {
         let input = "# $\\alpha$ and $\\beta$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         let symbols: Vec<&str> = overlays.iter().map(|(_, r)| r.as_str()).collect();
         assert!(symbols.contains(&"α"), "Expected α in {:?}", symbols);
@@ -614,7 +643,7 @@ mod tests {
     #[test]
     fn comment_conceal_mathbf() {
         let input = "# $\\mathbf{v}$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
             overlays.iter().any(|(_, r)| r == "𝐯"),
@@ -626,7 +655,7 @@ mod tests {
     #[test]
     fn comment_conceal_lambda_equation() {
         let input = "# $A\\mathbf{v} = \\lambda\\mathbf{v}$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         let symbols: Vec<&str> = overlays
             .iter()
@@ -642,7 +671,7 @@ mod tests {
         // The ═ character is 3 bytes in UTF-8.
         // Offsets must be char positions, not byte positions.
         let input = "# ═══ separator\n# $\\alpha$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         let alpha_overlay = overlays.iter().find(|(_, r)| r == "α");
         assert!(alpha_overlay.is_some(), "Expected α overlay");
@@ -665,7 +694,7 @@ mod tests {
         // "numerically" was showing as "numeially" and "maximum" as "maium".
         // Any overlay that lands OUTSIDE the two math regions is a bug.
         let input = "# \\(b\\) Verify the eigenvalue equation $A\\mathbf{v} = \\lambda\\mathbf{v}$ numerically for each eigenpair. What is the maximum residual $\\|A\\mathbf{v} - \\lambda\\mathbf{v}\\|$?\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
 
         // Locate "numerically" and "maximum" char positions in the input.
@@ -683,26 +712,32 @@ mod tests {
             assert!(
                 !(*off >= num_start && *off < num_end),
                 "Stray overlay inside 'numerically' (chars {}..{}): ({}, {:?})",
-                num_start, num_end, off, rep
+                num_start,
+                num_end,
+                off,
+                rep
             );
             assert!(
                 !(*off >= max_start && *off < max_end),
                 "Stray overlay inside 'maximum' (chars {}..{}): ({}, {:?})",
-                max_start, max_end, off, rep
+                max_start,
+                max_end,
+                off,
+                rep
             );
         }
     }
 
     #[test]
     fn comment_conceal_empty_document() {
-        let result = compute_conceal_overlays_for_comments("".to_string());
+        let result = compute_conceal_overlays_for_comments_with_options("".to_string(), false);
         assert!(result.is_empty());
     }
 
     #[test]
     fn comment_conceal_no_comment_lines() {
         let input = "x = 1\ny = 2\nz = x + y\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         assert!(result.is_empty());
     }
 
@@ -710,7 +745,7 @@ mod tests {
     fn comment_conceal_dollar_dollar_block() {
         // Multi-line $$ block: \alpha should become α, ^2 should become ²
         let input = "# $$\n# y_n = x_n - \\alpha^2\\, x_{n-2}\n# $$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         // Should have overlays — at minimum: $$ hidden (4), \alpha → α, ^2 → ², \, → thin space
         assert!(
@@ -737,7 +772,7 @@ mod tests {
     fn comment_conceal_norm_and_subscript() {
         // \|x - P_K x\|^2 — norms, subscript K (braced would work, bare K won't have subscript glyph)
         let input = "# $\\|x - P_K x\\|^2$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         // Should have: $ hidden (2), \| → ‖ (2), ^2 → ² (1)
         assert!(
@@ -755,7 +790,7 @@ mod tests {
     #[test]
     fn comment_conceal_ldots() {
         let input = "# $K = 1, 2, \\ldots, 32$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
             overlays.iter().any(|(_, r)| r == "…"),
@@ -767,7 +802,7 @@ mod tests {
     #[test]
     fn comment_conceal_begin_cases_block() {
         let input = "# $$\n#    h_n = \\begin{cases}\n#    1 & 0 \\leq n \\leq 2 \\\\\\\\\n#    0 & \\text{otherwise}\n#    \\end{cases}\n# $$\n";
-        let result = compute_conceal_overlays_for_comments(input.to_string());
+        let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
             overlays.iter().any(|(_, r)| r == "≤"),

@@ -27,6 +27,14 @@
                           lsp-project-dir
                           lsp-depot-dir))
 
+;; FFI version handshake — keep this the FIRST nothelix require. Steel
+;; executes required modules before any body form of this file, so the
+;; handshake module's load-time assert is the earliest point in the
+;; plugin load: it hard-fails against a stale dylib before any module
+;; (including this file's #%require-dylib above, whose defines also run
+;; after all requires) pulls symbols out of it.
+(require "nothelix/ffi-version.scm")
+
 ;;; ============================================================================
 ;;; LSP ENVIRONMENT SETUP
 ;;; ============================================================================

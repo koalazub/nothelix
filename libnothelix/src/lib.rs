@@ -4,7 +4,7 @@
 //! utility functions that don't warrant their own module.
 
 // Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`, `Vec<u8>`,
+// the registered fn's signature to take owned types (`String`, `RVec<u8>`,
 // `isize`), not borrows. The clippy lint is correct that some args
 // aren't consumed internally, but the owned type is load-bearing for the
 // FFI dispatcher.
@@ -29,6 +29,18 @@ use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
 
 steel::declare_module!(build_module);
 
+/// FFI surface version for the libnothelix ↔ plugin handshake.
+///
+/// Bump rule: ANY change to the FFI surface bumps this — a function
+/// added, removed, or renamed, or a signature/semantics change to an
+/// existing one. Bump it together with `EXPECTED-FFI-VERSION` in
+/// `plugin/nothelix/ffi-version.scm`, which hard-fails the plugin
+/// load on mismatch. The plugin `.scm` files are live-linked from the
+/// repo while the dylib is a copied artifact, so a forgotten `just
+/// install` used to skew the two silently; the handshake turns that
+/// into a loud, actionable failure.
+pub const NOTHELIX_FFI_VERSION: u32 = 1;
+
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
 /// installed fork binary.
@@ -42,6 +54,11 @@ pub fn build_id() -> &'static str {
 
 fn build_module() -> FFIModule {
     let mut m = FFIModule::new("nothelix");
+
+    // ── FFI handshake ─────────────────────────────────────────────────────────
+    // The plugin probes this defensively at load (a pre-handshake dylib
+    // doesn't export it at all) and refuses to load on mismatch.
+    m.register_fn("nothelix-ffi-version", nothelix_ffi_version);
 
     // ── Kernel management ─────────────────────────────────────────────────────
     m.register_fn("kernel-start-macro", kernel::kernel_start_macro);
@@ -59,7 +76,10 @@ fn build_module() -> FFIModule {
     m.register_fn("get-cell-at-line", notebook::get_cell_at_line);
     m.register_fn("get-cell-code-from-jl", notebook::get_cell_code_from_jl);
     m.register_fn("list-jl-code-cells", notebook::list_jl_code_cells);
-    m.register_fn("scan-variable-definition", notebook::scan_variable_definition);
+    m.register_fn(
+        "scan-variable-definition",
+        notebook::scan_variable_definition,
+    );
     m.register_fn("convert-to-ipynb!", notebook::convert_to_ipynb);
     m.register_fn("export-to-markdown!", notebook::export_to_markdown);
     m.register_fn("export-to-typst!", notebook::export_to_typst);
@@ -152,10 +172,6 @@ fn build_module() -> FFIModule {
         unicode::compute_conceal_overlays,
     );
     m.register_fn(
-        "compute-conceal-overlays-for-comments",
-        unicode::compute_conceal_overlays_for_comments,
-    );
-    m.register_fn(
         "compute-conceal-overlays-for-comments-with-options",
         unicode::compute_conceal_overlays_for_comments_with_options,
     );
@@ -166,13 +182,19 @@ fn build_module() -> FFIModule {
 
     // ── Error formatting ─────────────────────────────────────────────
     m.register_fn("format-julia-error", format_julia_error);
-    m.register_fn("format-julia-error-with-notebook", format_julia_error_with_notebook);
+    m.register_fn(
+        "format-julia-error-with-notebook",
+        format_julia_error_with_notebook,
+    );
 
     // ── Health check ──────────────────────────────────────────────────
     // Pure-Rust subset of `nothelix doctor`'s static checks. Returns
     // TSV (one issue per line, `id\tmessage\tfix_hint`) for in-editor
     // diagnostics — empty string means healthy.
-    m.register_fn("nothelix-health-check-tsv", health::nothelix_health_check_tsv);
+    m.register_fn(
+        "nothelix-health-check-tsv",
+        health::nothelix_health_check_tsv,
+    );
 
     // ── LSP environment ───────────────────────────────────────────────
     m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
@@ -183,20 +205,42 @@ fn build_module() -> FFIModule {
     // ── Animation ─────────────────────────────────────────────────────────────
     // These complement the raw C-ABI exports (`nothelix_animation_*`). Steel
     // cannot call `extern "C"` functions through `register_fn`; these wrappers
-    // use only Steel-marshallable types (String, Vec<u8>, i64, bool).
+    // use only Steel-marshallable types (String, i64, bool, and bytevectors
+    // — RVec<u8> in, FFIValue::ByteVector out).
     //
     // Tick protocol (approach A):
     //   1. Call `(animation-tick-bytes id)` → frame bytes or empty vec.
     //   2. Immediately call the accessor functions to read per-tick metadata
     //      (they read the `last_tick_meta` snapshot set during step 1).
-    m.register_fn("animation-register", animation::steel_api::animation_register);
+    m.register_fn(
+        "animation-register",
+        animation::steel_api::animation_register,
+    );
     m.register_fn("animation-tick", animation::steel_api::animation_tick);
-    m.register_fn("animation-tick-bytes", animation::steel_api::animation_tick_bytes);
-    m.register_fn("animation-tick-status", animation::steel_api::animation_tick_status);
-    m.register_fn("animation-tick-height", animation::steel_api::animation_tick_height);
-    m.register_fn("animation-tick-delay-ms", animation::steel_api::animation_tick_delay_ms);
-    m.register_fn("animation-tick-frame-index", animation::steel_api::animation_tick_frame_index);
-    m.register_fn("animation-set-pause", animation::steel_api::animation_set_pause);
+    m.register_fn(
+        "animation-tick-bytes",
+        animation::steel_api::animation_tick_bytes,
+    );
+    m.register_fn(
+        "animation-tick-status",
+        animation::steel_api::animation_tick_status,
+    );
+    m.register_fn(
+        "animation-tick-height",
+        animation::steel_api::animation_tick_height,
+    );
+    m.register_fn(
+        "animation-tick-delay-ms",
+        animation::steel_api::animation_tick_delay_ms,
+    );
+    m.register_fn(
+        "animation-tick-frame-index",
+        animation::steel_api::animation_tick_frame_index,
+    );
+    m.register_fn(
+        "animation-set-pause",
+        animation::steel_api::animation_set_pause,
+    );
     m.register_fn("animation-drop", animation::steel_api::animation_drop);
 
     m
@@ -224,11 +268,20 @@ fn format_julia_error_with_notebook(
     error_format::format_error(&error_format::FormatContext {
         error_json: &error_json,
         raw_error: &raw_error,
-        notebook_path: if jl_path.is_empty() { None } else { Some(&jl_path) },
+        notebook_path: if jl_path.is_empty() {
+            None
+        } else {
+            Some(&jl_path)
+        },
     })
 }
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
+
+// `isize` because that's the integer type Steel's FFI marshals.
+fn nothelix_ffi_version() -> isize {
+    NOTHELIX_FFI_VERSION as isize
+}
 
 fn write_string_to_file(path: String, content: String) -> String {
     match std::fs::write(&path, &content) {

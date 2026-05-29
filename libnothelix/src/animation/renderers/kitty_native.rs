@@ -1,5 +1,7 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::{TerminalCaps, AnimationRenderer, RendererEntry, RendererCapabilities, RenderContext};
+use crate::animation::renderer::{
+    AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
+};
 use base64::Engine;
 use std::collections::HashMap;
 
@@ -24,7 +26,9 @@ inventory::submit! {
 }
 
 impl AnimationRenderer for KittyNativeRenderer {
-    fn name(&self) -> &'static str { "kitty-native" }
+    fn name(&self) -> &'static str {
+        "kitty-native"
+    }
 
     fn capabilities(&self) -> RendererCapabilities {
         RendererCapabilities {

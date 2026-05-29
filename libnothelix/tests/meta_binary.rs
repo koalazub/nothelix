@@ -22,4 +22,8 @@ fn meta_binary_prints_build_id() {
         stdout.contains("LIBNOTHELIX_VERSION="),
         "stdout must contain LIBNOTHELIX_VERSION= line, got: {stdout}"
     );
+    assert!(
+        stdout.contains(&format!("FFI_VERSION={}\n", nothelix::NOTHELIX_FFI_VERSION)),
+        "stdout must contain the FFI_VERSION= line, got: {stdout}"
+    );
 }

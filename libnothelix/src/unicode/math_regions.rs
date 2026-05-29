@@ -106,7 +106,10 @@ mod tests {
         // \(a\) and \(b\) are markdown list markers, not math
         let text = r"\(a\) First item \(b\) Second item";
         let regions = find_math_regions(text);
-        assert!(regions.is_empty(), "should reject \\(a\\) as not math, got: {regions:?}");
+        assert!(
+            regions.is_empty(),
+            "should reject \\(a\\) as not math, got: {regions:?}"
+        );
     }
 
     #[test]
@@ -134,7 +137,8 @@ mod tests {
 
     #[test]
     fn exact_user_line_bandwidth() {
-        let text = r"\(a\) What is the bandwidth of $x$ (in Hz)? What is the Nyquist rate? \[1 mark\]";
+        let text =
+            r"\(a\) What is the bandwidth of $x$ (in Hz)? What is the Nyquist rate? \[1 mark\]";
         let regions = find_math_regions(text);
         assert_eq!(regions.len(), 1, "should find $x$, got: {regions:?}");
         assert_eq!(&text[regions[0].0..regions[0].1], "x");

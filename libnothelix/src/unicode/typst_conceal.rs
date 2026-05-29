@@ -17,28 +17,69 @@ use super::overlay::Overlay;
 /// Only names that have a distinct visual symbol — NOT single letters.
 static TYPST_SYMBOLS: &[(&str, &str)] = &[
     // Greek lowercase
-    ("alpha", "α"), ("beta", "β"), ("gamma", "γ"), ("delta", "δ"),
-    ("epsilon", "ε"), ("zeta", "ζ"), ("eta", "η"), ("theta", "θ"),
-    ("iota", "ι"), ("kappa", "κ"), ("lambda", "λ"), ("mu", "μ"),
-    ("nu", "ν"), ("xi", "ξ"), ("pi", "π"), ("rho", "ρ"),
-    ("sigma", "σ"), ("tau", "τ"), ("upsilon", "υ"), ("phi", "φ"),
-    ("chi", "χ"), ("psi", "ψ"), ("omega", "ω"),
+    ("alpha", "α"),
+    ("beta", "β"),
+    ("gamma", "γ"),
+    ("delta", "δ"),
+    ("epsilon", "ε"),
+    ("zeta", "ζ"),
+    ("eta", "η"),
+    ("theta", "θ"),
+    ("iota", "ι"),
+    ("kappa", "κ"),
+    ("lambda", "λ"),
+    ("mu", "μ"),
+    ("nu", "ν"),
+    ("xi", "ξ"),
+    ("pi", "π"),
+    ("rho", "ρ"),
+    ("sigma", "σ"),
+    ("tau", "τ"),
+    ("upsilon", "υ"),
+    ("phi", "φ"),
+    ("chi", "χ"),
+    ("psi", "ψ"),
+    ("omega", "ω"),
     // Greek uppercase
-    ("Gamma", "Γ"), ("Delta", "Δ"), ("Theta", "Θ"), ("Lambda", "Λ"),
-    ("Xi", "Ξ"), ("Pi", "Π"), ("Sigma", "Σ"), ("Phi", "Φ"),
-    ("Psi", "Ψ"), ("Omega", "Ω"),
+    ("Gamma", "Γ"),
+    ("Delta", "Δ"),
+    ("Theta", "Θ"),
+    ("Lambda", "Λ"),
+    ("Xi", "Ξ"),
+    ("Pi", "Π"),
+    ("Sigma", "Σ"),
+    ("Phi", "Φ"),
+    ("Psi", "Ψ"),
+    ("Omega", "Ω"),
     // Operators / relations
-    ("infinity", "∞"), ("partial", "∂"), ("nabla", "∇"),
-    ("forall", "∀"), ("exists", "∃"), ("ell", "ℓ"),
-    ("times", "×"), ("dots", "…"),
-    ("approx", "≈"), ("equiv", "≡"), ("prop", "∝"),
-    ("plus.minus", "±"), ("minus.plus", "∓"),
-    ("subset", "⊂"), ("supset", "⊃"), ("union", "∪"), ("inter", "∩"),
+    ("infinity", "∞"),
+    ("partial", "∂"),
+    ("nabla", "∇"),
+    ("forall", "∀"),
+    ("exists", "∃"),
+    ("ell", "ℓ"),
+    ("times", "×"),
+    ("dots", "…"),
+    ("approx", "≈"),
+    ("equiv", "≡"),
+    ("prop", "∝"),
+    ("plus.minus", "±"),
+    ("minus.plus", "∓"),
+    ("subset", "⊂"),
+    ("supset", "⊃"),
+    ("union", "∪"),
+    ("inter", "∩"),
     // Blackboard bold shorthand
-    ("NN", "ℕ"), ("ZZ", "ℤ"), ("QQ", "ℚ"), ("RR", "ℝ"), ("CC", "ℂ"),
+    ("NN", "ℕ"),
+    ("ZZ", "ℤ"),
+    ("QQ", "ℚ"),
+    ("RR", "ℝ"),
+    ("CC", "ℂ"),
     // Arrows
-    ("arrow.r", "→"), ("arrow.l", "←"),
-    ("arrow.r.double", "⇒"), ("arrow.l.double", "⇐"),
+    ("arrow.r", "→"),
+    ("arrow.l", "←"),
+    ("arrow.r.double", "⇒"),
+    ("arrow.l.double", "⇐"),
 ];
 
 /// Look up a Typst symbol name. Returns None for unknown names.
@@ -180,17 +221,33 @@ fn scan_content(content: &str, base: usize, overlays: &mut Vec<Overlay>) {
 
 fn super_digit(b: u8) -> Option<&'static str> {
     match b {
-        b'0' => Some("⁰"), b'1' => Some("¹"), b'2' => Some("²"), b'3' => Some("³"),
-        b'4' => Some("⁴"), b'5' => Some("⁵"), b'6' => Some("⁶"), b'7' => Some("⁷"),
-        b'8' => Some("⁸"), b'9' => Some("⁹"), _ => None,
+        b'0' => Some("⁰"),
+        b'1' => Some("¹"),
+        b'2' => Some("²"),
+        b'3' => Some("³"),
+        b'4' => Some("⁴"),
+        b'5' => Some("⁵"),
+        b'6' => Some("⁶"),
+        b'7' => Some("⁷"),
+        b'8' => Some("⁸"),
+        b'9' => Some("⁹"),
+        _ => None,
     }
 }
 
 fn sub_digit(b: u8) -> Option<&'static str> {
     match b {
-        b'0' => Some("₀"), b'1' => Some("₁"), b'2' => Some("₂"), b'3' => Some("₃"),
-        b'4' => Some("₄"), b'5' => Some("₅"), b'6' => Some("₆"), b'7' => Some("₇"),
-        b'8' => Some("₈"), b'9' => Some("₉"), _ => None,
+        b'0' => Some("₀"),
+        b'1' => Some("₁"),
+        b'2' => Some("₂"),
+        b'3' => Some("₃"),
+        b'4' => Some("₄"),
+        b'5' => Some("₅"),
+        b'6' => Some("₆"),
+        b'7' => Some("₇"),
+        b'8' => Some("₈"),
+        b'9' => Some("₉"),
+        _ => None,
     }
 }
 
@@ -225,10 +282,19 @@ mod tests {
     fn inline_math_alpha() {
         let text = "for $alpha in RR$.";
         let overlays = scan_typst_math(text);
-        assert!(overlays.iter().any(|o| o.replacement == "α"), "no α: {overlays:?}");
-        assert!(overlays.iter().any(|o| o.replacement == "ℝ"), "no ℝ: {overlays:?}");
+        assert!(
+            overlays.iter().any(|o| o.replacement == "α"),
+            "no α: {overlays:?}"
+        );
+        assert!(
+            overlays.iter().any(|o| o.replacement == "ℝ"),
+            "no ℝ: {overlays:?}"
+        );
         // $ delimiters hidden
-        let hidden: Vec<_> = overlays.iter().filter(|o| o.replacement.is_empty()).collect();
+        let hidden: Vec<_> = overlays
+            .iter()
+            .filter(|o| o.replacement.is_empty())
+            .collect();
         assert!(hidden.len() >= 2, "$ not hidden: {overlays:?}");
     }
 
@@ -236,33 +302,55 @@ mod tests {
     fn display_math_block() {
         let text = "defined by\n$\n  y_n = x_n - alpha^2  x_(n-2)\n$\nfor some";
         let overlays = scan_typst_math(text);
-        assert!(overlays.iter().any(|o| o.replacement == "α"), "no α: {overlays:?}");
-        assert!(overlays.iter().any(|o| o.replacement == "²"), "no ²: {overlays:?}");
+        assert!(
+            overlays.iter().any(|o| o.replacement == "α"),
+            "no α: {overlays:?}"
+        );
+        assert!(
+            overlays.iter().any(|o| o.replacement == "²"),
+            "no ²: {overlays:?}"
+        );
         // Single-letter vars x, y, n should NOT be replaced
-        assert!(!overlays.iter().any(|o| o.replacement == "x" || o.replacement == "n" || o.replacement == "y"),
-            "single letters replaced: {overlays:?}");
+        assert!(
+            !overlays
+                .iter()
+                .any(|o| o.replacement == "x" || o.replacement == "n" || o.replacement == "y"),
+            "single letters replaced: {overlays:?}"
+        );
     }
 
     #[test]
     fn no_false_positives_in_text() {
         let text = "Consider the system defined by something.";
         let overlays = scan_typst_math(text);
-        assert!(overlays.is_empty(), "text outside $ got overlays: {overlays:?}");
+        assert!(
+            overlays.is_empty(),
+            "text outside $ got overlays: {overlays:?}"
+        );
     }
 
     #[test]
     fn operator_conceal() {
         let text = "$x <= y$";
         let overlays = scan_typst_math(text);
-        assert!(overlays.iter().any(|o| o.replacement == "≤"), "no ≤: {overlays:?}");
+        assert!(
+            overlays.iter().any(|o| o.replacement == "≤"),
+            "no ≤: {overlays:?}"
+        );
     }
 
     #[test]
     fn dollar_hidden() {
         let text = "value $pi$ ok";
         let overlays = scan_typst_math(text);
-        let hidden: Vec<_> = overlays.iter().filter(|o| o.replacement.is_empty()).collect();
+        let hidden: Vec<_> = overlays
+            .iter()
+            .filter(|o| o.replacement.is_empty())
+            .collect();
         assert!(hidden.len() >= 2, "$ delimiters not hidden: {overlays:?}");
-        assert!(overlays.iter().any(|o| o.replacement == "π"), "no π: {overlays:?}");
+        assert!(
+            overlays.iter().any(|o| o.replacement == "π"),
+            "no π: {overlays:?}"
+        );
     }
 }

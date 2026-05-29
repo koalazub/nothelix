@@ -4,13 +4,15 @@
 //! Scheme side free from direct JSON parsing.
 
 // Steel's `register_fn` marshals values from the Steel VM and requires the
-// registered fn's signature to take owned types (`String`, `Vec<u8>`),
+// registered fn's signature to take owned types (`String`, `RVec<u8>`),
 // not borrows. So while clippy::needless_pass_by_value is technically
 // correct that we don't consume the args internally, the owned type is
 // load-bearing for the FFI dispatcher.
 #![allow(clippy::needless_pass_by_value)]
 
+use abi_stable::std_types::RVec;
 use serde_json::Value;
+use steel::steel_vm::ffi::FFIValue;
 
 pub fn json_get(json_str: String, key: String) -> String {
     serde_json::from_str::<Value>(&json_str)
@@ -111,12 +113,13 @@ pub fn json_get_first_image_with_dir(json_str: String, kernel_dir: String) -> St
     }
 }
 
-/// Like `json_get_first_image_with_dir` but returns raw bytes instead of base64.
-/// Uses the new Steel `ByteVector` FFI return (Phase 3).
-/// Returns empty vec if no image found.
-pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> Vec<u8> {
+/// Like `json_get_first_image_with_dir` but returns raw bytes instead of
+/// base64, as a Steel bytevector (`FFIValue::ByteVector` — stock steel-core's
+/// only byte-returning FFI shape). Returns an empty bytevector if no image
+/// is found.
+pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> FFIValue {
     let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
-    match find_first_image_data(&parsed) {
+    let bytes = match find_first_image_data(&parsed) {
         None => Vec::new(),
         Some(data) => {
             if let Some(filename) = data.strip_prefix("file:") {
@@ -131,14 +134,17 @@ pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> Vec<u
                     .unwrap_or_default()
             }
         }
-    }
+    };
+    FFIValue::ByteVector(RVec::from(bytes))
 }
 
 /// Extract multiple fields from a JSON string in one parse.
 /// `keys_csv` is comma-separated field names. Returns tab-separated values.
 /// Missing fields return empty strings. Non-string values are stringified.
 pub fn json_get_many(json_str: String, keys_csv: String) -> String {
-    let parsed = if let Ok(v) = serde_json::from_str::<Value>(&json_str) { v } else {
+    let parsed = if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
+        v
+    } else {
         let count = keys_csv.split(',').count();
         return "\t".repeat(count.saturating_sub(1));
     };
@@ -347,10 +353,8 @@ mod tests {
         std::fs::write(&png_path, b"\x89PNG fake data").unwrap();
 
         let json = r#"{"images": [{"format": "png", "data": "file:image_1.png"}]}"#;
-        let result = json_get_first_image_with_dir(
-            json.into(),
-            dir.path().to_string_lossy().into_owned(),
-        );
+        let result =
+            json_get_first_image_with_dir(json.into(), dir.path().to_string_lossy().into_owned());
         // Should be base64 of the raw bytes
         assert!(!result.is_empty());
         assert!(!result.starts_with("file:"));
@@ -376,4 +380,3 @@ mod tests {
         assert_eq!(result, "");
     }
 }
-

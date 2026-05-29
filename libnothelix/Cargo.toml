@@ -27,8 +27,10 @@ nix = { version = "0.29", features = ["signal", "process"] }
 # Image format handling
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
-# Steel FFI bindings
-steel-core = { path = "../../steel/crates/steel-core", features = ["dylibs", "sync"] }
+# Steel FFI bindings — pinned to the exact rev the helix fork pins so the
+# dylib stays ABI-compatible with the host VM (loader accepts dylib steel
+# <= host steel).
+steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "b67efd5c262962226424148bb87abefaf4109c5a", features = ["dylibs", "sync"] }
 abi_stable = "0.11"
 
 inventory = "0.3"
