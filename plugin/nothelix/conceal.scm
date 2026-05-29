@@ -10,7 +10,6 @@
 
 (require "helix/editor.scm")
 (require-builtin helix/core/text as text.)
-(require "helix/ext.scm")
 (require "helix/misc.scm")
 (require "string-utils.scm")
 (require "conceal-state.scm")
@@ -19,11 +18,10 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           compute-conceal-overlays-ffi
-                          compute-conceal-overlays-for-comments
                           compute-conceal-overlays-for-comments-with-options
                           compute-conceal-overlays-for-typst))
 
-(provide compute-conceal-overlays compute-and-apply-conceal-async
+(provide compute-conceal-overlays
          parse-overlay-json
          file-has-conceal-extension?
          conceal-math!
@@ -126,41 +124,6 @@
              (parse-loop (+ close-pos 1)
                          (cons (cons offset-val replacement-str) result)))]
           [else (parse-loop (+ pos 1) result)]))))
-
-;;;@doc
-;;; Compute conceal overlays on a background thread and apply them
-;;; when ready. The editor remains responsive during computation.
-(define (compute-and-apply-conceal-async)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define rope (editor->text doc-id))
-  (define text (text.rope->string rope))
-  (define path (editor-document->path doc-id))
-  (define is-jl (and path (ends-with-jl? path)))
-
-  ;; Spawn background thread for the heavy FFI work.
-  (spawn-native-thread
-    (lambda ()
-      (define json-str
-        (if is-jl
-            (compute-conceal-overlays-for-comments-with-options
-              text (unbox *math-render-active*))
-            (compute-conceal-overlays-ffi text)))
-
-      ;; Parse overlays on the background thread too (no editor access needed).
-      (define overlays (parse-overlay-json json-str))
-
-      ;; Deliver results to the main thread.
-      ;; Guard: only apply if the user hasn't switched buffers.
-      (hx.with-context
-        (lambda ()
-          (define current-doc-id (editor->doc-id (editor-focus)))
-          (when (equal? current-doc-id doc-id)
-            (if (null? overlays)
-                (clear-overlays!)
-                (begin
-                  (set-overlays! overlays)
-                  (set-status! (string-append "nothelix: " (number->string (length overlays)) " overlays"))))))))))
 
 (define (ends-with-jl? path)
   (define len (string-length path))

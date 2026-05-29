@@ -29,6 +29,43 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# ─── Mode: uninstall ──────────────────────────────────────────────────
+# Delegates to dist/uninstall.sh — the same code behind `nothelix
+# uninstall` — found next to this script (repo checkout / extracted
+# tarball) or under the installed share dir. Runs before platform
+# detection: uninstalling shouldn't require a supported binary.
+if [ "$MODE" = "uninstall" ]; then
+    NOTHELIX_PREFIX="${NOTHELIX_PREFIX:-$HOME/.local}"
+    NOTHELIX_BIN="${NOTHELIX_BIN:-$NOTHELIX_PREFIX/bin}"
+    NOTHELIX_SHARE="${NOTHELIX_SHARE:-$NOTHELIX_PREFIX/share/nothelix}"
+    STEEL_HOME="${STEEL_HOME:-$HOME/.steel}"
+    export NOTHELIX_BIN NOTHELIX_SHARE STEEL_HOME
+
+    if [ ! -e "$NOTHELIX_BIN/hx-nothelix" ] && [ ! -d "$NOTHELIX_SHARE" ]; then
+        echo "install.sh: nothelix isn't installed (no $NOTHELIX_BIN/hx-nothelix or $NOTHELIX_SHARE) — nothing to do."
+        exit 0
+    fi
+
+    UNINSTALL_SH=""
+    for candidate in "$(dirname "$0")/dist/uninstall.sh" "$NOTHELIX_SHARE/dist/uninstall.sh"; do
+        if [ -f "$candidate" ]; then
+            UNINSTALL_SH="$candidate"
+            break
+        fi
+    done
+    if [ -z "$UNINSTALL_SH" ]; then
+        echo "install.sh: couldn't find dist/uninstall.sh next to this script or in $NOTHELIX_SHARE/dist/" >&2
+        echo "install.sh: if the nothelix wrapper is still on your PATH, run: nothelix uninstall" >&2
+        exit 1
+    fi
+
+    # uninstall.sh is bash (arrays), so run it under bash rather than
+    # sourcing it here. EXTRA_FLAGS is a space-joined allowlist —
+    # word splitting is intended.
+    # shellcheck disable=SC2086
+    exec bash -c '. "$0" && nothelix_uninstall "$@"' "$UNINSTALL_SH" $EXTRA_FLAGS
+fi
+
 # ─── Platform detection ───────────────────────────────────────────────
 detect_platform() {
     if [ -n "${NOTHELIX_PLATFORM_OVERRIDE:-}" ]; then
@@ -52,13 +89,6 @@ SUPPORTED_PLATFORMS="darwin-arm64 linux-x86_64"
 if ! echo "$SUPPORTED_PLATFORMS" | grep -qw "$PLATFORM"; then
     echo "install.sh: nothelix doesn't ship a binary for '$PLATFORM' yet." >&2
     echo "install.sh: supported: $SUPPORTED_PLATFORMS" >&2
-    exit 1
-fi
-
-# ─── Mode: uninstall ──────────────────────────────────────────────────
-if [ "$MODE" = "uninstall" ]; then
-    echo "install.sh: --uninstall not yet implemented" >&2
-    echo "install.sh: EXTRA_FLAGS=$EXTRA_FLAGS" >&2
     exit 1
 fi
 
@@ -186,8 +216,10 @@ fi
 "$EXTRACTED_DIR/install-local.sh" "$EXTRACTED_DIR" $EXTRA_ARGS
 
 # Cache the extracted tarball so `nothelix reset` can re-copy files
-# without hitting the network. Overwrites any previous cache.
-NOTHELIX_SHARE_DIR="${NOTHELIX_SHARE:-${XDG_DATA_HOME:-$HOME/.local/share}/nothelix}"
+# without hitting the network. Overwrites any previous cache. Resolved
+# the same way install-local.sh resolves SHARE_DIR so the cache lands
+# inside the install tree when NOTHELIX_PREFIX is overridden.
+NOTHELIX_SHARE_DIR="${NOTHELIX_SHARE:-${NOTHELIX_PREFIX:-$HOME/.local}/share/nothelix}"
 CACHE_DIR="$NOTHELIX_SHARE_DIR/.cache"
 mkdir -p "$CACHE_DIR"
 rm -rf "$CACHE_DIR/extracted"

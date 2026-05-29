@@ -2,17 +2,14 @@ node_modules/
 build/
 .build/
 target/
-# Ignore tree-sitter-generated Cargo.lock in subdirs, but keep the
-# workspace root one — nix needs it for cargoLock.lockFile.
-!/Cargo.lock
-# Tree-sitter generated source (root only)
-/src/
-!/src/grammar.json
 *.o
 *.so
 *.dylib
 *.wasm
 .DS_Store
+
+# Nix build output symlink
+/result
 
 # Plugin kernel temp files
 /tmp/helix-kernel-*
@@ -38,7 +35,3 @@ lsp/depot/
 # Home-manager leaves .hm-bak files when it rebuilds over a symlinked
 # tree. These are recoverable — not something we ever want to commit.
 *.hm-bak
-
-# devenv
-.devenv/
-.devenv.flake.nix
