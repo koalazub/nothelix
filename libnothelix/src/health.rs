@@ -28,13 +28,50 @@
 //!    the user gets a hard pointer at "your binary predates the fork
 //!    patches" rather than silent no-ops.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// Indicators that reliably survive release-mode LTO (helix-fork's
+/// `[profile.release] lto = "thin"`). The Steel kebab-case match-arm
+/// strings (e.g. `document-focus-gained`) get inlined as immediate
+/// byte comparisons and dead-stripped from rodata, so probing those
+/// produces false positives on healthy builds. These three are forced
+/// to survive: the FFI binding name is held by the `register_fn`
+/// dispatch table, and the two `events!`-macro struct names are kept
+/// as debug type info.
+const FORK_INDICATORS: &[&str] = &[
+    "add-or-replace-animating-raw-content",
+    "DocumentFocusGained",
+    "ViewportChanged",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealthIssue {
     pub id: String,
     pub message: String,
     pub fix_hint: String,
+}
+
+impl HealthIssue {
+    /// Construct an issue from string slices that all live for the call
+    /// — saves the caller having to spell out three `.into()`s.
+    fn new(id: &str, message: impl Into<String>, fix_hint: impl Into<String>) -> Self {
+        Self {
+            id: id.to_owned(),
+            message: message.into(),
+            fix_hint: fix_hint.into(),
+        }
+    }
+}
+
+impl fmt::Display for HealthIssue {
+    /// One-line TSV row: `id\tmessage\tfix_hint`. The plugin parses
+    /// this with `(string-split tsv "\n")` then `(string-split row
+    /// "\t")` — keeping the format constructive avoids open-coding the
+    /// join in every call site.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}\t{}\t{}", self.id, self.message, self.fix_hint)
+    }
 }
 
 /// Run all health checks against the supplied resolved paths.
@@ -54,14 +91,16 @@ pub fn run_health_check(
 }
 
 fn check_dylib(steel_home: &Path, issues: &mut Vec<HealthIssue>) {
-    let dylib = steel_home.join("native/libnothelix.dylib");
-    let so = steel_home.join("native/libnothelix.so");
-    if !dylib.exists() && !so.exists() {
-        issues.push(HealthIssue {
-            id: "dylib-missing".into(),
-            message: "libnothelix dylib not found in STEEL_HOME/native/".into(),
-            fix_hint: "run 'just install' in the nothelix repo (or 'nothelix upgrade')".into(),
-        });
+    let native = steel_home.join("native");
+    let any_dylib = ["libnothelix.dylib", "libnothelix.so"]
+        .iter()
+        .any(|name| native.join(name).exists());
+    if !any_dylib {
+        issues.push(HealthIssue::new(
+            "dylib-missing",
+            "libnothelix dylib not found in STEEL_HOME/native/",
+            "run 'just install' in the nothelix repo (or 'nothelix upgrade')",
+        ));
     }
 }
 
@@ -73,96 +112,67 @@ fn check_build_id(steel_home: &Path, nothelix_share: &Path, issues: &mut Vec<Hea
     if !meta.exists() || !version.exists() {
         return;
     }
-    let meta_id = read_kv(&meta, "BUILD_ID");
-    let version_id = read_kv(&version, "BUILD_ID");
-    if meta_id.is_some() && version_id.is_some() && meta_id != version_id {
-        issues.push(HealthIssue {
-            id: "build-id-mismatch".into(),
-            message: format!(
-                "libnothelix and nothelix BUILD_IDs differ ({} vs {})",
-                meta_id.as_deref().unwrap_or("?"),
-                version_id.as_deref().unwrap_or("?"),
-            ),
-            fix_hint: "run 'nothelix upgrade' to rebuild both halves in lockstep".into(),
-        });
+    let (Some(meta_id), Some(version_id)) = (read_kv(&meta, "BUILD_ID"), read_kv(&version, "BUILD_ID")) else {
+        return;
+    };
+    if meta_id != version_id {
+        issues.push(HealthIssue::new(
+            "build-id-mismatch",
+            format!("libnothelix and nothelix BUILD_IDs differ ({meta_id} vs {version_id})"),
+            "run 'nothelix upgrade' to rebuild both halves in lockstep",
+        ));
     }
 }
 
 fn check_plugin_cogs(steel_home: &Path, issues: &mut Vec<HealthIssue>) {
-    let entry = steel_home.join("cogs/nothelix.scm");
-    let dir = steel_home.join("cogs/nothelix");
-    if !entry.exists() || !dir.exists() {
-        issues.push(HealthIssue {
-            id: "cogs-missing".into(),
-            message: "plugin cogs not found in STEEL_HOME/cogs/".into(),
-            fix_hint: "run 'just install' to relink the plugin into STEEL_HOME".into(),
-        });
+    let cogs = steel_home.join("cogs");
+    let any_missing = ["nothelix.scm", "nothelix"]
+        .iter()
+        .any(|name| !cogs.join(name).exists());
+    if any_missing {
+        issues.push(HealthIssue::new(
+            "cogs-missing",
+            "plugin cogs not found in STEEL_HOME/cogs/",
+            "run 'just install' to relink the plugin into STEEL_HOME",
+        ));
     }
 }
 
 fn check_fork_symbols(hx_nothelix: &Path, issues: &mut Vec<HealthIssue>) {
+    // No binary at all is a different failure mode (covered upstream of
+    // here if the plugin require chain even gets this far). Producing a
+    // "missing symbols" report against a non-existent path would
+    // misleadingly accuse a perfectly healthy upstream-helix install
+    // that just hasn't been pointed at the fork yet.
     if !hx_nothelix.exists() {
-        // No binary at all is a different failure mode; covered by the
-        // plugin's own require chain if it gets that far. We'd produce
-        // misleading "missing symbols" output here for a perfectly
-        // healthy upstream-helix install that just hasn't been pointed
-        // at the fork yet.
         return;
     }
     let Ok(bytes) = std::fs::read(hx_nothelix) else {
         return;
     };
-
-    // Probe for symbols that reliably survive release-mode LTO. The
-    // Steel kebab-case match-arm strings (e.g. "document-focus-gained")
-    // get inlined as immediate byte comparisons by LLVM under
-    // `lto = "thin"`, so byte-level grep returns 0 even when the match
-    // arm code is present. Use indicators that the compiler is forced
-    // to preserve in rodata:
-    //
-    //   - `add-or-replace-animating-raw-content`: registered via
-    //     `register_fn(name, …)` which keeps the literal addressable
-    //     for the function-table entry. Distinguishes fork from
-    //     upstream Helix outright.
-    //   - `DocumentFocusGained` / `ViewportChanged`: Rust struct names
-    //     emitted by the `events!` macro. Survive LTO because debug
-    //     info / type names keep them addressable.
-    //
-    // We do NOT probe for the kebab-case match-arm names — they're
-    // LTO-stripped from release builds even on freshly-patched
-    // binaries, producing a false-positive "missing" diagnostic that
-    // wasted a session of debugging this very check.
-    const FORK_SYMBOLS: &[&str] = &[
-        "add-or-replace-animating-raw-content",
-        "DocumentFocusGained",
-        "ViewportChanged",
-    ];
-    let missing: Vec<&&str> = FORK_SYMBOLS
+    let missing: Vec<&str> = FORK_INDICATORS
         .iter()
+        .copied()
         .filter(|sym| !contains_ascii(&bytes, sym.as_bytes()))
         .collect();
     if !missing.is_empty() {
-        let names: Vec<&str> = missing.iter().map(|s| **s).collect();
-        issues.push(HealthIssue {
-            id: "fork-symbols-missing".into(),
-            message: format!(
+        issues.push(HealthIssue::new(
+            "fork-symbols-missing",
+            format!(
                 "hx-nothelix predates fork patches (missing: {})",
-                names.join(", ")
+                missing.join(", ")
             ),
-            fix_hint: "run 'darwin-rebuild switch' (or rebuild ~/projects/helix and copy to ~/.local/bin/hx-nothelix)".into(),
-        });
+            "run 'darwin-rebuild switch' (or rebuild ~/projects/helix and copy to ~/.local/bin/hx-nothelix)",
+        ));
     }
 }
 
 fn read_kv(path: &Path, key: &str) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let prefix = format!("{key}=");
-    for line in text.lines() {
-        if let Some(v) = line.strip_prefix(&prefix) {
-            return Some(v.trim().to_string());
-        }
-    }
-    None
+    text.lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .map(|v| v.trim().to_owned())
 }
 
 // Naive substring scan; sufficient for the symbol-probe use case and
@@ -174,51 +184,50 @@ fn contains_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
+/// Read an env var, trimming an empty-string set as if it weren't set.
+/// An empty `STEEL_HOME=` (common when shell scripts pass through env
+/// without value-set checks) shouldn't be treated as "use the empty
+/// path" — it should fall through to the default.
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|s| !s.is_empty())
+}
+
 /// Resolve the environment-driven defaults the shell wrapper uses.
-/// Returns (steel_home, nothelix_share, hx_path).
+/// Returns `(steel_home, nothelix_share, hx_path)`.
 ///
 /// `hx_path` resolution: prefer `$NOTHELIX_BIN/hx-nothelix` (the
 /// tarball-install layout where the fork binary is shipped under its
 /// own name), then fall back to whatever `hx` is first on `$PATH` (the
 /// nixoala/home-manager layout where the fork hx is the system hx).
-/// If neither exists, return the hx-nothelix path so the
+/// If neither exists, return the `hx-nothelix` path so the
 /// fork-symbols check can fail-silent against a non-existent path
 /// — that's the correct behaviour for an upstream-only install.
 fn resolve_paths() -> (PathBuf, PathBuf, PathBuf) {
     let home = std::env::var("HOME").unwrap_or_default();
 
-    let steel_home = std::env::var("STEEL_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(&home).join(".steel"));
+    let steel_home = env_nonempty("STEEL_HOME")
+        .map_or_else(|| PathBuf::from(&home).join(".steel"), PathBuf::from);
 
-    let nothelix_share = std::env::var("NOTHELIX_SHARE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let xdg = std::env::var("XDG_DATA_HOME")
-                .ok()
-                .filter(|s| !s.is_empty())
+    let nothelix_share = env_nonempty("NOTHELIX_SHARE").map_or_else(
+        || {
+            let xdg = env_nonempty("XDG_DATA_HOME")
                 .unwrap_or_else(|| format!("{home}/.local/share"));
             PathBuf::from(xdg).join("nothelix")
-        });
+        },
+        PathBuf::from,
+    );
 
-    let nothelix_bin = std::env::var("NOTHELIX_BIN")
-        .ok()
-        .filter(|s| !s.is_empty())
+    let nothelix_bin = env_nonempty("NOTHELIX_BIN")
         .unwrap_or_else(|| format!("{home}/.local/bin"));
     let hx_nothelix = PathBuf::from(&nothelix_bin).join("hx-nothelix");
-
     let hx_path = if hx_nothelix.exists() {
         hx_nothelix
-    } else if let Some(p) = locate_on_path("hx") {
-        p
     } else {
-        // No hx anywhere; keep the canonical path so the message is
-        // clear (and the check skips per check_fork_symbols' guard).
-        hx_nothelix
+        // No `hx-nothelix` named binary — fall back to whatever `hx` is
+        // first on PATH. If even that's absent, keep the canonical
+        // path; check_fork_symbols' existence guard then skips the
+        // probe entirely (which is correct for an upstream-only install).
+        locate_on_path("hx").unwrap_or(hx_nothelix)
     };
 
     (steel_home, nothelix_share, hx_path)
@@ -228,31 +237,30 @@ fn resolve_paths() -> (PathBuf, PathBuf, PathBuf) {
 /// symbol probe runs against the real binary, not a wrapper that
 /// re-execs.
 fn locate_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
+    std::env::var("PATH").ok()?.split(':').find_map(|dir| {
         if dir.is_empty() {
-            continue;
+            return None;
         }
         let candidate = PathBuf::from(dir).join(name);
-        if candidate.exists() {
-            return std::fs::canonicalize(&candidate).ok().or(Some(candidate));
-        }
-    }
-    None
+        candidate
+            .exists()
+            .then(|| std::fs::canonicalize(&candidate).unwrap_or(candidate))
+    })
 }
 
 /// Steel-callable wrapper. Resolves paths from environment + defaults,
 /// runs the static checks, and returns a TSV blob the plugin parses.
 /// Empty string means "all checks pass".
 ///
-/// TSV format: one line per issue, three tab-separated columns:
-///   `<id>\t<message>\t<fix_hint>`
+/// TSV format: one line per issue, three tab-separated columns —
+/// `<id>\t<message>\t<fix_hint>` — produced by `HealthIssue`'s
+/// `Display` impl.
 pub fn nothelix_health_check_tsv() -> String {
     let (steel_home, nothelix_share, hx_nothelix) = resolve_paths();
     let issues = run_health_check(&steel_home, &nothelix_share, &hx_nothelix);
     issues
         .iter()
-        .map(|i| format!("{}\t{}\t{}", i.id, i.message, i.fix_hint))
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -441,6 +449,14 @@ mod tests {
     }
 
     #[test]
+    fn display_emits_tab_separated_row() {
+        // Pin the TSV contract — the plugin parses by `(string-split row
+        // "\t")`, so any extra tab or shape change is a wire break.
+        let issue = HealthIssue::new("the-id", "the message", "the fix");
+        assert_eq!(issue.to_string(), "the-id\tthe message\tthe fix");
+    }
+
+    #[test]
     fn tsv_format_round_trips_one_issue() {
         // Drive an unhealthy install through the public TSV wrapper and
         // confirm the format Steel parses (one line, three \t-separated
@@ -451,7 +467,7 @@ mod tests {
         let issues = run_health_check(&steel, &share, &hx);
         let tsv = issues
             .iter()
-            .map(|i| format!("{}\t{}\t{}", i.id, i.message, i.fix_hint))
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
         let line = tsv.lines().next().expect("expected at least one line");
