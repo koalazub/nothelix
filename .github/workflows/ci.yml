@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@v22
       # No Nix cache action: the Magic Nix Cache service shut down in
       # Feb 2025, so magic-nix-cache-action is dead. If cold `nix develop`
