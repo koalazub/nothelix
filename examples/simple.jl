@@ -1,4 +1,4 @@
-# ═══ Nothelix Notebook: /Users/koalazub/projects/nothelix/examples/simple.ipynb ═══
+# ═══ Nothelix Notebook: simple.ipynb ═══
 # Cells: 4
 
 @cell 0 :julia

@@ -231,13 +231,29 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let jl_content = std::fs::read_to_string(fixture_path("simple.jl")).unwrap();
 
-        // Modify the header to point to a temp .ipynb
+        // Rewrite the header line to point at a temp .ipynb. Replacing
+        // the whole line (rather than substring-matching the fixture's
+        // embedded path) keeps the test independent of whatever path
+        // text the fixture happens to carry — it must pass on any
+        // machine, not just the one that authored the fixture.
         let tmp_ipynb = tmp.path().with_extension("ipynb");
         std::fs::copy(fixture_path("simple.ipynb"), &tmp_ipynb).unwrap();
 
         let jl_path = tmp.path().with_extension("jl");
-        let modified =
-            jl_content.replace(&fixture_path("simple.ipynb"), &tmp_ipynb.to_string_lossy());
+        let modified: String = jl_content
+            .lines()
+            .map(|line| {
+                if line.starts_with("# ═══ Nothelix Notebook: ") {
+                    format!(
+                        "# ═══ Nothelix Notebook: {} ═══",
+                        tmp_ipynb.to_string_lossy()
+                    )
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         std::fs::write(&jl_path, &modified).unwrap();
 
         let result = convert_to_ipynb(jl_path.to_string_lossy().into());
