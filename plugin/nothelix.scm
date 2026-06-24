@@ -21,7 +21,6 @@
 ;; FFI import for shell-free utilities
 (#%require-dylib "libnothelix"
                  (only-in nothelix
-                          resolve-symlink-dir
                           ensure-lsp-environment
                           lsp-environment-ready
                           lsp-project-dir
@@ -69,10 +68,13 @@
 (require "nothelix/scaffold.scm")
 (require "nothelix/math-format.scm")
 (require "nothelix/math-render.scm")
+(require "nothelix/math-image.scm")
 (require "nothelix/animation.scm")
 (require "nothelix/health.scm")
 
-;; Test modules are loaded dynamically (see test commands below).
+;; Test modules are loaded at startup so the `:run-*-tests` commands can
+;; invoke them without needing `require` inside `eval`, which Steel rejects.
+(require "tests/run-all-tests.scm")
 
 (provide convert-notebook sync-to-ipynb export-markdown export-typst
          execute-cell execute-all-cells execute-cells-above cancel-cell
@@ -83,6 +85,9 @@
          format-math-buffer
          math-render-buffer
          math-render-clear
+         render-math-at-cursor
+         render-all-display-math
+         clear-math-images
          kernel-shutdown kernel-shutdown-all
          graphics-protocol graphics-check nothelix-status
          julia-tab-complete
@@ -264,6 +269,9 @@
     "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
     "math-render-buffer" "Stack big-operator limits (\\int / \\sum / \\prod …) above/below their glyph via virtual rows."
     "math-render-clear"  "Remove every virtual-row math annotation from the current buffer."
+    "render-math-at-cursor" "Render the # $$ display-math block under the cursor as a Typst PNG image."
+    "render-all-display-math" "Render every # $$ display-math block in the buffer as Typst PNG images."
+    "clear-math-images"     "Remove all inline math-image renderings from the current buffer."
 
     ;; Kernel lifecycle
     "kernel-shutdown"     "Stop the kernel for the current document."
@@ -415,12 +423,14 @@
      ;;       the file on disk stays tidy between sessions.
      ;;
      ;; Both run *after* the write, so the on-disk copy lags by one
-     ;; save; the next `:w` syncs the tidied form. Practically
-     ;; invisible since the only change between saves is whitespace /
-     ;; integers in markers.
-     (format-math-buffer #true)
-     (math-render-buffer)
-     (renumber-cells!)]
+      ;; save; the next `:w` syncs the tidied form. Practically
+      ;; invisible since the only change between saves is whitespace /
+      ;; integers in markers.
+       (format-math-buffer #true)
+       (math-render-buffer)
+       (when (not (math-image-test-mode?))
+         (render-all-display-math))
+       (renumber-cells!)]
     [(member command-name *mutating-commands*)
      ;; Cache is stale from the moment the command started running.
      ;; apply-conceal-for-cursor will fail closed until reconceal completes.
@@ -436,7 +446,9 @@
       (lambda ()
         (when (= my-gen *conceal-generation*)
           (render-cached-images)
-          (maybe-conceal-current-buffer))))))
+          (maybe-conceal-current-buffer)
+          (when (not (math-image-test-mode?))
+            (render-all-display-math)))))))
 
 ;; Cursor-aware conceal: when the cursor moves to a different line, re-filter
 ;; cached overlays to exclude that line so the user sees raw LaTeX while
@@ -480,44 +492,22 @@
 ;;; TEST COMMANDS
 ;;; ============================================================================
 
-(define *nothelix-plugin-dir* #false)
-
-(define (get-nothelix-plugin-dir)
-  (when (not *nothelix-plugin-dir*)
-    (set! *nothelix-plugin-dir*
-      (resolve-symlink-dir "~/.config/helix/nothelix.scm")))
-  *nothelix-plugin-dir*)
-
 ;;@doc
-;; Run all Nothelix tests
+;; Run all Nothelix tests.
 (define (run-all-tests)
-  ;; Load tests dynamically at runtime (after FFI is initialized)
-  ;; Use absolute path since eval doesn't inherit module search context
-  (define test-path (string-append (get-nothelix-plugin-dir) "/tests/run-all-tests.scm"))
-  (eval `(begin
-           (require ,test-path)
-           (run-all-nothelix-tests))))
+  (run-all-nothelix-tests))
 
 ;;@doc
-;; Run cell extraction tests only
+;; Run cell extraction tests only.
 (define (run-cell-tests)
-  (define test-path (string-append (get-nothelix-plugin-dir) "/tests/cell-extraction-test.scm"))
-  (eval `(begin
-           (require ,test-path)
-           (run-cell-extraction-tests))))
+  (run-cell-extraction-tests))
 
 ;;@doc
-;; Run kernel persistence tests only
+;; Run kernel persistence tests only.
 (define (run-kernel-tests)
-  (define test-path (string-append (get-nothelix-plugin-dir) "/tests/kernel-persistence-test.scm"))
-  (eval `(begin
-           (require ,test-path)
-           (run-kernel-persistence-tests))))
+  (run-kernel-persistence-tests))
 
 ;;@doc
-;; Run execution flow integration tests only
+;; Run execution flow integration tests only.
 (define (run-execution-tests)
-  (define test-path (string-append (get-nothelix-plugin-dir) "/tests/execution-flow-test.scm"))
-  (eval `(begin
-           (require ,test-path)
-           (run-execution-flow-tests))))
+  (run-execution-flow-tests))

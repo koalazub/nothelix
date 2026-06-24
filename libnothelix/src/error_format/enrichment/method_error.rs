@@ -3,17 +3,21 @@
 //! Maps Julia's "no method matching `f(::T1, ::T2)`" to the user's
 //! actual argument names + emits kernel-aware suggestions:
 //!
-//!     = note: argument types:
-//!     |   `n` is Int64
-//!     |   `Float64` is Type{Float64}
-//!     = help: check types with: typeof(n), typeof(Float64)
+//! ```text
+//! = note: argument types:
+//! |   `n` is Int64
+//! |   `Float64` is Type{Float64}
+//! = help: check types with: typeof(n), typeof(Float64)
+//! ```
 //!
 //! Plus, when `in_scope_variable_types` is populated by the kernel:
 //!
-//!     = scope: in-scope variables by type:
-//!     |   Int64: `n` (cell 17), `k` (cell 17)
-//!     = candidates: `similar()` accepts these in-scope values:
-//!     |   `arr` (Vector{Float64}) — cell 12
+//! ```text
+//! = scope: in-scope variables by type:
+//! |   Int64: `n` (cell 17), `k` (cell 17)
+//! = candidates: `similar()` accepts these in-scope values:
+//! |   `arr` (Vector{Float64}) — cell 12
+//! ```
 //!
 //! Delegates to the `not_callable` enricher for the "objects of type X
 //! are not callable" shape (a `MethodError` that wants a totally

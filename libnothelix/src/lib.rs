@@ -20,7 +20,12 @@ mod kernel;
 mod kitty_placeholder;
 mod lsp;
 mod math_format;
+mod math_corpus;
+pub use math_corpus::CORPUS;
+mod math_image;
+pub use math_image::render_math_to_png;
 mod notebook;
+mod parse;
 mod typst_export;
 mod unicode;
 
@@ -39,7 +44,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 1;
+pub const NOTHELIX_FFI_VERSION: u32 = 3;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -84,6 +89,7 @@ fn build_module() -> FFIModule {
     m.register_fn("export-to-markdown!", notebook::export_to_markdown);
     m.register_fn("export-to-typst!", notebook::export_to_typst);
     m.register_fn("format-math", math_format::format_math);
+    m.register_fn("render-math-to-png", math_image::render_math_to_png);
 
     // ── Execution ─────────────────────────────────────────────────────────────
     m.register_fn(
@@ -147,6 +153,7 @@ fn build_module() -> FFIModule {
     m.register_fn("read-file-tail", read_file_tail);
     m.register_fn("resolve-symlink-dir", resolve_symlink_dir);
     m.register_fn("sleep-ms", sleep_ms);
+    m.register_fn("getenv", getenv);
 
     // ── Image cache persistence ──────────────────────────────────────────────
     m.register_fn("save-image-to-cache!", save_image_to_cache);
@@ -334,6 +341,12 @@ fn resolve_symlink_dir(path: String) -> String {
 
 fn sleep_ms(ms: isize) {
     std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+}
+
+/// Read an environment variable. Returns the empty string if the
+/// variable is unset, so Scheme can treat "" as falsy/missing.
+fn getenv(name: String) -> String {
+    std::env::var(&name).unwrap_or_default()
 }
 
 fn save_image_to_cache(jl_path: String, cell_index: isize, b64_data: String) -> String {

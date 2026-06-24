@@ -1,47 +1,69 @@
 ;;; run-all-tests.scm - Master test runner for Nothelix
+;;;
+;;; Loads each test suite, enables math-image test mode so no binary
+;;; Kitty graphics payloads are emitted, runs every suite, and prints an
+;;; aggregated PASS/FAIL summary.
 
 (require "cell-extraction-test.scm")
 (require "kernel-persistence-test.scm")
 (require "execution-flow-test.scm")
+(require "math-image-test.scm")
+(require "../nothelix/math-image.scm")
 
-(provide run-all-nothelix-tests)
+(provide run-all-nothelix-tests
+         run-cell-extraction-tests
+         run-kernel-persistence-tests
+         run-execution-flow-tests
+         run-math-image-tests)
 
 (define (run-all-nothelix-tests)
-  (displayln "\n")
-  (displayln "████████████████████████████████████████████████████████████")
-  (displayln "███                                                      ███")
-  (displayln "███           NOTHELIX TEST SUITE                        ███")
-  (displayln "███                                                      ███")
-  (displayln "████████████████████████████████████████████████████████████")
-  (displayln "\n")
+  ;; Suppress image rendering for the duration of the test run so the
+  ;; terminal is not polluted with binary Kitty graphics data.
+  (set-math-image-test-mode! #t)
 
-  ;; Track overall results
-  (define start-time (current-inexact-milliseconds))
+  (displayln "")
+  (displayln "============================================================")
+  (displayln "                 NOTHELIX TEST SUITE")
+  (displayln "============================================================")
 
-  ;; Run all test suites
-  (run-cell-extraction-tests)
-  (displayln "\n")
-  (run-kernel-persistence-tests)
-  (displayln "\n")
-  (run-execution-flow-tests)
+  (define suite-results
+    (list
+      (cons "cell-extraction" (run-cell-extraction-tests))
+      (cons "kernel-persistence" (run-kernel-persistence-tests))
+      (cons "execution-flow" (run-execution-flow-tests))
+      (cons "math-image" (run-math-image-tests))))
 
-  (define end-time (current-inexact-milliseconds))
-  (define duration-ms (- end-time start-time))
-  (define duration-s (/ duration-ms 1000.0))
+  ;; Suites that don't return a boolean are reported as unknown.
+  (define (suite-status passed?)
+    (cond
+      [(eq? passed? #t) "PASS"]
+      [(eq? passed? #f) "FAIL"]
+      [else "UNKNOWN"]))
 
-  (displayln "\n")
-  (displayln "████████████████████████████████████████████████████████████")
-  (displayln "███                                                      ███")
-  (displayln "███           ALL TESTS COMPLETED                        ███")
-  (displayln (string-append "███           Duration: " (number->string duration-s) "s"
-                           (string-repeat " " (- 40 (string-length (number->string duration-s))))
-                           "███"))
-  (displayln "███                                                      ███")
-  (displayln "████████████████████████████████████████████████████████████")
-  (displayln "\n"))
+  (displayln "")
+  (displayln "------------------------------------------------------------")
+  (displayln "Suite summary:")
+  (for-each
+    (lambda (pair)
+      (displayln (string-append "  " (car pair) ": " (suite-status (cdr pair)))))
+    suite-results)
+  (displayln "------------------------------------------------------------")
 
-;; Helper to repeat string n times
-(define (string-repeat str n)
-  (if (<= n 0)
-      ""
-      (string-append str (string-repeat str (- n 1)))))
+  (define all-passed
+    (let loop ([xs suite-results])
+      (cond
+        [(null? xs) #t]
+        [(eq? (cdar xs) #t) (loop (cdr xs))]
+        [else #f])))
+
+  (displayln "")
+  (if all-passed
+      (displayln "RESULT: ALL TESTS PASSED")
+      (displayln "RESULT: SOME TESTS FAILED"))
+  (displayln "============================================================")
+  (displayln "")
+
+  ;; Restore normal image rendering.
+  (set-math-image-test-mode! #f)
+
+  all-passed)

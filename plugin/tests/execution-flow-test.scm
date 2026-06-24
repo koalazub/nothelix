@@ -3,6 +3,14 @@
 (require (prefix-in helix. "helix/commands.scm"))
 (require "../nothelix/kernel.scm")
 (require "../nothelix/execution.scm")
+(require "../nothelix/string-utils.scm")
+
+(#%require-dylib "libnothelix"
+                 (only-in nothelix
+                          kernel-execute-cell-start
+                          kernel-poll-result
+                          get-cell-code-from-jl
+                          json-get))
 
 (provide run-execution-flow-tests)
 
@@ -286,9 +294,11 @@ x")
                            "║"))
   (displayln "╚════════════════════════════════════════════════════════╝")
 
-  (if (equal? *tests-failed* 0)
+  (define suite-passed (equal? *tests-failed* 0))
+  (if suite-passed
       (displayln "✓ All tests passed!")
-      (displayln (string-append "✗ " (number->string *tests-failed*) " test(s) failed"))))
+      (displayln (string-append "✗ " (number->string *tests-failed*) " test(s) failed")))
+  suite-passed)
 
 ;; Helper to repeat string n times
 (define (string-repeat str n)

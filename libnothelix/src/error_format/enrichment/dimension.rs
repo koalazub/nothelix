@@ -3,8 +3,10 @@
 //! For a message like "a has size (8, 8), b has size (5, 5), mismatch
 //! at dim 1" plus source line "result = S_hat * K", emits:
 //!
-//!     = note: `S_hat` is (8, 8), `K` is (5, 5) — need size(S_hat, 2) == size(K, 1)
-//!     = help: check with: size(S_hat), size(K)
+//! ```text
+//! = note: `S_hat` is (8, 8), `K` is (5, 5) — need size(S_hat, 2) == size(K, 1)
+//! = help: check with: size(S_hat), size(K)
+//! ```
 //!
 //! Pulls the variable names from the source instead of using the
 //! placeholders Julia emits.

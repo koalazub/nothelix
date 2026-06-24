@@ -52,6 +52,20 @@
 
         fenixStable = fenix.packages.${system}.stable.toolchain;
 
+        # ─── Julia (from source, macOS 27 compatible) ──────────────────
+        # nixpkgs julia-bin 1.12.6 ships a prebuilt libgcc_s.1.1.dylib
+        # with a mis-aligned LINKEDIT segment that macOS 27 (Tahoe)
+        # dyld4 refuses to load.  Fixed upstream in JuliaLang/julia#62089
+        # (CSL 1.5.3 bump, merged Jun 15 2026) but no stable release
+        # includes it yet.
+        #
+        # julia_112 builds from source with USE_BINARYBUILDER=0, so the
+        # GCC runtime (libgcc_s, libgfortran) is produced by nixpkgs'
+        # own gfortran14 + cctools/ld64 — not the broken Yggdrasil
+        # prebuilt.  This produces properly-aligned LINKEDIT that
+        # macOS 27 accepts.  https://github.com/JuliaLang/julia/issues/62044
+        juliaPkg = pkgs.julia_112;
+
         # ─── hx-nothelix (the fork binary) ───────────────────────────
         hx-nothelix = pkgs.rustPlatform.buildRustPackage {
           pname = "hx-nothelix";
@@ -261,12 +275,10 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
-            pkgs.cargo-nextest
             pkgs.bun
             pkgs.tree-sitter
             pkgs.git
-            pkgs.bacon
-            pkgs.julia-bin
+            juliaPkg
             pkgs.nixfmt
             pkgs.nil
             pkgs.nushell
@@ -281,10 +293,9 @@
             echo "  just test          run libnothelix tests"
             echo "  nix build          build the release tarball"
             echo ""
-            # The hook runs before `nix develop -c <cmd>`'s command, so an
-            # unconditional `exec nu` swallows CI invocations (GitHub Actions
-            # sets CI=true).
-            if [ -z "''${CI:-}" ]; then
+            # Only exec nu for interactive shells — `nix develop -c <cmd>`
+            # sets arguments, so [ -t 0 ] guards non-interactive invocations.
+            if [ -z "''${CI:-}" ] && [ -t 0 ] && [ $# -eq 0 ]; then
               exec nu
             fi
           '';
