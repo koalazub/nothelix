@@ -23,8 +23,8 @@ pub(super) struct Scanner<'a> {
 }
 
 #[allow(dead_code)] // Scanner::pos / is_at_end are public methods retained
-                    // for callers that need to inspect cursor state. New
-                    // enrichment scanners may grow into them.
+// for callers that need to inspect cursor state. New
+// enrichment scanners may grow into them.
 impl<'a> Scanner<'a> {
     pub fn new(s: &'a str) -> Self {
         Self {

@@ -11,12 +11,14 @@ pub const CORPUS: &[(&str, &str)] = &[
     // Basic building blocks -------------------------------------------------
     ("euler_identity", "e^(i pi) + 1 = 0"),
     ("golden_ratio", "\\varphi = \\frac{1 + \\sqrt{5}}{2}"),
-    ("gamma_function", "\\Gamma(z) = \\int_0^\\infty t^{z-1} e^{-t} \\, dt"),
+    (
+        "gamma_function",
+        "\\Gamma(z) = \\int_0^\\infty t^{z-1} e^{-t} \\, dt",
+    ),
     (
         "gamma_integral",
         "\\Gamma(n+1) = \\int_0^\\infty x^n e^{-x} \\, dx = n!",
     ),
-
     // Fourier analysis ------------------------------------------------------
     (
         "fourier_transform",
@@ -30,12 +32,8 @@ pub const CORPUS: &[(&str, &str)] = &[
         "fourier_series",
         "f(x) \\sim \\sum_{n=-\\infty}^{\\infty} c_n \\, e^{i n \\pi x / L}",
     ),
-
     // Taylor / series expansions --------------------------------------------
-    (
-        "taylor_exp",
-        "e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!}",
-    ),
+    ("taylor_exp", "e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!}"),
     (
         "taylor_sin",
         "\\sin(x) = \\sum_{n=0}^{\\infty} (-1)^n \\frac{x^{2n+1}}{(2n+1)!}",
@@ -46,8 +44,8 @@ pub const CORPUS: &[(&str, &str)] = &[
     ),
     (
         "binomial_series",
-        "(1+x)^\\alpha = \\sum_{n=0}^{\\infty} \\binom{\\alpha}{n} x^n"),
-
+        "(1+x)^\\alpha = \\sum_{n=0}^{\\infty} \\binom{\\alpha}{n} x^n",
+    ),
     // Determinants ----------------------------------------------------------
     (
         "det_2x2",
@@ -57,11 +55,7 @@ pub const CORPUS: &[(&str, &str)] = &[
         "det_3x3",
         "\\begin{vmatrix} a & b & c \\\\ d & e & f \\\\ g & h & i \\end{vmatrix}",
     ),
-    (
-        "characteristic_poly",
-        "\\det(A - \\lambda I) = 0",
-    ),
-
+    ("characteristic_poly", "\\det(A - \\lambda I) = 0"),
     // Matrices --------------------------------------------------------------
     (
         "matrix_3x3",
@@ -75,16 +69,12 @@ pub const CORPUS: &[(&str, &str)] = &[
         "matrix_bmatrix",
         "B = \\begin{bmatrix} \\lambda & 0 \\\\ 0 & \\lambda^{-1} \\end{bmatrix}",
     ),
-
     // Calculus --------------------------------------------------------------
     (
         "derivative_limit",
         "\\frac{d}{dx} f(x) = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}",
     ),
-    (
-        "fundamental_theorem",
-        "\\int_a^b f(x) \\, dx = F(b) - F(a)",
-    ),
+    ("fundamental_theorem", "\\int_a^b f(x) \\, dx = F(b) - F(a)"),
     (
         "divergence",
         "\\nabla \\cdot \\mathbf{F} = \\frac{\\partial P}{\\partial x} + \\frac{\\partial Q}{\\partial y} + \\frac{\\partial R}{\\partial z}",
@@ -109,7 +99,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "line_integral",
         "\\oint_C \\mathbf{F} \\cdot d\\mathbf{r} = \\iint_S (\\nabla \\times \\mathbf{F}) \\cdot d\\mathbf{S}",
     ),
-
     // Differential equations / advanced -------------------------------------
     (
         "heat_equation",
@@ -135,15 +124,11 @@ pub const CORPUS: &[(&str, &str)] = &[
         "schrodinger",
         "i\\hbar \\frac{\\partial}{\\partial t} \\Psi(x,t) = \\hat{H} \\Psi(x,t)",
     ),
-    (
-        "braket",
-        "\\langle \\psi | \\hat{O} | \\phi \\rangle",
-    ),
+    ("braket", "\\langle \\psi | \\hat{O} | \\phi \\rangle"),
     (
         "path_integral",
         "\\langle q_f | e^{-iHt/\\hbar} | q_i \\rangle = \\int_{q(0)=q_i}^{q(t)=q_f} e^{iS[q]/\\hbar} \\, \\mathcal{D}q",
     ),
-
     // Number theory / discrete ---------------------------------------------
     (
         "riemann_zeta",
@@ -153,12 +138,8 @@ pub const CORPUS: &[(&str, &str)] = &[
         "euler_product",
         "\\zeta(s) = \\prod_{p} \\frac{1}{1 - p^{-s}}",
     ),
-
     // Linear algebra --------------------------------------------------------
-    (
-        "eigenvalue",
-        "A \\mathbf{v} = \\lambda \\mathbf{v}",
-    ),
+    ("eigenvalue", "A \\mathbf{v} = \\lambda \\mathbf{v}"),
     (
         "norm",
         "\\| \\mathbf{x} \\|_2 = \\sqrt{\\sum_{i=1}^{n} x_i^2}",
@@ -167,7 +148,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "inner_product",
         "\\langle u, v \\rangle = \\sum_{i=1}^{n} u_i \\overline{v_i}",
     ),
-
     // Probability / statistics ----------------------------------------------
     (
         "gaussian",
@@ -181,7 +161,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "variance",
         "\\operatorname{Var}(X) = \\mathbb{E}[(X - \\mu)^2]",
     ),
-
     // Sets / logic ----------------------------------------------------------
     (
         "set_union",
@@ -191,30 +170,16 @@ pub const CORPUS: &[(&str, &str)] = &[
         "forall_exists",
         "\\forall \\varepsilon > 0 \\quad \\exists \\delta > 0 : |x - a| < \\delta \\implies |f(x) - L| < \\varepsilon",
     ),
-
     // Accents / special -----------------------------------------------------
-    (
-        "accent_vector",
-        "\\vec{v} = \\hat{i} + \\hat{j} + \\hat{k}",
-    ),
-    (
-        "accent_widehat",
-        "\\widehat{AB}",
-    ),
-    (
-        "accent_widetilde",
-        "\\widetilde{G}^{-1}(\\omega)",
-    ),
-
+    ("accent_vector", "\\vec{v} = \\hat{i} + \\hat{j} + \\hat{k}"),
+    ("accent_widehat", "\\widehat{AB}"),
+    ("accent_widetilde", "\\widetilde{G}^{-1}(\\omega)"),
     // Layout / structured ---------------------------------------------------
     (
         "aligned_equations",
         "\\begin{aligned} a &= b + c \\\\ d &= e + f \\end{aligned}",
     ),
-    (
-        "overset_def",
-        "\\overset{\\text{def}}{=} x",
-    ),
+    ("overset_def", "\\overset{\\text{def}}{=} x"),
     (
         "underbrace_sum",
         "\\underbrace{1 + 2 + \\cdots + n}_{n(n+1)/2}",
@@ -227,8 +192,5 @@ pub const CORPUS: &[(&str, &str)] = &[
         "arrow_relations",
         "\\hookrightarrow \\twoheadleftarrow \\rightleftharpoons \\leadsto",
     ),
-    (
-        "negated_relations",
-        "\\nleq \\nsubseteq \\nprec \\nsim",
-    ),
+    ("negated_relations", "\\nleq \\nsubseteq \\nprec \\nsim"),
 ];

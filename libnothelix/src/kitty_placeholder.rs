@@ -62,7 +62,7 @@
 use std::fmt::Write;
 
 use abi_stable::std_types::RVec;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use crate::graphics::ensure_png;
 
@@ -145,7 +145,8 @@ fn is_svg(data: &[u8]) -> bool {
 /// Rasterize SVG to PNG at 2× intrinsic size for crisp terminal display.
 fn rasterize_svg_to_png(svg_data: &[u8]) -> Result<Vec<u8>, String> {
     let opt = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_data(svg_data, &opt).map_err(|e| format!("svg parse: {e}"))?;
+    let tree =
+        resvg::usvg::Tree::from_data(svg_data, &opt).map_err(|e| format!("svg parse: {e}"))?;
     let size = tree.size();
     let scale = 2.0f32;
     let w = ((size.width() * scale).ceil() as u32).max(1);
@@ -156,9 +157,7 @@ fn rasterize_svg_to_png(svg_data: &[u8]) -> Result<Vec<u8>, String> {
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
-    pixmap
-        .encode_png()
-        .map_err(|e| format!("png encode: {e}"))
+    pixmap.encode_png().map_err(|e| format!("png encode: {e}"))
 }
 
 /// Like `kitty_placeholder_payload` but accepts raw image bytes directly

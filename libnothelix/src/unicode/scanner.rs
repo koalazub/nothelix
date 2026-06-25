@@ -18,7 +18,7 @@ use std::borrow::Cow;
 
 use super::fence::{close_fence, mid_fence, open_fence};
 use super::overlay::Overlay;
-use super::sub_super::{latex_font_to_julia, map_lookup, SUB_MAP, SUPER_MAP};
+use super::sub_super::{SUB_MAP, SUPER_MAP, latex_font_to_julia, map_lookup};
 use super::symbol_table::unicode_lookup;
 
 /// Per-scan options. Passed by the caller instead of pulled from a
@@ -454,12 +454,12 @@ impl<'a> Scanner<'a> {
         j += 1; // skip }
 
         // Fast path: single-char content with a direct mapping.
-        if content.len() == 1 {
-            if let Some(replacement) = latex_font_to_julia(name, content) {
-                self.overlays.push(Overlay::at(cmd_start, replacement));
-                Overlay::hide_range(&mut self.overlays, cmd_start + 1, j);
-                return j;
-            }
+        if content.len() == 1
+            && let Some(replacement) = latex_font_to_julia(name, content)
+        {
+            self.overlays.push(Overlay::at(cmd_start, replacement));
+            Overlay::hide_range(&mut self.overlays, cmd_start + 1, j);
+            return j;
         }
 
         // Multi-char: replace every char that has a mapping.

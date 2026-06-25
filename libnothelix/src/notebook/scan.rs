@@ -11,7 +11,7 @@
 // borrows.
 #![allow(clippy::needless_pass_by_value)]
 
-use super::cells::{parse_jl_file, CellKind};
+use super::cells::{CellKind, parse_jl_file};
 
 pub fn scan_variable_definition(jl_path: String, var_name: String) -> String {
     let cells = match parse_jl_file(&jl_path) {

@@ -12,7 +12,7 @@
 
 use serde_json::json;
 
-use super::cells::{parse_jl_file, read_notebook, source_to_string, CellKind};
+use super::cells::{CellKind, parse_jl_file, read_notebook, source_to_string};
 
 pub fn notebook_validate(path: String) -> String {
     match read_notebook(&path) {

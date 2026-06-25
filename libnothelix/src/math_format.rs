@@ -631,7 +631,10 @@ mod tests {
                      # $$";
         let once = format_math(first.to_string());
         let twice = format_math(once.clone());
-        assert_eq!(once, twice, "format_math should be idempotent; second pass changed output:\nfirst:\n{once}\nsecond:\n{twice}");
+        assert_eq!(
+            once, twice,
+            "format_math should be idempotent; second pass changed output:\nfirst:\n{once}\nsecond:\n{twice}"
+        );
     }
 
     #[test]

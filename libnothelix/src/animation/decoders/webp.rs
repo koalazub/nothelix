@@ -11,9 +11,9 @@ pub struct WebPSource {
 
 impl WebPSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::codecs::webp::WebPDecoder;
         use ::image::AnimationDecoder;
         use ::image::ImageDecoder;
+        use ::image::codecs::webp::WebPDecoder;
 
         // Static WebP files don't surface through `into_frames` (the AnimationDecoder
         // path yields zero frames), so we inspect the file twice: once for animated

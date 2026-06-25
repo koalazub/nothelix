@@ -1,5 +1,5 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use nothelix::{render_math_to_svg, CORPUS};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use nothelix::{CORPUS, render_math_to_svg};
 
 #[test]
 fn render_full_math_corpus() {
@@ -30,7 +30,10 @@ fn render_full_math_corpus() {
         for (name, json) in &failures {
             eprintln!("FAIL {name}: {json}");
         }
-        panic!("{} math corpus expression(s) failed to render", failures.len());
+        panic!(
+            "{} math corpus expression(s) failed to render",
+            failures.len()
+        );
     }
 }
 

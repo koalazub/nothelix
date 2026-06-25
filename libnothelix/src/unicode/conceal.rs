@@ -18,7 +18,7 @@
 use serde_json::json;
 
 use super::math_regions::find_math_regions;
-use super::scanner::{latex_overlays, scan_to_vec_opts, ScannerOptions};
+use super::scanner::{ScannerOptions, latex_overlays, scan_to_vec_opts};
 
 /// Scan an entire document for math regions and return a JSON array of
 /// `{"offset": char_off, "replacement": str}` pairs.
@@ -39,27 +39,27 @@ pub fn compute_conceal_overlays(text: String) -> String {
         let math_text = &text[region_start..region_end];
         let json_str = latex_overlays(math_text.to_string());
 
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            if let Some(arr) = v.as_array() {
-                for obj in arr {
-                    if let Some(offset) = obj.get("offset").and_then(serde_json::Value::as_i64) {
-                        let replacement = obj
-                            .get("replacement")
-                            .and_then(|o| o.as_str())
-                            .unwrap_or("");
-                        let byte_off = region_start + offset as usize;
-                        let char_off = byte_to_char
-                            .get(byte_off)
-                            .copied()
-                            .unwrap_or_else(|| text[..byte_off.min(text.len())].chars().count());
-                        if char_off >= doc_char_len {
-                            continue;
-                        }
-                        all_overlays.push(json!({
-                            "offset": char_off,
-                            "replacement": replacement
-                        }));
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str)
+            && let Some(arr) = v.as_array()
+        {
+            for obj in arr {
+                if let Some(offset) = obj.get("offset").and_then(serde_json::Value::as_i64) {
+                    let replacement = obj
+                        .get("replacement")
+                        .and_then(|o| o.as_str())
+                        .unwrap_or("");
+                    let byte_off = region_start + offset as usize;
+                    let char_off = byte_to_char
+                        .get(byte_off)
+                        .copied()
+                        .unwrap_or_else(|| text[..byte_off.min(text.len())].chars().count());
+                    if char_off >= doc_char_len {
+                        continue;
                     }
+                    all_overlays.push(json!({
+                        "offset": char_off,
+                        "replacement": replacement
+                    }));
                 }
             }
         }

@@ -13,7 +13,7 @@
 //! The renderer is stateless: the Scheme component calls it repeatedly with
 //! different viewport parameters to implement zoom and pan.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ─── Braille encoding ─────────────────────────────────────────────────────────
 

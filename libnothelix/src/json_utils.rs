@@ -185,14 +185,12 @@ fn find_first_image_data(v: &Value) -> Option<String> {
     match v {
         Value::Object(map) => {
             // runner.jl images format.
-            if let Some(arr) = map.get("images").and_then(|i| i.as_array()) {
-                if let Some(first) = arr.first() {
-                    if let Some(data) = first.get("data").and_then(|d| d.as_str()) {
-                        if !data.is_empty() {
-                            return Some(data.to_string());
-                        }
-                    }
-                }
+            if let Some(arr) = map.get("images").and_then(|i| i.as_array())
+                && let Some(first) = arr.first()
+                && let Some(data) = first.get("data").and_then(|d| d.as_str())
+                && !data.is_empty()
+            {
+                return Some(data.to_string());
             }
             // Jupyter-style mime types. Animated MIMEs are searched first so a
             // bundle that contains both `image/gif` and `image/png` (the kernel
@@ -210,10 +208,10 @@ fn find_first_image_data(v: &Value) -> Option<String> {
                 "image/png",
                 "image/jpeg",
             ] {
-                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str())
+                    && !s.is_empty()
+                {
+                    return Some(s.to_string());
                 }
             }
             // Recurse into child values.

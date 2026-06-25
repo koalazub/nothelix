@@ -19,10 +19,10 @@ pub(super) fn enrich(message: &str, source: &str) -> Option<String> {
     let col_idx = col.saturating_sub(1);
     if col_idx < source.len() {
         let _ = write!(out, "   = note: error at column {col}");
-        if let Some(ch) = source.chars().nth(col_idx) {
-            if !ch.is_whitespace() {
-                let _ = write!(out, " (near `{ch}`)");
-            }
+        if let Some(ch) = source.chars().nth(col_idx)
+            && !ch.is_whitespace()
+        {
+            let _ = write!(out, " (near `{ch}`)");
         }
         out.push('\n');
     }
@@ -98,10 +98,10 @@ fn scan_parse_error_col(msg: &str) -> Option<usize> {
         let trimmed = line.trim().trim_start_matches("# ");
         if let Some(rest) = trimmed.strip_prefix("Error @ ") {
             let parts: Vec<&str> = rest.rsplitn(3, ':').collect();
-            if !parts.is_empty() {
-                if let Ok(col) = parts[0].trim().parse::<usize>() {
-                    return Some(col);
-                }
+            if !parts.is_empty()
+                && let Ok(col) = parts[0].trim().parse::<usize>()
+            {
+                return Some(col);
             }
         }
     }

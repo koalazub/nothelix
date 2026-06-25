@@ -47,7 +47,7 @@ pub use scan::scan_variable_definition;
 // for fixture parsing get re-imported under cfg(test) so they stay
 // invisible to the rest of the crate.
 #[cfg(test)]
-use cells::{parse_jl_file, source_to_string, CellKind};
+use cells::{CellKind, parse_jl_file, source_to_string};
 #[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]
@@ -1436,13 +1436,12 @@ display(A)
         if let Ok(entries) = std::fs::read_dir(&examples) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.extension().is_some_and(|e| e == "ipynb") {
-                    if let Ok(nb) = std::fs::read_to_string(&p)
+                if p.extension().is_some_and(|e| e == "ipynb")
+                    && let Ok(nb) = std::fs::read_to_string(&p)
                         .map_err(|e| e.to_string())
                         .and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| e.to_string()))
-                    {
-                        corpus.push((p.display().to_string(), nb));
-                    }
+                {
+                    corpus.push((p.display().to_string(), nb));
                 }
             }
         }

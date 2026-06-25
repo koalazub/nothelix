@@ -60,13 +60,13 @@ fn enrichers() -> &'static [Box<dyn Enricher + Send + Sync>] {
 pub fn format_error(ctx: &FormatContext<'_>) -> String {
     let hints = hints();
 
-    if let Ok(mut err) = serde_json::from_str::<StructuredError>(ctx.error_json) {
-        if !err.error_type.is_empty() {
-            for enricher in enrichers() {
-                enricher.enrich(&mut err, ctx);
-            }
-            return format_structured(&err, hints);
+    if let Ok(mut err) = serde_json::from_str::<StructuredError>(ctx.error_json)
+        && !err.error_type.is_empty()
+    {
+        for enricher in enrichers() {
+            enricher.enrich(&mut err, ctx);
         }
+        return format_structured(&err, hints);
     }
 
     if !ctx.raw_error.is_empty() {
@@ -128,12 +128,12 @@ impl Enricher for StaticCellScanEnricher {
 
 fn extract_undef_var(msg: &str) -> String {
     // Prefer a backticked identifier.
-    if let Some(start) = msg.find('`') {
-        if let Some(end) = msg[start + 1..].find('`') {
-            let cand = &msg[start + 1..start + 1 + end];
-            if scanners::is_identifier(cand) {
-                return cand.to_string();
-            }
+    if let Some(start) = msg.find('`')
+        && let Some(end) = msg[start + 1..].find('`')
+    {
+        let cand = &msg[start + 1..start + 1 + end];
+        if scanners::is_identifier(cand) {
+            return cand.to_string();
         }
     }
     // Fallback: first whitespace-delimited word that looks like an ident.

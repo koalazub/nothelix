@@ -19,8 +19,8 @@ mod json_utils;
 mod kernel;
 mod kitty_placeholder;
 mod lsp;
-mod math_format;
 mod math_corpus;
+mod math_format;
 pub use math_corpus::CORPUS;
 mod math_image;
 pub use math_image::render_math_to_svg;
@@ -29,7 +29,7 @@ mod parse;
 mod typst_export;
 mod unicode;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
 
 steel::declare_module!(build_module);

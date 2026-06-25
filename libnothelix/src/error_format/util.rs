@@ -71,10 +71,11 @@ pub(super) fn clean_path(path: &str) -> String {
         if let Some(idx) = path.find("/share/julia/") {
             return path[idx + 13..].to_string();
         }
-        if let Some(rest) = path.strip_prefix("/nix/store/") {
-            if rest.len() > 33 && rest.as_bytes()[32] == b'-' {
-                return rest[33..].to_string();
-            }
+        if let Some(rest) = path.strip_prefix("/nix/store/")
+            && rest.len() > 33
+            && rest.as_bytes()[32] == b'-'
+        {
+            return rest[33..].to_string();
         }
     }
     if let Some(idx) = path.find("/.julia/packages/") {

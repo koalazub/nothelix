@@ -176,23 +176,27 @@ fn scan_content(content: &str, base: usize, overlays: &mut Vec<Overlay>) {
         }
 
         // ^digit → superscript
-        if bytes[i] == b'^' && i + 1 < len && bytes[i + 1].is_ascii_digit() {
-            if let Some(sup) = super_digit(bytes[i + 1]) {
-                overlays.push(Overlay::at(base + i, sup));
-                overlays.push(Overlay::hide(base + i + 1));
-                i += 2;
-                continue;
-            }
+        if bytes[i] == b'^'
+            && i + 1 < len
+            && bytes[i + 1].is_ascii_digit()
+            && let Some(sup) = super_digit(bytes[i + 1])
+        {
+            overlays.push(Overlay::at(base + i, sup));
+            overlays.push(Overlay::hide(base + i + 1));
+            i += 2;
+            continue;
         }
 
         // _digit → subscript
-        if bytes[i] == b'_' && i + 1 < len && bytes[i + 1].is_ascii_digit() {
-            if let Some(sub) = sub_digit(bytes[i + 1]) {
-                overlays.push(Overlay::at(base + i, sub));
-                overlays.push(Overlay::hide(base + i + 1));
-                i += 2;
-                continue;
-            }
+        if bytes[i] == b'_'
+            && i + 1 < len
+            && bytes[i + 1].is_ascii_digit()
+            && let Some(sub) = sub_digit(bytes[i + 1])
+        {
+            overlays.push(Overlay::at(base + i, sub));
+            overlays.push(Overlay::hide(base + i + 1));
+            i += 2;
+            continue;
         }
 
         // <= → ≤, >= → ≥, != → ≠

@@ -15,7 +15,7 @@ mod fixtures {
     use std::time::Duration;
 
     pub fn tiny_gif() -> Vec<u8> {
-        use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
+        use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
         let mut buf = Vec::new();
         {
             let mut enc = GifEncoder::new(&mut buf);
@@ -77,11 +77,7 @@ fn register(mime: &str, bytes: &[u8]) -> Result<u64, i32> {
     let rc = unsafe {
         nothelix_animation_register(mime_c.as_ptr(), bytes.as_ptr(), bytes.len(), &mut id)
     };
-    if rc == 0 {
-        Ok(id)
-    } else {
-        Err(rc)
-    }
+    if rc == 0 { Ok(id) } else { Err(rc) }
 }
 
 /// Helper: tick once, returning (status, bytes_or_empty).

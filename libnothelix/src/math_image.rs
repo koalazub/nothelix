@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use typst::diag::FileError;
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, Source};
@@ -13,7 +13,7 @@ use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
-use typst_svg::{svg, SvgOptions};
+use typst_svg::{SvgOptions, svg};
 
 use crate::typst_export::latex_to_typst_math;
 
@@ -23,9 +23,7 @@ static MATH_IMAGE_CACHE: Mutex<Option<HashMap<(String, isize), MathImageCacheEnt
     Mutex::new(None);
 
 fn math_json(b64: &str, width: u32, height: u32, error: &str) -> String {
-    format!(
-        "{{\"b64\":\"{b64}\",\"width\":{width},\"height\":{height},\"error\":\"{error}\"}}"
-    )
+    format!("{{\"b64\":\"{b64}\",\"width\":{width},\"height\":{height},\"error\":\"{error}\"}}")
 }
 
 pub fn render_math_to_svg(latex: String, font_size_pt: isize) -> String {
@@ -56,7 +54,10 @@ fn get_cached(latex: &str, font_size_pt: isize) -> Result<(String, u32, u32), ()
 fn cache_result(latex: String, font_size_pt: isize, entry: (&str, u32, u32)) {
     if let Ok(mut guard) = MATH_IMAGE_CACHE.lock() {
         let cache = guard.get_or_insert_with(HashMap::new);
-        cache.insert((latex, font_size_pt), (entry.0.to_string(), entry.1, entry.2));
+        cache.insert(
+            (latex, font_size_pt),
+            (entry.0.to_string(), entry.1, entry.2),
+        );
     }
 }
 
@@ -186,10 +187,7 @@ mod tests {
             "expected success, got: {json}"
         );
         assert!(json.contains("\"width\":"), "expected width, got: {json}");
-        assert!(
-            json.contains("\"height\":"),
-            "expected height, got: {json}"
-        );
+        assert!(json.contains("\"height\":"), "expected height, got: {json}");
         assert!(
             json.contains("\"b64\":\"PHN2Zy"),
             "expected svg b64 prefix, got: {json}"

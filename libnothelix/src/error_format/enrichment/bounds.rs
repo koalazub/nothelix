@@ -41,11 +41,7 @@ fn scan_indexed_var(source: &str) -> Option<String> {
     let bracket = source.find('[')?;
     let before = source[..bracket].trim();
     let name = extract_var_name(before);
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 #[cfg(test)]

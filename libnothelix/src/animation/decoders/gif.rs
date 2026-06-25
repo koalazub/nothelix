@@ -11,7 +11,7 @@ pub struct GifSource {
 
 impl GifSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::{codecs::gif::GifDecoder, AnimationDecoder};
+        use ::image::{AnimationDecoder, codecs::gif::GifDecoder};
         let dec = GifDecoder::new(std::io::Cursor::new(bytes))
             .map_err(|e| DecoderError::Malformed(e.to_string()))?;
         let frames_iter = dec.into_frames();

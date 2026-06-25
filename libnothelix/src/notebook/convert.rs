@@ -48,10 +48,10 @@
 
 use std::fs;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::cells::{
-    jl_sibling_path, parse_jl_file, read_notebook, source_to_string, CellKind, JlCell,
+    CellKind, JlCell, jl_sibling_path, parse_jl_file, read_notebook, source_to_string,
 };
 use super::embed::{
     attachment_ref_name, embed_markdown_attachments, extract_markdown_attachments,
@@ -395,17 +395,17 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
         // nbformat 4.5 requires a cell id; cells with no original to
         // inherit one from get a deterministic stamp so reconversion
         // reproduces the same notebook (the fixpoint property).
-        if let Some(obj) = c.as_object_mut() {
-            if !obj.get("id").is_some_and(Value::is_string) {
-                obj.insert(
-                    "id".to_string(),
-                    json!(deterministic_cell_id(
-                        expected_type(cell),
-                        &source_text,
-                        position
-                    )),
-                );
-            }
+        if let Some(obj) = c.as_object_mut()
+            && !obj.get("id").is_some_and(Value::is_string)
+        {
+            obj.insert(
+                "id".to_string(),
+                json!(deterministic_cell_id(
+                    expected_type(cell),
+                    &source_text,
+                    position
+                )),
+            );
         }
 
         new_cells.push(c);

@@ -1,6 +1,6 @@
 //! Deterministic 4-frame test GIF fixture, generated programmatically.
 
-use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
+use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
 use std::time::Duration;
 
 pub fn tiny_gif_bytes() -> Vec<u8> {

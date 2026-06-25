@@ -23,7 +23,7 @@ use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use which::which;
 
 // ─── Embedded kernel scripts ──────────────────────────────────────────────────
@@ -145,7 +145,7 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
     let julia = match which("julia") {
         Ok(p) => p,
         Err(_) => {
-            return json!({"status": "error", "error": "julia not found in PATH"}).to_string()
+            return json!({"status": "error", "error": "julia not found in PATH"}).to_string();
         }
     };
 

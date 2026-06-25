@@ -37,10 +37,9 @@ impl FrameCache {
             .entries
             .iter()
             .position(|(i, _)| *i == frame.frame_index)
+            && let Some(old) = self.entries.remove(pos)
         {
-            if let Some(old) = self.entries.remove(pos) {
-                self.used_bytes = self.used_bytes.saturating_sub(old.1.rgba.len());
-            }
+            self.used_bytes = self.used_bytes.saturating_sub(old.1.rgba.len());
         }
         while self.used_bytes + frame_size > self.budget_bytes {
             if let Some((_, evicted)) = self.entries.pop_front() {

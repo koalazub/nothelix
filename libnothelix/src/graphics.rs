@@ -7,7 +7,7 @@
 
 use std::fmt::Write;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 // ─── Protocol detection ───────────────────────────────────────────────────────
 
@@ -15,15 +15,15 @@ fn terminal_protocol() -> &'static str {
     if std::env::var("KITTY_WINDOW_ID").is_ok() {
         return "kitty";
     }
-    if let Ok(term) = std::env::var("TERM") {
-        if term.contains("kitty") {
-            return "kitty";
-        }
+    if let Ok(term) = std::env::var("TERM")
+        && term.contains("kitty")
+    {
+        return "kitty";
     }
-    if let Ok(prog) = std::env::var("TERM_PROGRAM") {
-        if prog == "iTerm.app" || prog == "WezTerm" {
-            return "iterm";
-        }
+    if let Ok(prog) = std::env::var("TERM_PROGRAM")
+        && (prog == "iTerm.app" || prog == "WezTerm")
+    {
+        return "iterm";
     }
     "block"
 }

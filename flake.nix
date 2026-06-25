@@ -40,6 +40,10 @@
         pkgs = import nixpkgs { inherit system overlays; };
         isDarwin = pkgs.stdenv.isDarwin;
 
+        # devShell rides `.latest` nightly on purpose; the build packages
+        # below pin `fenixStable` so they don't rebuild every time nightly
+        # moves. Keeping the two providers separate is the whole point —
+        # don't collapse them.
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [
             "rustc"

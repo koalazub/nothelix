@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use nothelix::animation::decoders::gif::GifSource;
 use nothelix::animation::engine::AnimationEngine;
-use nothelix::animation::renderer::{select_renderer, TerminalCaps};
+use nothelix::animation::renderer::{TerminalCaps, select_renderer};
 use nothelix::animation::renderers::kitty_replay::KittyReplayRenderer;
 use nothelix::animation::renderers::static_fallback::StaticFallbackRenderer;
 
 /// Inline fixture builder (the test fixture lives behind #[cfg(test)] so the
 /// bench rebuilds the same 4-frame 32x32 GIF here).
 fn tiny_gif_bytes() -> Vec<u8> {
-    use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
+    use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
@@ -51,7 +51,7 @@ fn main() {
 
 /// Build a 4-frame animated GIF at the given dimension.
 fn animated_gif(side: u32, frames: u32) -> Vec<u8> {
-    use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
+    use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
@@ -99,20 +99,28 @@ fn bench_large_frame() {
     for i in 0..40u32 {
         let now = start + Duration::from_millis(i as u64 * 100);
         let t0 = Instant::now();
-        if let Some(out) = eng.tick(now) {
-            if !out.bytes.is_empty() {
-                frame_bytes += out.bytes.len();
-                frames += 1;
-            }
+        if let Some(out) = eng.tick(now)
+            && !out.bytes.is_empty()
+        {
+            frame_bytes += out.bytes.len();
+            frames += 1;
         }
         tick_total += t0.elapsed();
     }
     println!(
         "  40 ticks (4 unique frames × 10 cycles): {} unique-frame emissions, mean per-emitted-frame {:?}, total wire bytes {} ({} B/frame)",
         frames,
-        if frames > 0 { tick_total / frames } else { Duration::ZERO },
+        if frames > 0 {
+            tick_total / frames
+        } else {
+            Duration::ZERO
+        },
         frame_bytes,
-        if frames > 0 { frame_bytes / frames as usize } else { 0 },
+        if frames > 0 {
+            frame_bytes / frames as usize
+        } else {
+            0
+        },
     );
     let cpu_pct = (tick_total.as_secs_f64() / 4.0) * 100.0; // 4 sec wall-clock for 40 ticks @ 100ms
     println!(
@@ -161,11 +169,11 @@ fn bench_tick_static_fallback() {
     let mut frames = 0u32;
     for i in 0..1000u32 {
         let now = start + Duration::from_millis(i as u64 * 100);
-        if let Some(out) = eng.tick(now) {
-            if !out.bytes.is_empty() {
-                frame_bytes += out.bytes.len();
-                frames += 1;
-            }
+        if let Some(out) = eng.tick(now)
+            && !out.bytes.is_empty()
+        {
+            frame_bytes += out.bytes.len();
+            frames += 1;
         }
     }
     let elapsed = start.elapsed();
@@ -194,11 +202,11 @@ fn bench_tick_kitty_replay() {
     let mut frames = 0u32;
     for i in 0..1000u32 {
         let now = start + Duration::from_millis(i as u64 * 100);
-        if let Some(out) = eng.tick(now) {
-            if !out.bytes.is_empty() {
-                frame_bytes += out.bytes.len();
-                frames += 1;
-            }
+        if let Some(out) = eng.tick(now)
+            && !out.bytes.is_empty()
+        {
+            frame_bytes += out.bytes.len();
+            frames += 1;
         }
     }
     let elapsed = start.elapsed();
@@ -266,11 +274,11 @@ fn bench_steady_state_fps() {
     for i in 0..frames_per_sec {
         let now = start + frame_period * i;
         let t0 = Instant::now();
-        if let Some(out) = eng.tick(now) {
-            if !out.bytes.is_empty() {
-                total_bytes += out.bytes.len();
-                frames_emitted += 1;
-            }
+        if let Some(out) = eng.tick(now)
+            && !out.bytes.is_empty()
+        {
+            total_bytes += out.bytes.len();
+            frames_emitted += 1;
         }
         work_time += t0.elapsed();
     }

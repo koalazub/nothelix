@@ -13,7 +13,7 @@
 
 use std::fs;
 
-use super::cells::{jl_sibling_path, parse_jl_file, CellKind};
+use super::cells::{CellKind, jl_sibling_path, parse_jl_file};
 
 pub fn export_to_markdown(jl_path: String) -> String {
     let (cells, _) = match parse_jl_file(&jl_path) {

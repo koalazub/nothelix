@@ -11,9 +11,9 @@ pub struct ApngSource {
 
 impl ApngSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::codecs::png::PngDecoder;
         use ::image::AnimationDecoder;
         use ::image::ImageDecoder;
+        use ::image::codecs::png::PngDecoder;
 
         // First pass: try the animated path. PNGs that are not APNGs surface
         // through `into_frames()` with zero frames; for those we fall back to

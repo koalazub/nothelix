@@ -16,7 +16,7 @@ pub mod registry;
 pub mod renderer;
 pub mod renderers;
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::time::Instant;
 
 /// # Safety
@@ -24,41 +24,43 @@ use std::time::Instant;
 /// `bytes_ptr` must point to a readable buffer of length `bytes_len`;
 /// `out_engine_id` must be a valid writable `*mut u64`. All pointers
 /// must be valid for the duration of the call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nothelix_animation_register(
     mime_ptr: *const c_char,
     bytes_ptr: *const u8,
     bytes_len: usize,
     out_engine_id: *mut u64,
 ) -> i32 {
-    if mime_ptr.is_null() || bytes_ptr.is_null() || out_engine_id.is_null() {
-        return -10;
+    unsafe {
+        if mime_ptr.is_null() || bytes_ptr.is_null() || out_engine_id.is_null() {
+            return -10;
+        }
+        let mime = match CStr::from_ptr(mime_ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let bytes = std::slice::from_raw_parts(bytes_ptr, bytes_len);
+        let factory = match decoder::lookup_decoder(mime) {
+            Some(f) => f,
+            None => return -2,
+        };
+        let dec = match factory(bytes) {
+            Ok(d) => d,
+            Err(_) => return -3,
+        };
+        let caps = renderer::TerminalCaps {
+            kitty_graphics: true, // wired from doctor probe in plugin (Task 22)
+            kitty_animation_protocol: false,
+            max_fps: 60,
+        };
+        let r = renderer::select_renderer(&caps);
+        let mut reg = registry::lock_registry();
+        let id = reg.allocate_id();
+        let eng = engine::AnimationEngine::new(id, dec, r, 64 * 1024 * 1024);
+        reg.insert(id, eng);
+        *out_engine_id = id;
+        0
     }
-    let mime = match CStr::from_ptr(mime_ptr).to_str() {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
-    let bytes = std::slice::from_raw_parts(bytes_ptr, bytes_len);
-    let factory = match decoder::lookup_decoder(mime) {
-        Some(f) => f,
-        None => return -2,
-    };
-    let dec = match factory(bytes) {
-        Ok(d) => d,
-        Err(_) => return -3,
-    };
-    let caps = renderer::TerminalCaps {
-        kitty_graphics: true, // wired from doctor probe in plugin (Task 22)
-        kitty_animation_protocol: false,
-        max_fps: 60,
-    };
-    let r = renderer::select_renderer(&caps);
-    let mut reg = registry::lock_registry();
-    let id = reg.allocate_id();
-    let eng = engine::AnimationEngine::new(id, dec, r, 64 * 1024 * 1024);
-    reg.insert(id, eng);
-    *out_engine_id = id;
-    0
 }
 
 /// # Safety
@@ -66,7 +68,7 @@ pub unsafe extern "C" fn nothelix_animation_register(
 /// `out_height`, `out_next_delay_ms`) must be valid writable pointers
 /// for the duration of the call. The caller owns the returned payload
 /// buffer and must release it via `nothelix_animation_free_buffer`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nothelix_animation_tick(
     engine_id: u64,
     out_payload_ptr: *mut *mut u8,
@@ -74,50 +76,54 @@ pub unsafe extern "C" fn nothelix_animation_tick(
     out_height: *mut u16,
     out_next_delay_ms: *mut u32,
 ) -> i32 {
-    if out_payload_ptr.is_null()
-        || out_payload_len.is_null()
-        || out_height.is_null()
-        || out_next_delay_ms.is_null()
-    {
-        return -10;
+    unsafe {
+        if out_payload_ptr.is_null()
+            || out_payload_len.is_null()
+            || out_height.is_null()
+            || out_next_delay_ms.is_null()
+        {
+            return -10;
+        }
+        let mut reg = registry::lock_registry();
+        let eng = match reg.get_mut(engine_id) {
+            Some(e) => e,
+            None => return -1,
+        };
+        let out = if let Some(o) = eng.tick(Instant::now()) {
+            o
+        } else {
+            *out_payload_ptr = std::ptr::null_mut();
+            *out_payload_len = 0;
+            *out_height = 0;
+            *out_next_delay_ms = 0;
+            return 2; // finished or paused
+        };
+        *out_height = out.height;
+        *out_next_delay_ms = out.next_delay_ms;
+        if out.bytes.is_empty() {
+            *out_payload_ptr = std::ptr::null_mut();
+            *out_payload_len = 0;
+            return 1; // no new frame to send
+        }
+        let mut boxed = out.bytes.into_boxed_slice();
+        *out_payload_ptr = boxed.as_mut_ptr();
+        *out_payload_len = boxed.len();
+        std::mem::forget(boxed);
+        0
     }
-    let mut reg = registry::lock_registry();
-    let eng = match reg.get_mut(engine_id) {
-        Some(e) => e,
-        None => return -1,
-    };
-    let out = if let Some(o) = eng.tick(Instant::now()) {
-        o
-    } else {
-        *out_payload_ptr = std::ptr::null_mut();
-        *out_payload_len = 0;
-        *out_height = 0;
-        *out_next_delay_ms = 0;
-        return 2; // finished or paused
-    };
-    *out_height = out.height;
-    *out_next_delay_ms = out.next_delay_ms;
-    if out.bytes.is_empty() {
-        *out_payload_ptr = std::ptr::null_mut();
-        *out_payload_len = 0;
-        return 1; // no new frame to send
-    }
-    let mut boxed = out.bytes.into_boxed_slice();
-    *out_payload_ptr = boxed.as_mut_ptr();
-    *out_payload_len = boxed.len();
-    std::mem::forget(boxed);
-    0
 }
 
 /// # Safety
 /// `ptr` must be a pointer returned by `nothelix_animation_tick` (or
 /// null) with the matching `len`. Calling this with a foreign pointer
 /// or a different length than was returned is undefined behaviour.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nothelix_animation_free_buffer(ptr: *mut u8, len: usize) {
-    if !ptr.is_null() && len > 0 {
-        let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
-        let _ = Box::from_raw(slice);
+    unsafe {
+        if !ptr.is_null() && len > 0 {
+            let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
+            let _ = Box::from_raw(slice);
+        }
     }
 }
 
@@ -126,7 +132,7 @@ pub unsafe extern "C" fn nothelix_animation_free_buffer(ptr: *mut u8, len: usize
 /// `nothelix_animation_register` (or any value — unknown ids are a
 /// no-op). The function is safe to call multiple times for the same id;
 /// later calls become no-ops.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
     let mut reg = registry::lock_registry();
     if let Some(mut eng) = reg.drop_engine(engine_id) {
@@ -141,7 +147,7 @@ pub unsafe extern "C" fn nothelix_animation_drop(engine_id: u64) {
 /// `engine_id` must be one previously returned by
 /// `nothelix_animation_register`. Unknown ids return `-1` without
 /// touching state. No raw pointers are dereferenced.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nothelix_animation_set_pause(engine_id: u64, paused: bool) -> i32 {
     let mut reg = registry::lock_registry();
     if let Some(eng) = reg.get_mut(engine_id) {
@@ -177,7 +183,7 @@ pub mod steel_api {
     use super::decoder::lookup_decoder;
     use super::engine::AnimationEngine;
     use super::registry::lock_registry;
-    use super::renderer::{select_renderer, TerminalCaps};
+    use super::renderer::{TerminalCaps, select_renderer};
     use abi_stable::std_types::RVec;
     use std::time::Instant;
     use steel::steel_vm::ffi::FFIValue;

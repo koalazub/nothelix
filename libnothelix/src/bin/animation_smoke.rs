@@ -79,7 +79,7 @@ fn smoke() -> Result<usize, String> {
 }
 
 fn build_tiny_gif() -> Vec<u8> {
-    use ::image::{codecs::gif::GifEncoder, Delay, Frame, RgbaImage};
+    use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);

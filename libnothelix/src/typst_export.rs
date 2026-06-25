@@ -171,7 +171,9 @@ pub fn latex_to_typst_math(latex: &str) -> String {
     s = apply_simple_math_replacements(&s);
 
     // \text{...} → "..." early so cases/matrices can reason about strings.
-    s = replace_all_braced(&s, "\\text{", |text| format!("\"{}\"", text.escape_default()));
+    s = replace_all_braced(&s, "\\text{", |text| {
+        format!("\"{}\"", text.escape_default())
+    });
 
     // ── Phase 2: environments ──
 
@@ -257,13 +259,13 @@ pub fn latex_to_typst_math(latex: &str) -> String {
         if let Some(num_end) = matching_brace(after) {
             let num = after[..num_end].to_string();
             let rest = &after[num_end + 1..];
-            if let Some(brace_rest) = rest.strip_prefix('{') {
-                if let Some(den_end) = matching_brace(brace_rest) {
-                    let den = brace_rest[..den_end].to_string();
-                    let total = start + 6 + num_end + 1 + 1 + den_end + 1;
-                    s = format!("{}({num})/({den}){}", &s[..start], &s[total..]);
-                    continue;
-                }
+            if let Some(brace_rest) = rest.strip_prefix('{')
+                && let Some(den_end) = matching_brace(brace_rest)
+            {
+                let den = brace_rest[..den_end].to_string();
+                let total = start + 6 + num_end + 1 + 1 + den_end + 1;
+                s = format!("{}({num})/({den}){}", &s[..start], &s[total..]);
+                continue;
             }
         }
         break;
@@ -276,22 +278,22 @@ pub fn latex_to_typst_math(latex: &str) -> String {
             if let Some(bracket_end) = after.find(']') {
                 let n = &after[1..bracket_end];
                 let rest = &after[bracket_end + 1..];
-                if let Some(brace_rest) = rest.strip_prefix('{') {
-                    if let Some(end) = matching_brace(brace_rest) {
-                        let x = &brace_rest[..end];
-                        let total = start + 5 + bracket_end + 1 + 1 + end + 1;
-                        s = format!("{}root({n}, {x}){}", &s[..start], &s[total..]);
-                        continue;
-                    }
+                if let Some(brace_rest) = rest.strip_prefix('{')
+                    && let Some(end) = matching_brace(brace_rest)
+                {
+                    let x = &brace_rest[..end];
+                    let total = start + 5 + bracket_end + 1 + 1 + end + 1;
+                    s = format!("{}root({n}, {x}){}", &s[..start], &s[total..]);
+                    continue;
                 }
             }
-        } else if let Some(brace_after) = after.strip_prefix('{') {
-            if let Some(end) = matching_brace(brace_after) {
-                let x = &brace_after[..end];
-                let total = start + 5 + 1 + end + 1;
-                s = format!("{}sqrt({x}){}", &s[..start], &s[total..]);
-                continue;
-            }
+        } else if let Some(brace_after) = after.strip_prefix('{')
+            && let Some(end) = matching_brace(brace_after)
+        {
+            let x = &brace_after[..end];
+            let total = start + 5 + 1 + end + 1;
+            s = format!("{}sqrt({x}){}", &s[..start], &s[total..]);
+            continue;
         }
         break;
     }
@@ -302,13 +304,13 @@ pub fn latex_to_typst_math(latex: &str) -> String {
         if let Some(n_end) = matching_brace(after) {
             let n = after[..n_end].to_string();
             let rest = &after[n_end + 1..];
-            if let Some(brace_rest) = rest.strip_prefix('{') {
-                if let Some(k_end) = matching_brace(brace_rest) {
-                    let k = brace_rest[..k_end].to_string();
-                    let total = start + 7 + n_end + 1 + 1 + k_end + 1;
-                    s = format!("{}binom({n}, {k}){}", &s[..start], &s[total..]);
-                    continue;
-                }
+            if let Some(brace_rest) = rest.strip_prefix('{')
+                && let Some(k_end) = matching_brace(brace_rest)
+            {
+                let k = brace_rest[..k_end].to_string();
+                let total = start + 7 + n_end + 1 + 1 + k_end + 1;
+                s = format!("{}binom({n}, {k}){}", &s[..start], &s[total..]);
+                continue;
             }
         }
         break;
@@ -378,13 +380,20 @@ pub fn latex_to_typst_math(latex: &str) -> String {
             if let Some(a_end) = matching_brace(after) {
                 let a = after[..a_end].to_string();
                 let rest = &after[a_end + 1..];
-                if let Some(body_rest) = rest.strip_prefix('{') {
-                    if let Some(b_end) = matching_brace(body_rest) {
-                        let b = body_rest[..b_end].to_string();
-                        let total = start + pat.len() + a_end + 1 + 1 + b_end + 1;
-                        s = format!("{}attach({}, {}: {}){}", &s[..start], b, dir, a, &s[total..]);
-                        continue;
-                    }
+                if let Some(body_rest) = rest.strip_prefix('{')
+                    && let Some(b_end) = matching_brace(body_rest)
+                {
+                    let b = body_rest[..b_end].to_string();
+                    let total = start + pat.len() + a_end + 1 + 1 + b_end + 1;
+                    s = format!(
+                        "{}attach({}, {}: {}){}",
+                        &s[..start],
+                        b,
+                        dir,
+                        a,
+                        &s[total..]
+                    );
+                    continue;
                 }
             }
             break;
@@ -392,7 +401,10 @@ pub fn latex_to_typst_math(latex: &str) -> String {
     }
 
     // \overbrace{x}^{text} → overbrace(x, "text")
-    for (cmd, func, marker) in [("overbrace", "overbrace", "^{"), ("underbrace", "underbrace", "_{")] {
+    for (cmd, func, marker) in [
+        ("overbrace", "overbrace", "^{"),
+        ("underbrace", "underbrace", "_{"),
+    ] {
         let pat = format!("\\{cmd}{{");
         while let Some(start) = s.find(&pat) {
             let after = &s[start + pat.len()..];
@@ -417,7 +429,14 @@ pub fn latex_to_typst_math(latex: &str) -> String {
                     } else {
                         ann
                     };
-                    s = format!("{}{}({}, {}){}", &s[..start], func, body, ann_out, &s[total..]);
+                    s = format!(
+                        "{}{}({}, {}){}",
+                        &s[..start],
+                        func,
+                        body,
+                        ann_out,
+                        &s[total..]
+                    );
                 }
                 continue;
             }
@@ -529,12 +548,50 @@ fn normalize_math_spacing(s: &str) -> String {
                 }
             }
             for &extra in &[
-                "sqrt", "root", "binom", "hat", "tilde", "bar", "macron", "overline",
-                "underline", "dot", "dot.double", "arrow", "bold", "upright", "cal",
-                "frak", "bb", "op", "cases", "mat", "dif",
+                "sqrt",
+                "root",
+                "binom",
+                "hat",
+                "tilde",
+                "bar",
+                "macron",
+                "overline",
+                "underline",
+                "dot",
+                "dot.double",
+                "arrow",
+                "bold",
+                "upright",
+                "cal",
+                "frak",
+                "bb",
+                "op",
+                "cases",
+                "mat",
+                "dif",
                 // Common blackboard-bold double letters produced by \mathbb{X}.
-                "RR", "CC", "ZZ", "QQ", "NN", "HH", "PP", "FF", "EE", "II", "DD", "GG",
-                "KK", "LL", "OO", "SS", "TT", "UU", "VV", "WW", "XX", "YY",
+                "RR",
+                "CC",
+                "ZZ",
+                "QQ",
+                "NN",
+                "HH",
+                "PP",
+                "FF",
+                "EE",
+                "II",
+                "DD",
+                "GG",
+                "KK",
+                "LL",
+                "OO",
+                "SS",
+                "TT",
+                "UU",
+                "VV",
+                "WW",
+                "XX",
+                "YY",
             ] {
                 set.insert(extra);
             }
@@ -548,10 +605,11 @@ fn normalize_math_spacing(s: &str) -> String {
             (Some(Tok::Word(_)), Tok::Word(_)) => true,
             (Some(Tok::Number(_)), Tok::Word(_) | Tok::Number(_)) => true,
             (Some(Tok::Word(_)), Tok::Number(_)) => true,
-            (
-                Some(Tok::Sym(c)),
-                Tok::Word(_) | Tok::Number(_),
-            ) if c == ')' || c == ']' || c == '}' => true,
+            (Some(Tok::Sym(c)), Tok::Word(_) | Tok::Number(_))
+                if c == ')' || c == ']' || c == '}' =>
+            {
+                true
+            }
             _ => false,
         }
     }
@@ -569,21 +627,22 @@ fn normalize_math_spacing(s: &str) -> String {
             continue;
         }
 
-        if let Tok::Word(w) = tok {
-            if w.len() > 1 && !is_whitelisted(w) {
-                for (idx, ch) in w.chars().enumerate() {
-                    if idx == 0 {
-                        if needs_space(last, Tok::Word("")) {
-                            out.push(' ');
-                        }
-                    } else {
+        if let Tok::Word(w) = tok
+            && w.len() > 1
+            && !is_whitelisted(w)
+        {
+            for (idx, ch) in w.chars().enumerate() {
+                if idx == 0 {
+                    if needs_space(last, Tok::Word("")) {
                         out.push(' ');
                     }
-                    out.push(ch);
-                    last = Some(Tok::Word(""));
+                } else {
+                    out.push(' ');
                 }
-                continue;
+                out.push(ch);
+                last = Some(Tok::Word(""));
             }
+            continue;
         }
 
         if needs_space(last, tok) {
@@ -1060,9 +1119,6 @@ static SIMPLE_MATH_COMMANDS: phf::Map<&'static str, &'static str> = phf::phf_map
     "right" => "",
     "middle" => "",
 };
-
-
-
 
 /// Replace every `\prefix{...}` occurrence, mapping inner content through `transform`.
 fn replace_all_braced(s: &str, prefix: &str, transform: impl Fn(&str) -> String) -> String {

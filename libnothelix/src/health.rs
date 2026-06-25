@@ -192,10 +192,11 @@ fn scan_expected_ffi_version(text: &str) -> Option<u32> {
             .filter(|t| !t.is_empty())
             .collect();
         for w in tokens.windows(3) {
-            if w[0] == "define" && w[1] == "EXPECTED-FFI-VERSION" {
-                if let Ok(v) = w[2].parse() {
-                    return Some(v);
-                }
+            if w[0] == "define"
+                && w[1] == "EXPECTED-FFI-VERSION"
+                && let Ok(v) = w[2].parse()
+            {
+                return Some(v);
             }
         }
     }
@@ -566,9 +567,11 @@ mod tests {
         assert!(issue.message.contains("DocumentFocusGained"));
         assert!(issue.message.contains("ViewportChanged"));
         assert!(issue.message.contains("TerminalFocusGained"));
-        assert!(!issue
-            .message
-            .contains("add-or-replace-animating-raw-content"));
+        assert!(
+            !issue
+                .message
+                .contains("add-or-replace-animating-raw-content")
+        );
     }
 
     #[test]

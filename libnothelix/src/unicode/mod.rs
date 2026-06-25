@@ -156,9 +156,11 @@ mod tests {
         // The backslash, "text", and "{" should be hidden
         assert!(hidden.iter().any(|(off, _)| *off == 0));
         // The closing } should be hidden
-        assert!(hidden
-            .iter()
-            .any(|(off, _)| *off as usize == r"\text{otherwise}".len() - 1));
+        assert!(
+            hidden
+                .iter()
+                .any(|(off, _)| *off as usize == r"\text{otherwise}".len() - 1)
+        );
     }
 
     #[test]

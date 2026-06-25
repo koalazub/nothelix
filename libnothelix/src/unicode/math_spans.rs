@@ -151,20 +151,20 @@ pub fn parse_math_spans(text: &str) -> Vec<MathSpan> {
             continue;
         }
 
-        if FRAC_CMDS.contains(&name) {
-            if let Some((num, den, after)) = scan_frac(bytes, text, name_end) {
-                spans.push(MathSpan::Frac {
-                    cmd: name.to_string(),
-                    byte_start: span_start,
-                    byte_end: after,
-                    visual_col: span_visual_col,
-                    num_text: num,
-                    den_text: den,
-                });
-                i = after;
-                visual_col += 1;
-                continue;
-            }
+        if FRAC_CMDS.contains(&name)
+            && let Some((num, den, after)) = scan_frac(bytes, text, name_end)
+        {
+            spans.push(MathSpan::Frac {
+                cmd: name.to_string(),
+                byte_start: span_start,
+                byte_end: after,
+                visual_col: span_visual_col,
+                num_text: num,
+                den_text: den,
+            });
+            i = after;
+            visual_col += 1;
+            continue;
         }
 
         // Any other `\cmd` — one visual glyph (concealed to a symbol).

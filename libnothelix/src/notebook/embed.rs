@@ -18,8 +18,8 @@
 use std::fs;
 use std::path::Path;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use serde_json::{json, Value};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde_json::{Value, json};
 
 /// Turn a markdown cell's `# @image <path>` markers into an
 /// `attachments` map keyed by filename and rewrite the cell source to

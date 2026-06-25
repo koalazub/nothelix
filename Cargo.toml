@@ -9,7 +9,7 @@ version = "0.1.0"
 authors = ["koalazub <elali@cokoala.me>"]
 license = "MIT"
 repository = "https://github.com/koalazub/nothelix"
-edition = "2021"
+edition = "2024"
 
 [profile.dev]
 opt-level = 0
