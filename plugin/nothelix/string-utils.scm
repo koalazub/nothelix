@@ -11,7 +11,6 @@
          string-contains?
          string-join
          string-split
-         string->number
          string-replace-all
          char->number
          json-get-string
@@ -113,17 +112,12 @@
     [(eqv? c #\9) 9]
     [else #f]))
 
-(define (string->number s)
-  (if (not (string? s))
-      #f
-      (let loop ([chars (string->list s)] [acc 0])
-        (cond
-          [(null? chars) acc]
-          [else
-           (define digit (char->number (car chars)))
-           (if digit
-               (loop (cdr chars) (+ (* acc 10) digit))
-               #f)]))))
+;; NOTE: `string->number` is intentionally NOT defined here. Steel's
+;; native `string->number` handles negatives, floats, rationals and
+;; radices; a hand-rolled integer-only shadow used to live here and
+;; silently broke negative/float parsing (e.g. chart-viewer coordinates)
+;; for every module that requires this file. `char->number` below stays
+;; — picker.scm uses it for single-digit cell jumps.
 
 (define (string-replace-all str old new)
   (define old-len (string-length old))
