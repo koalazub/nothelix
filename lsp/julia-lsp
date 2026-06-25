@@ -40,15 +40,9 @@ exec julia \
       end
       let env_path = begin
               v = "v$(VERSION.major).$(VERSION.minor)"
-              found = nothing
-              for depot in DEPOT_PATH
-                  p = joinpath(depot, "environments", v)
-                  if isdir(p) && isfile(joinpath(p, "Project.toml"))
-                      found = p
-                      break
-                  end
-              end
-              something(found, LanguageServer.choose_env())
+              candidates = [joinpath(d, "environments", v) for d in DEPOT_PATH]
+              idx = findfirst(p -> isdir(p) && isfile(joinpath(p, "Project.toml")), candidates)
+              idx === nothing ? LanguageServer.choose_env() : candidates[idx]
           end
           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
           server.lint_missingrefs = :none

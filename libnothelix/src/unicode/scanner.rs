@@ -30,7 +30,8 @@ pub struct ScannerOptions {
     /// When `true`, big-operator limits (`_{a}^{b}` after `\sum`, `\int`,
     /// …) and `\frac{num}{den}` wrappers are fully hidden so the
     /// math-render plugin's stacked virtual rows don't collide with a
-    /// redundant inline rendering. Default: keep inline limits visible.
+    /// redundant inline rendering. When `false` (the default), limits
+    /// render as inline scripts (`∑_m` → `∑ₘ`) like LaTeX's inline mode.
     pub hide_math_layout: bool,
 }
 
@@ -43,9 +44,9 @@ struct EnvState {
     total_rows: usize,
 }
 
-/// Big operators (`\sum`, `\int`, `\prod`, …) carry *limits* in their
-/// `_{...}` and `^{...}`, not scripts. We keep those limits at normal size
-/// rather than shrinking them into tiny Unicode super/subscript glyphs.
+/// Big operators (`\sum`, `\int`, `\prod`, …) whose following `_`/`^`
+/// carry limits — stacked by the math-render plugin when
+/// `hide_math_layout` is set, otherwise rendered as inline scripts.
 fn is_big_operator(name: &str) -> bool {
     matches!(
         name,
@@ -167,18 +168,9 @@ fn count_rows_in_env(text: &str, env_start: usize, env_end: usize) -> usize {
 /// `scan_*` method per case. Each method takes the current cursor position
 /// and returns the position to continue from — no implicit `i` mutation.
 ///
-/// The old monolithic `latex_overlays` body was a 450-line nested if/else
-/// chain; extracting the cases into methods removes the accidental coupling
-/// where one arm could silently leak state into another.
-/// When the previous scanner step just emitted a big-operator glyph
-/// (`\sum`, `\int`, `\prod`, …), the next `_{...}` / `^{...}` pair carries
-/// the operator's *limits*, not subscripts/superscripts on an expression.
-/// Converting limits into tiny Unicode super/subscript glyphs produces the
-/// "need a microscope" rendering; we'd rather keep the limits at normal
-/// size and let the inner commands (`\in`, `\mathbb`, Greek, …) render
-/// naturally. This counter tracks how many limit groups are still pending;
-/// it's decremented as each `_`/`^` is consumed in limit mode and zeroed
-/// the moment any non-limit byte arrives.
+/// `pending_limits` counts limit groups still expected after a
+/// big-operator glyph; it gates the `hide_math_layout` stacking path and
+/// is zeroed the moment a non-limit byte arrives.
 struct Scanner<'a> {
     text: &'a str,
     bytes: &'a [u8],
@@ -772,23 +764,6 @@ impl<'a> Scanner<'a> {
                 Overlay::hide_range(&mut self.overlays, caret_pos, past_close);
                 return past_close;
             }
-            // Default: keep limits inline but hide only the braces so
-            // `^{...}` reads as `^...`, preserving the `^` as a visual
-            // cue for sub-vs-super. We MUST return `past_close` (not
-            // `content_start`) — returning content_start re-enters the
-            // main loop on the limit's first content byte, and the
-            // pending_limits reset at the top of `scan_one` then
-            // zeroes the counter, so the paired `^` (or `_`) at the
-            // other end never sees a non-zero pending_limits and falls
-            // into the regular-script path. That bug rendered
-            // `\sum_{k=-n}^n` as `∑_k=-nⁿ` — the lower limit kept its
-            // size but the upper one shrank. Inner backslash conceal
-            // inside limits is forfeited; in practice limit bodies are
-            // ASCII (`k=-n`, `i=1`, `t→0`) and the readability win
-            // dominates.
-            self.overlays.push(Overlay::hide(caret_pos + 1));
-            self.overlays.push(Overlay::hide(past_close - 1));
-            return past_close;
         }
 
         let supers: Vec<Option<&'static str>> = content.chars().map(super_lookup).collect();
@@ -832,14 +807,6 @@ impl<'a> Scanner<'a> {
                 self.overlays.push(Overlay::hide(i + 1));
                 return i + 2;
             }
-            // Keep `^x` visible but return i+2 (skip past both the caret
-            // and the char) — otherwise the main loop re-visits the char,
-            // fails the pending-limits whitelist, and zeroes the counter,
-            // which means the *next* limit (`^` after `_0`) falls through
-            // to the regular-super path and gets converted to unicode.
-            // That produced the asymmetric `∫_0¹` rendering: sub at
-            // normal size, super shrunk.
-            return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
         if let Some(rep) = super_lookup(ch) {
@@ -876,13 +843,6 @@ impl<'a> Scanner<'a> {
                 Overlay::hide_range(&mut self.overlays, underscore_pos, past_close);
                 return past_close;
             }
-            // Skip past the entire `_{…}` so the main loop's
-            // pending_limits reset doesn't fire on the limit body and
-            // strip the counter before the matching `^` is reached.
-            // See `scan_braced_superscript` for the full explanation.
-            self.overlays.push(Overlay::hide(underscore_pos + 1));
-            self.overlays.push(Overlay::hide(past_close - 1));
-            return past_close;
         }
 
         let subs: Vec<Option<&'static str>> = content.chars().map(sub_lookup).collect();
@@ -923,10 +883,6 @@ impl<'a> Scanner<'a> {
                 self.overlays.push(Overlay::hide(i + 1));
                 return i + 2;
             }
-            // Skip past both `_` and the limit char so pending_limits
-            // stays for the paired `^` — see matching note in
-            // scan_inline_superscript.
-            return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
         if let Some(rep) = sub_lookup(ch) {

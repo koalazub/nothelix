@@ -175,6 +175,11 @@ pub fn kitty_placeholder_payload_bytes(raw_data: RVec<u8>, image_id: isize) -> S
 /// terminal ends up rendering, so we don't need to pre-commit dimensions
 /// at transmission time.
 fn build_virtual_transmission(b64: &str, image_id: u32) -> String {
+    // The placeholder cells reference the image via a 24-bit foreground
+    // colour (the fork masks raw.id to its low 24 bits), so the cache key
+    // we transmit under must agree. Mask here so any id renders (truncated)
+    // rather than referencing a never-transmitted id and going blank.
+    let image_id = image_id & 0x00FF_FFFF;
     let bytes = b64.as_bytes();
     let chunk_size = 4096;
     let total = bytes.len().div_ceil(chunk_size);
@@ -281,6 +286,19 @@ mod tests {
         );
         assert!(payload.contains("U=1"));
         assert!(payload.contains("i=42"));
+    }
+
+    #[test]
+    fn payload_masks_image_id_to_24_bits() {
+        // The fork references placeholders via a 24-bit fg colour, so an id
+        // above 2^24 must transmit under its low 24 bits to stay reachable.
+        let b64 = BASE64.encode(b"\x89PNG\r\n\x1a\nx");
+        let payload = kitty_placeholder_payload(b64, 0x0100_002A);
+        assert!(payload.contains("i=42"), "id must be masked to low 24 bits");
+        assert!(
+            !payload.contains("i=16777258"),
+            "full out-of-range id must not survive into the transmission"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ fn render_full_math_corpus() {
     let start = std::time::Instant::now();
 
     for (name, latex) in CORPUS {
-        let json = render_math_to_svg(latex.to_string(), 14);
+        let json = render_math_to_svg(latex.to_string(), 14, "e8e8e8".to_string());
         if !json.contains("\"error\":\"\"") {
             failures.push((name.to_string(), json));
         } else if let Some(b64_start) = json.find("\"b64\":\"") {

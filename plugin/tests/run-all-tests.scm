@@ -8,13 +8,15 @@
 (require "kernel-persistence-test.scm")
 (require "execution-flow-test.scm")
 (require "math-image-test.scm")
+(require "string-utils-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
          run-cell-extraction-tests
          run-kernel-persistence-tests
          run-execution-flow-tests
-         run-math-image-tests)
+         run-math-image-tests
+         run-string-utils-tests)
 
 (define (run-all-nothelix-tests)
   ;; Suppress image rendering for the duration of the test run so the
@@ -31,7 +33,8 @@
       (cons "cell-extraction" (run-cell-extraction-tests))
       (cons "kernel-persistence" (run-kernel-persistence-tests))
       (cons "execution-flow" (run-execution-flow-tests))
-      (cons "math-image" (run-math-image-tests))))
+      (cons "math-image" (run-math-image-tests))
+      (cons "string-utils" (run-string-utils-tests))))
 
   ;; Suites that don't return a boolean are reported as unknown.
   (define (suite-status passed?)

@@ -2,7 +2,14 @@
 # This is the main entry point for the Julia kernel process
 
 using Dates
-using JSON3
+
+try
+    @eval using JSON3
+catch
+    import Pkg
+    Pkg.add("JSON3")
+    @eval using JSON3
+end
 
 const HAS_MSGPACK = try
     @eval using MsgPack

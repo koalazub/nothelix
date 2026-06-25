@@ -16,6 +16,7 @@
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix.static. "helix/static.scm"))
 (require "conceal.scm")
+(require "math-image.scm")
 
 (#%require-dylib "libnothelix"
                  (only-in nothelix
@@ -54,12 +55,7 @@
 ;; spaces. Used to place the stacked limit strings under the concealed
 ;; operator column.
 (define (spaces n)
-  (if (<= n 0)
-      ""
-      (let loop ([i 0] [acc ""])
-        (if (>= i n)
-            acc
-            (loop (+ i 1) (string-append acc " "))))))
+  (if (<= n 0) "" (make-string n #\space)))
 
 ;; Parse one line of the TSV emitted by `parse-math-spans`. Returns a
 ;; list of field strings, or '() on a blank line.
@@ -125,6 +121,7 @@
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
+  (define display-ranges (display-math-block-ranges rope total-lines))
 
   (let loop ([line-idx 0])
     (when (< line-idx total-lines)
@@ -133,9 +130,10 @@
         (if (string-suffix? line "\n")
             (substring line 0 (- (string-length line) 1))
             line))
-      ;; Only scan comment lines — the converter produces `# `-prefixed
-      ;; markdown cells, and that's where the math lives in .jl files.
-      (when (string-starts-with? trimmed "# ")
+      ;; Only scan comment lines, and never inside a `# $$` display block —
+      ;; those belong to the image renderer.
+      (when (and (string-starts-with? trimmed "# ")
+                 (not (line-in-ranges? line-idx display-ranges)))
         (define content (substring trimmed 2 (string-length trimmed)))
         (define tsv (parse-math-spans content))
         (define rows

@@ -105,10 +105,10 @@ pub fn compute_conceal_overlays_for_comments_with_options(
             continue;
         };
 
-        // Detect multi-line $$ block: a line whose content is just "$$"
+        // A `$$ ... $$` display block is owned by the Typst image renderer
+        // (math-image.scm); inline conceal skips it so the image is the
+        // sole visual rather than three renderers compositing.
         if content.trim() == "$$" {
-            // Find the closing # $$ line
-            let open_line = i;
             let mut close_line = None;
             for (j, &(_, jline)) in lines.iter().enumerate().skip(i + 1) {
                 let jt = jline.trim_end_matches('\n').trim_end_matches('\r');
@@ -123,71 +123,15 @@ pub fn compute_conceal_overlays_for_comments_with_options(
             }
 
             if let Some(close) = close_line {
-                // Hide the opening "# $$" line entirely (both the `#`, the
-                // following space, and the two `$` chars) so the delimiter
-                // line renders as visually empty and the display-math block
-                // sits between two blank lines — matches how Jupyter renders
-                // $$...$$ with vertical breathing room around the equation.
-                emit(line_byte_start, "");
-                emit(line_byte_start + 1, "");
-                let open_content_start = line_byte_start + (trimmed.len() - content.len());
-                let dollar1 = content.find('$').unwrap_or(0);
-                emit(open_content_start + dollar1, "");
-                emit(open_content_start + dollar1 + 1, "");
-
-                // Join all content lines into a single string so environments
-                // like \begin{cases}...\end{cases} span correctly. Track each
-                // line's start offset in the joined string → document byte map.
-                let mut joined = String::new();
-                let mut offset_map: Vec<(usize, usize)> = Vec::new(); // (joined_offset, doc_byte_offset)
-
-                for &(k_byte_start, k_line) in lines.iter().take(close).skip(open_line + 1) {
-                    let k_trimmed = k_line.trim_end_matches('\n').trim_end_matches('\r');
-                    if let Some(k_content) = k_trimmed.strip_prefix("# ") {
-                        let k_content_start = k_byte_start + (k_trimmed.len() - k_content.len());
-
-                        // Indent display-math content so it stands out from
-                        // surrounding prose. Replace the single space after
-                        // `#` with a wider run of spaces; this is the one
-                        // position inside a comment line no scanner overlay
-                        // ever targets, so there's no conflict.
-                        if !k_content.is_empty() {
-                            emit(k_content_start - 1, "      ");
-                        }
-
-                        offset_map.push((joined.len(), k_content_start));
-                        joined.push_str(k_content);
-                        joined.push('\n');
-                    }
-                }
-
-                // Scan the joined block as a single math unit
-                for (overlay_offset, replacement) in scan_to_vec_opts(&joined, opts) {
-                    // Map overlay offset in joined string → document byte offset
-                    let doc_offset = map_joined_offset(&offset_map, overlay_offset);
-                    emit(doc_offset, &replacement);
-                }
-
-                // Hide the closing "# $$" line the same way as the opener.
-                let (close_byte_start, close_line_text) = lines[close];
-                let close_trimmed = close_line_text
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r');
-                if let Some(close_content) = close_trimmed.strip_prefix("# ") {
-                    emit(close_byte_start, "");
-                    emit(close_byte_start + 1, "");
-                    let close_content_start =
-                        close_byte_start + (close_trimmed.len() - close_content.len());
-                    let d = close_content.find('$').unwrap_or(0);
-                    emit(close_content_start + d, "");
-                    emit(close_content_start + d + 1, "");
-                }
-
                 i = close + 1;
                 continue;
             }
-            // No closing $$ found — fall through to single-line processing
         }
+
+        // A markdown pipe table is rendered as a transparent Typst image by
+        // table-image.scm (overlays can't align columns — one grapheme per
+        // source char). The `# | ... |` lines carry no `$` math, so inline
+        // conceal naturally leaves them untouched; nothing to do here.
 
         // Single-line processing: inline $...$ and \(...\)
         if content.is_empty() {
@@ -201,6 +145,14 @@ pub fn compute_conceal_overlays_for_comments_with_options(
 
         for &(region_start, region_end) in &regions {
             if region_end <= region_start {
+                continue;
+            }
+
+            // `$$ x $$` display regions belong to the image renderer.
+            if region_start >= 2
+                && content_bytes[region_start - 1] == b'$'
+                && content_bytes[region_start - 2] == b'$'
+            {
                 continue;
             }
 
@@ -272,23 +224,6 @@ pub fn compute_conceal_overlays_for_comments_with_options(
 /// Build a lookup table from byte offset → char offset. Every byte
 /// position maps to the char index of the character that contains that
 /// byte (so mid-character bytes map correctly too).
-/// Map an offset in the joined $$ block string back to a document byte offset.
-/// `offset_map` is (`joined_offset`, `doc_byte_offset`) for each line start.
-fn map_joined_offset(offset_map: &[(usize, usize)], joined_offset: usize) -> usize {
-    // Find the last line whose joined_offset <= the target
-    let mut best_joined = 0;
-    let mut best_doc = 0;
-    for &(jo, doc) in offset_map {
-        if jo <= joined_offset {
-            best_joined = jo;
-            best_doc = doc;
-        } else {
-            break;
-        }
-    }
-    best_doc + (joined_offset - best_joined)
-}
-
 pub(super) fn build_byte_to_char_map(text: &str) -> Vec<usize> {
     let mut map = vec![0usize; text.len() + 1];
     let mut char_idx = 0;
@@ -313,4 +248,27 @@ fn line_ranges(text: &str) -> Vec<(usize, &str)> {
         start += line.len() + 1;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipe_table_lines_produce_no_overlays() {
+        // Tables render as Typst images (table-image.scm); conceal must leave
+        // their `# | ... |` lines untouched — no box-drawing overlays, no tofu.
+        let text = "# | A | B |\n# |---|---|\n# | x | y |\n";
+        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
+        assert!(!tsv.contains('│'), "no box overlays: {tsv:?}");
+        assert!(!tsv.contains('├'), "no rule overlays: {tsv:?}");
+    }
+
+    #[test]
+    fn inline_math_on_pipe_line_still_conceals() {
+        let text = "# cost | $\\alpha$ |\n";
+        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
+        assert!(tsv.contains('α'), "math should still conceal: {tsv:?}");
+        assert!(!tsv.contains('│'), "no box rows: {tsv:?}");
+    }
 }

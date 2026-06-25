@@ -32,6 +32,8 @@ typst-svg = "0.15"
 typst-kit = { version = "0.15", features = ["embedded-fonts"] }
 resvg = "0.47"
 tiny-skia = "0.12"
+# Parallel batch math rendering (already in the lock via typst's own use).
+rayon = "1"
 
 # Image format handling
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

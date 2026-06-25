@@ -187,10 +187,31 @@ pub fn latex_to_typst_math(latex: &str) -> String {
                     let parts: Vec<&str> = row.splitn(2, '&').collect();
                     if parts.len() == 2 {
                         let cond = parts[1].trim();
-                        if cond.starts_with('"') && cond.ends_with('"') && cond.len() >= 2 {
-                            format!("{} {}", parts[0].trim(), cond)
+                        // Prose conditions ("otherwise") become a Typst string;
+                        // conditions carrying math (\in, digits, operators) stay
+                        // math so they typeset properly rather than as upright text.
+                        let already_quoted =
+                            cond.starts_with('"') && cond.ends_with('"') && cond.len() >= 2;
+                        let is_math = cond.contains('\\')
+                            || cond.bytes().any(|b| {
+                                b.is_ascii_digit()
+                                    || matches!(
+                                        b,
+                                        b'<' | b'>'
+                                            | b'='
+                                            | b'+'
+                                            | b'-'
+                                            | b'['
+                                            | b']'
+                                            | b'('
+                                            | b')'
+                                            | b'/'
+                                    )
+                            });
+                        if already_quoted || is_math {
+                            format!("{} & {}", parts[0].trim(), cond)
                         } else {
-                            format!("{} \"{}\"", parts[0].trim(), cond)
+                            format!("{} & \"{}\"", parts[0].trim(), cond)
                         }
                     } else {
                         row.trim().to_string()

@@ -265,13 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn sum_paired_limits_keep_both_at_normal_size() {
-        // Regression: `\sum_{k=-n}^n` rendered as `∑_k=-nⁿ` because the
-        // braced subscript returned content_start, the main loop walked
-        // `k` (a non-whitespace byte), and the pending_limits reset
-        // zeroed the counter — the matching `^n` then fell into the
-        // regular-superscript path and got shrunk to `ⁿ`. Both limits
-        // must stay at normal size.
+    fn sum_paired_limits_render_as_scripts() {
+        // Inline `\sum_{k=-n}^n` renders its limits as scripts — LaTeX's
+        // inline convention — and does so *symmetrically*: ∑ appears, the
+        // upper `^n` becomes ⁿ, and the lower braced limit shrinks too
+        // (its `-` → ₋). Both ends go through the same glyph path, so the
+        // old `∑_k=-nⁿ` asymmetry (one limit full-size, one shrunk)
+        // cannot recur.
         let result = latex_overlays(r"\sum_{k=-n}^n c_k".into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         let arr = v.as_array().unwrap();
@@ -279,14 +279,39 @@ mod tests {
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        // ∑ from \sum should appear; ⁿ (superscript n) should NOT.
         assert!(
             replacements.contains(&"∑"),
             "expected ∑, got {replacements:?}"
         );
         assert!(
-            !replacements.contains(&"ⁿ"),
-            "limit `^n` must not be shrunk to ⁿ; got {replacements:?}"
+            replacements.contains(&"ⁿ"),
+            "upper limit `^n` should render as ⁿ; got {replacements:?}"
+        );
+        assert!(
+            replacements.contains(&"₋"),
+            "lower limit `-` should render as subscript ₋; got {replacements:?}"
+        );
+    }
+
+    #[test]
+    fn sum_with_bare_single_char_limit_renders_subscript() {
+        // The reported bug: inline `\sum_m` showed a literal `_m` instead
+        // of a subscript. It must now render ∑ and ₘ — the limit shrinks
+        // like any inline subscript.
+        let result = latex_overlays(r"\sum_m \varphi_m".into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(
+            replacements.contains(&"∑"),
+            "expected ∑, got {replacements:?}"
+        );
+        assert!(
+            replacements.contains(&"ₘ"),
+            "expected subscript ₘ for `\\sum_m`, got {replacements:?}"
         );
     }
 
@@ -331,10 +356,9 @@ mod tests {
     }
 
     #[test]
-    fn integral_with_ascii_bounds_keeps_limits_normal_size() {
-        // Sibling of sum_paired_limits — confirms the past_close fix
-        // doesn't shrink ASCII integral bounds either. `\int_a^b f(x)dx`
-        // must produce ∫ but not ᵃ / ᵇ.
+    fn integral_with_ascii_bounds_render_as_scripts() {
+        // Sibling of sum_paired_limits — inline integral bounds render as
+        // scripts: `\int_a^b f(x)dx` produces ∫, ₐ (lower) and ᵇ (upper).
         let result = latex_overlays(r"\int_a^b f(x)dx".into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         let arr = v.as_array().unwrap();
@@ -347,17 +371,20 @@ mod tests {
             "expected ∫, got {replacements:?}"
         );
         assert!(
-            !replacements.contains(&"ᵃ") && !replacements.contains(&"ᵇ"),
-            "integral bounds got shrunk: {replacements:?}"
+            replacements.contains(&"ₐ"),
+            "lower bound `a` should render as ₐ; got {replacements:?}"
+        );
+        assert!(
+            replacements.contains(&"ᵇ"),
+            "upper bound `b` should render as ᵇ; got {replacements:?}"
         );
     }
 
     #[test]
-    fn prod_with_braced_subscript_and_bare_super_keeps_limits() {
-        // `\prod_{i=1}^n a_i` — the paired (braced sub + bare super)
-        // case at a different big operator. ∏ must appear; the bare
-        // `^n` must NOT shrink to ⁿ (subscript a_i can stay subscripted
-        // since `a_i` is the inline-sub path, not a big-op limit).
+    fn prod_with_braced_subscript_and_bare_super_render_as_scripts() {
+        // `\prod_{i=1}^n a_i` — paired (braced sub + bare super) at a
+        // different big operator. ∏ appears, the upper `^n` renders ⁿ, and
+        // the lower braced limit shrinks too (its `1` → ₁).
         let result = latex_overlays(r"\prod_{i=1}^n a_i".into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         let arr = v.as_array().unwrap();
@@ -370,8 +397,12 @@ mod tests {
             "expected ∏, got {replacements:?}"
         );
         assert!(
-            !replacements.contains(&"ⁿ"),
-            "paired-limit shrunk superscript: {replacements:?}"
+            replacements.contains(&"ⁿ"),
+            "upper limit `^n` should render as ⁿ; got {replacements:?}"
+        );
+        assert!(
+            replacements.contains(&"₁"),
+            "lower limit `1` should render as ₁; got {replacements:?}"
         );
     }
 
@@ -744,28 +775,15 @@ mod tests {
     }
 
     #[test]
-    fn comment_conceal_dollar_dollar_block() {
-        // Multi-line $$ block: \alpha should become α, ^2 should become ²
+    fn dollar_dollar_block_owned_by_image_renderer() {
+        // A `$$` display block belongs to the Typst image renderer; inline
+        // conceal must emit nothing so the two don't composite.
         let input = "# $$\n# y_n = x_n - \\alpha^2\\, x_{n-2}\n# $$\n";
         let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
-        // Should have overlays — at minimum: $$ hidden (4), \alpha → α, ^2 → ², \, → thin space
         assert!(
-            overlays.len() >= 4,
-            "Expected overlays for $$ block, got {} overlays: {:?}",
-            overlays.len(),
-            overlays
-        );
-        // Check α replacement exists
-        assert!(
-            overlays.iter().any(|(_, r)| r == "α"),
-            "Expected α in overlays, got: {:?}",
-            overlays
-        );
-        // Check ² replacement exists
-        assert!(
-            overlays.iter().any(|(_, r)| r == "²"),
-            "Expected ² in overlays, got: {:?}",
+            overlays.is_empty(),
+            "expected no overlays for a $$ block, got: {:?}",
             overlays
         );
     }
@@ -802,13 +820,13 @@ mod tests {
     }
 
     #[test]
-    fn comment_conceal_begin_cases_block() {
+    fn begin_cases_block_owned_by_image_renderer() {
         let input = "# $$\n#    h_n = \\begin{cases}\n#    1 & 0 \\leq n \\leq 2 \\\\\\\\\n#    0 & \\text{otherwise}\n#    \\end{cases}\n# $$\n";
         let result = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
         let overlays = parse_tsv(&result);
         assert!(
-            overlays.iter().any(|(_, r)| r == "≤"),
-            "Expected ≤ for \\leq, got: {:?}",
+            overlays.is_empty(),
+            "expected no overlays for a $$ cases block, got: {:?}",
             overlays
         );
     }

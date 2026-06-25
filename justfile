@@ -1,10 +1,13 @@
 # nothelix task runner
 #
-# `just install` is the single source of truth for installing nothelix:
+# `just install` installs the parts that change as you iterate:
 #
 #   ~/.steel/native/libnothelix.{dylib,so}  — FFI dylib, codesigned on macOS
 #   ~/.steel/cogs/nothelix.scm              — plugin entry symlink
 #   ~/.steel/cogs/nothelix/                 — plugin module directory symlink
+#
+# `just setup-lsp` is the one-time Julia LSP bootstrap (wrapper + env):
+#
 #   ~/.local/bin/julia-lsp                  — Julia LSP wrapper script
 #
 # Why ~/.steel/cogs? Steel's module resolver searches it automatically, so
@@ -30,7 +33,7 @@ steel_cogs := env("HOME") / ".steel" / "cogs"
 local_bin := env("HOME") / ".local" / "bin"
 nothelix_root := justfile_directory()
 
-# build + install dylib, plugin, julia-lsp, and set up the LSP environment
+# build + install the dylib and plugin symlinks (run after Rust changes)
 install profile="release":
     #!/usr/bin/env sh
     set -eu
@@ -93,23 +96,35 @@ install profile="release":
         [ -e "$config_helix/nothelix" ]     && echo "           rm -rf $config_helix/nothelix"
     fi
 
-    # ── Julia LSP wrapper ─────────────────────────────────────────────────
+# Julia bootstrap: LSP wrapper + LSP env + kernel runtime dep (re-run after a Julia version change)
+setup-lsp:
+    #!/usr/bin/env sh
+    set -eu
     mkdir -p "{{ local_bin }}"
     cp "{{ nothelix_root }}/lsp/julia-lsp" "{{ local_bin }}/julia-lsp"
     chmod +x "{{ local_bin }}/julia-lsp"
     echo "Installed: {{ local_bin }}/julia-lsp"
 
-    # ── LSP environment ───────────────────────────────────────────────────
-    # The dylib + plugin + julia-lsp wrapper are already installed above; the
-    # Pkg.instantiate() step is a "warm the cache" nice-to-have so the FIRST
-    # `.jl` open doesn't pay LSP cold-start. If julia isn't on PATH (running
-    # outside `nix develop`), skip with a hint instead of failing the whole
-    # install — the LSP also instantiates on demand when julia-lsp first runs.
     if command -v julia >/dev/null 2>&1; then
-        echo "Setting up Julia LSP environment..."
-        julia --startup-file=no --quiet --project="{{ nothelix_root }}/lsp" -e 'using Pkg; Pkg.instantiate()'
+        echo "Setting up Julia LSP environment (patched SymbolServer for 1.14)..."
+        # Mirror lsp.rs::ensure_lsp_environment exactly: the runtime env lives
+        # in the data dir, NOT the repo. Warming it here avoids a ~2 min wait
+        # on the user's first .jl open (where lsp.rs would otherwise build it).
+        runtime="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
+        mkdir -p "$runtime/depot"
+        printf '[deps]\nLanguageServer = "2b0e0bc5-e4fd-59b4-8912-456d1b03d8d7"\n' > "$runtime/Project.toml"
+        cp "{{ nothelix_root }}/lsp/symbolserver-1.14.patch" "$runtime/symbolserver-1.14.patch"
+        cp "{{ nothelix_root }}/lsp/bootstrap.jl" "$runtime/bootstrap.jl"
+        JULIA_DEPOT_PATH="$runtime/depot" \
+            julia --startup-file=no --quiet --project="$runtime" \
+            "$runtime/bootstrap.jl" "$runtime" "$runtime/symbolserver-1.14.patch" "$runtime/NothelixMacros"
+        # The kernel runs in the user's default env (so cells can import their
+        # own packages). Its one required dep is JSON3; a Julia version bump
+        # gives a fresh empty env, so ensure it here. Idempotent.
+        echo "Ensuring kernel runtime dep (JSON3) in the active Julia env..."
+        julia --startup-file=no --quiet -e 'using Pkg; haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
     else
-        echo "julia not on PATH — skipping LSP env warm-up (will instantiate on first .jl open)"
+        echo "julia not on PATH — skipping Julia env warm-up (set up on first .jl open)"
     fi
 
 # build without installing
@@ -118,7 +133,23 @@ build profile="release":
 
 # run tests
 test:
-    cargo test -p libnothelix
+    cargo nextest run -p libnothelix
+
+# static gate: run before committing. Rust lints + tests, then load the
+# plugin in a REAL hx binary to catch Steel load errors (FreeIdentifier,
+# BadSyntax, ArityMismatch). Standalone `steel` can't do the Steel half —
+# it lacks helix's native builtins, so it can't resolve `require-builtin
+# helix/core/*` or check `helix.static.*` arities.
+check:
+    #!/usr/bin/env sh
+    set -eu
+    echo "── clippy ──"
+    cargo clippy -p libnothelix --all-targets -- -D warnings
+    echo "── nextest ──"
+    command -v cargo-nextest >/dev/null 2>&1 || cargo install --locked cargo-nextest
+    cargo nextest run -p libnothelix
+    echo "── plugin load ──"
+    "{{ nothelix_root }}/scripts/check-plugin.sh"
 
 # remove the installed dylib, plugin symlinks, and julia-lsp
 uninstall:

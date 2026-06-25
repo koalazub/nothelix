@@ -131,7 +131,7 @@ You'll need four things:
 - Julia, since that's currently the only supported kernel.
 - A terminal with Kitty graphics protocol support — Kitty, Ghostty, or WezTerm.
 
-**Avoid terminal multiplexers.** Zellij and tmux intercept escape sequences and strip the ones Kitty uses for inline graphics, so plots won't render. Run Helix directly in your terminal, or use a multiplexer that passes the Kitty protocol through untouched.
+**Avoid terminal multiplexers.** Zellij and tmux intercept escape sequences and strip the ones Kitty uses for inline graphics, so anything image-based — plots and rendered display math (`$$ … $$`) — won't appear. Inline unicode math and concealed symbols still render, since those are plain text. Run Helix directly in a Kitty-protocol terminal (Ghostty, Kitty, WezTerm), or use a multiplexer that passes the Kitty protocol through untouched.
 
 ## Getting Started
 
@@ -365,6 +365,8 @@ The overlay engine is a byte-offset scanner that walks the text inside each `$..
 | `&` in environments | replaced with space |
 
 All overlay generation goes through a hand-rolled byte-offset scanner that walks source text in a single O(n) pass with no pathological cases.
+
+Markdown pipe tables ride the same overlay path: a run of `# | … |` comment lines is detected, the columns are measured, and each source line is replaced 1:1 with an aligned box-drawing row (`│ … │` / `├───┼───┤`). Because the result is plain text rather than a kitty image, tables render inline anywhere — including under terminal multiplexers — and the raw markdown reappears on the cursor's line for editing.
 
 ## Current Limitations
 

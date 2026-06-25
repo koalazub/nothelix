@@ -58,7 +58,7 @@
   (define text (text.rope->string rope))
   (define path (editor-document->path doc-id))
   (cond
-    [(and path (ends-with-jl? path))
+    [(and path (string-suffix? path ".jl"))
      ;; .jl: per-line comment scanning, returns tab-separated format.
      ;; Pass hide_math_layout when the math-render plugin is active so
      ;; the concealer suppresses inline `_{…}^{…}` / `\frac{…}{…}` that
@@ -84,20 +84,15 @@
             (let ([line (car lines)])
               (if (equal? line "")
                   (loop (cdr lines) result)
-                  (let ([tab-pos (find-tab line)])
-                    (if (not tab-pos)
-                        (loop (cdr lines) result)
-                        (let ([offset (string->number (substring line 0 tab-pos))]
-                              [replacement (substring line (+ tab-pos 1) (string-length line))])
-                          (loop (cdr lines)
-                                (cons (cons offset replacement) result)))))))))))
-
-(define (find-tab str)
-  (let loop ([i 0])
-    (cond
-      [(>= i (string-length str)) #false]
-      [(char=? (string-ref str i) #\tab) i]
-      [else (loop (+ i 1))])))
+                  ;; split-once yields a 2-element list on a tab, and a
+                  ;; non-list (void) when the line has none — guard on list?
+                  ;; so a tab-less line is skipped, not car'd into a crash.
+                  (let ([parts (split-once line "\t")])
+                    (if (list? parts)
+                        (loop (cdr lines)
+                              (cons (cons (string->number (car parts)) (cadr parts))
+                                    result))
+                        (loop (cdr lines) result)))))))))
 
 ;;; Parse the JSON overlay string into a list of (offset . replacement) pairs.
 ;;; This is pure computation — safe to run on any thread.
@@ -125,11 +120,6 @@
                          (cons (cons offset-val replacement-str) result)))]
           [else (parse-loop (+ pos 1) result)]))))
 
-(define (ends-with-jl? path)
-  (define len (string-length path))
-  (and (>= len 3)
-       (string=? (substring path (- len 3) len) ".jl")))
-
 ;;; ─── Conceal orchestration ───────────────────────────────────────────────────
 ;;;
 ;;; The orchestration layer owns the "when should conceal run" logic and
@@ -140,12 +130,6 @@
 
 (define *conceal-extensions* '("md" "markdown" "tex" "jl" "typ" "qmd" "rmd"))
 
-(define (ends-with? str suffix)
-  (define slen (string-length suffix))
-  (define tlen (string-length str))
-  (and (>= tlen slen)
-       (string=? (substring str (- tlen slen) tlen) suffix)))
-
 ;;@doc
 ;; #true if the file extension is one that should get LaTeX concealment.
 (define (file-has-conceal-extension? path)
@@ -153,7 +137,7 @@
        (let loop ((exts *conceal-extensions*))
          (cond
            [(null? exts) #false]
-           [(ends-with? path (string-append "." (car exts))) #true]
+           [(string-suffix? path (string-append "." (car exts))) #true]
            [else (loop (cdr exts))]))))
 
 ;;@doc

@@ -69,6 +69,7 @@
 (require "nothelix/math-format.scm")
 (require "nothelix/math-render.scm")
 (require "nothelix/math-image.scm")
+(require "nothelix/table-image.scm")
 (require "nothelix/animation.scm")
 (require "nothelix/health.scm")
 
@@ -87,6 +88,7 @@
          math-render-clear
          render-math-at-cursor
          render-all-display-math
+         render-all-tables
          clear-math-images
          kernel-shutdown kernel-shutdown-all
          graphics-protocol graphics-check nothelix-status
@@ -271,6 +273,7 @@
     "math-render-clear"  "Remove every virtual-row math annotation from the current buffer."
     "render-math-at-cursor" "Render the # $$ display-math block under the cursor as a Typst SVG image."
     "render-all-display-math" "Render every # $$ display-math block in the buffer as Typst SVG images."
+    "render-all-tables"     "Render every markdown pipe table in the buffer as a transparent Typst image."
     "clear-math-images"     "Remove all inline math-image renderings from the current buffer."
 
     ;; Kernel lifecycle
@@ -429,8 +432,13 @@
        (format-math-buffer #true)
        (math-render-buffer)
        (when (not (math-image-test-mode?))
-         (render-all-display-math))
-       (renumber-cells!)]
+         (render-all-display-math)
+         (render-all-tables))
+       (renumber-cells!)
+       ;; Markdown tables conceal inline like math; the save-time tidy
+       ;; above shifts char offsets, so refresh overlays against the
+       ;; rewritten buffer.
+       (schedule-reconceal 50)]
     [(member command-name *mutating-commands*)
      ;; Cache is stale from the moment the command started running.
      ;; apply-conceal-for-cursor will fail closed until reconceal completes.
@@ -448,7 +456,8 @@
           (render-cached-images)
           (maybe-conceal-current-buffer)
           (when (not (math-image-test-mode?))
-            (render-all-display-math)))))))
+            (render-all-display-math)
+            (render-all-tables)))))))
 
 ;; Cursor-aware conceal: when the cursor moves to a different line, re-filter
 ;; cached overlays to exclude that line so the user sees raw LaTeX while

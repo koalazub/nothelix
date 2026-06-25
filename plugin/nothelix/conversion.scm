@@ -26,6 +26,12 @@
          export-markdown
          export-typst)
 
+(define (path-basename p)
+  (let ([parts (string-split p "/")])
+    (if (null? parts)
+        p
+        (list-ref parts (- (length parts) 1)))))
+
 ;;@doc
 ;; Convert the current .ipynb to the Nothelix .jl cell format.
 ;; Validates the notebook JSON, then spawns a native thread for the conversion
@@ -44,13 +50,14 @@
      (set-status! "Error: Not a .ipynb file")]
 
     [else
-     (define validation-error (notebook-validate path))
-     (if (not (equal? validation-error ""))
-         (set-status! (string-append "Invalid notebook: " validation-error))
-         (begin
-           (set-status! "Converting...")
-           (spawn-native-thread
-             (lambda ()
+     (set-status! "Converting…")
+     (spawn-native-thread
+       (lambda ()
+         (define validation-error (notebook-validate path))
+         (if (not (equal? validation-error ""))
+             (hx.with-context
+               (lambda () (set-status! (string-append "Invalid notebook: " validation-error))))
+             (begin
                (define result (notebook-convert-sync! path))
                (define cell-count (notebook-cell-count path))
                (hx.with-context
@@ -63,12 +70,12 @@
                              (substring path 0 (- (string-length path) 6))
                              ".jl"))
                          (define write-err (write-string-to-file! output-path result))
-                         (when (not (equal? write-err ""))
-                           (set-status! write-err))
-                         (set-status!
-                           (string-append "Converted to " output-path ": "
-                                          (number->string cell-count)
-                                          " cells. Run :open " output-path))))))))))]))
+                         (if (not (equal? write-err ""))
+                             (set-status! write-err)
+                             (set-status!
+                               (string-append "✓ " (number->string cell-count)
+                                              " cells · " (path-basename output-path)
+                                              " — :open to view")))))))))))]))
 
 ;;@doc
 ;; Sync changes from the .jl file back to the original .ipynb.
@@ -87,11 +94,15 @@
      (set-status! "Error: Not a .jl file. Only converted notebooks can be synced back.")]
 
     [else
-     (set-status! "Syncing to .ipynb...")
-     (define result (convert-to-ipynb! path))
-     (if (string-starts-with? result "ERROR:")
-         (set-status! result)
-         (set-status! "Synced changes back to .ipynb"))]))
+     (set-status! "Syncing to .ipynb…")
+     (spawn-native-thread
+       (lambda ()
+         (define result (convert-to-ipynb! path))
+         (hx.with-context
+           (lambda ()
+             (if (string-starts-with? result "ERROR:")
+                 (set-status! result)
+                 (set-status! "Synced changes back to .ipynb"))))))]))
 
 ;;@doc
 ;; Export the current .jl notebook to Markdown (.md).
@@ -107,11 +118,11 @@
     [(not (string-suffix? path ".jl"))
      (set-status! "Error: Not a .jl file")]
     [else
-     (set-status! "Exporting to Markdown...")
-     (define result (export-to-markdown! path))
-     (if (string-starts-with? result "ERROR:")
-         (set-status! result)
-         (set-status! result))]))
+     (set-status! "Exporting to Markdown…")
+     (spawn-native-thread
+       (lambda ()
+         (define result (export-to-markdown! path))
+         (hx.with-context (lambda () (set-status! result)))))]))
 
 ;;@doc
 ;; Export the current .jl notebook to Typst (.typ).
@@ -127,8 +138,8 @@
     [(not (string-suffix? path ".jl"))
      (set-status! "Error: Not a .jl file")]
     [else
-     (set-status! "Exporting to Typst...")
-     (define result (export-to-typst! path))
-     (if (string-starts-with? result "ERROR:")
-         (set-status! result)
-         (set-status! result))]))
+     (set-status! "Exporting to Typst…")
+     (spawn-native-thread
+       (lambda ()
+         (define result (export-to-typst! path))
+         (hx.with-context (lambda () (set-status! result)))))]))

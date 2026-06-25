@@ -20,7 +20,7 @@
 ;; rule lives on that constant's doc comment). The `ffi-version-mismatch`
 ;; doctor check in libnothelix/src/health.rs scans this file — keep the
 ;; exact `(define EXPECTED-FFI-VERSION <n>)` shape.
-(define EXPECTED-FFI-VERSION 4)
+(define EXPECTED-FFI-VERSION 10)
 
 ;; A dylib that predates the handshake doesn't export
 ;; `nothelix-ffi-version` at all, so naming it in an (only-in ...) import

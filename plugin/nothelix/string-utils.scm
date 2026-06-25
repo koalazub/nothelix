@@ -1,8 +1,10 @@
 ;;; string-utils.scm - String manipulation and JSON parsing utilities
 ;;;
-;;; These are pure-Scheme implementations used at module load time (before
-;;; the FFI dylib is available) and in places where calling into Rust would
-;;; be overkill.  For heavy JSON work the Rust FFI functions `json-get`,
+;;; The simple predicates/trimmers delegate to Steel's native `steel/strings`
+;;; builtins — those live in the global prelude (the plugin already calls
+;;; `make-string`/`substring` bare), so they're available at module load
+;;; time independent of the libnothelix FFI dylib. The JSON scanners below
+;;; stay hand-rolled; for heavy JSON work the Rust FFI functions `json-get`,
 ;;; `json-get-bool`, and `json-get-first-image` should be preferred.
 
 (provide string-trim
@@ -26,48 +28,16 @@
       [else (loop (+ pos 1))])))
 
 (define (string-trim-left s)
-  (if (not (string? s))
-      ""
-      (let loop ([i 0])
-        (cond
-          [(>= i (string-length s)) ""]
-          [(char-whitespace? (string-ref s i)) (loop (+ i 1))]
-          [else (substring s i (string-length s))]))))
+  (if (string? s) (trim-start s) ""))
 
 (define (string-trim str)
-  (define (trim-start s)
-    (let loop ([i 0])
-      (cond
-        [(>= i (string-length s)) ""]
-        [(char-whitespace? (string-ref s i)) (loop (+ i 1))]
-        [else (substring s i (string-length s))])))
-
-  (define (trim-end s)
-    (let loop ([i (- (string-length s) 1)])
-      (cond
-        [(< i 0) ""]
-        [(char-whitespace? (string-ref s i)) (loop (- i 1))]
-        [else (substring s 0 (+ i 1))])))
-
-  (cond
-    [(not str) ""]
-    [(void? str) ""]
-    [(not (string? str)) ""]
-    [else (trim-end (trim-start str))]))
+  (if (string? str) (trim str) ""))
 
 (define (string-starts-with? str prefix)
-  (and (string? str)
-       (string? prefix)
-       (>= (string-length str) (string-length prefix))
-       (equal? (substring str 0 (string-length prefix)) prefix)))
+  (and (string? str) (string? prefix) (starts-with? str prefix)))
 
 (define (string-suffix? str suffix)
-  (and (string? str)
-       (string? suffix)
-       (let [(str-len (string-length str))
-             (suf-len (string-length suffix))]
-         (and (>= str-len suf-len)
-              (equal? (substring str (- str-len suf-len) str-len) suffix)))))
+  (and (string? str) (string? suffix) (ends-with? str suffix)))
 
 (define (string-contains? str substr)
   (and (string? str)

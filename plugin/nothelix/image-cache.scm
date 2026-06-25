@@ -33,7 +33,8 @@
          sync-images-if-markers-changed!
          extract-cell-index-from-path
          render-cached-images
-         insert-image)
+         insert-image
+         djb2-hash)
 
 ;;; ============================================================================
 ;;; IMAGE DEDUP STATE
@@ -96,13 +97,14 @@
 ;; `(cell-index->image-id N)` so kernel-produced outputs keep their existing
 ;; id → in-place replacement behavior. For arbitrary paths (user-inserted
 ;; images, converter-emitted paths that don't round-trip through the kernel),
-;; hashes the path into a disjoint id range (>= 2_000_000) so it can't
-;; collide with the cell-index range.
+;; hashes the path into a disjoint id band [1_000_000, 4_000_000) that can't
+;; collide with the cell-index range and stays under the 24-bit kitty
+;; placeholder id ceiling (see math-image.scm).
 (define (path->image-id rel-path)
   (define cell-idx (extract-cell-index-from-path rel-path))
   (if cell-idx
       (cell-index->image-id cell-idx)
-      (+ 2000000 (modulo (djb2-hash rel-path) 100000000))))
+      (+ 1000000 (modulo (djb2-hash rel-path) 3000000))))
 
 ;;@doc
 ;; Best-effort `clear-raw-content!` wrapper.
