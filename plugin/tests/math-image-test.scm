@@ -62,9 +62,9 @@
 
   ;; JSON parser
   (assert-equal
-    (list "iVBORw0KGgo=" 150 50 "")
+    (list "PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjUwIj48L3N2Zz4=" 150 50 "")
     (parse-math-image-result
-      "{\"b64\":\"iVBORw0KGgo=\",\"width\":150,\"height\":50,\"error\":\"\"}")
+      "{\"b64\":\"PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjUwIj48L3N2Zz4=\",\"width\":150,\"height\":50,\"error\":\"\"}")
     "parse-math-image-result extracts b64, width, height, error")
 
   (assert-equal

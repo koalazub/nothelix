@@ -17,7 +17,9 @@ use typst_svg::{svg, SvgOptions};
 
 use crate::typst_export::latex_to_typst_math;
 
-static MATH_IMAGE_CACHE: Mutex<Option<HashMap<(String, isize), (String, u32, u32)>>> =
+type MathImageCacheEntry = (String, u32, u32);
+
+static MATH_IMAGE_CACHE: Mutex<Option<HashMap<(String, isize), MathImageCacheEntry>>> =
     Mutex::new(None);
 
 fn math_json(b64: &str, width: u32, height: u32, error: &str) -> String {
@@ -27,7 +29,7 @@ fn math_json(b64: &str, width: u32, height: u32, error: &str) -> String {
 }
 
 pub fn render_math_to_svg(latex: String, font_size_pt: isize) -> String {
-    let pt = font_size_pt.max(8).min(96) as f64;
+    let pt = font_size_pt.clamp(8, 96) as f64;
 
     if let Ok(result) = get_cached(&latex, font_size_pt) {
         return math_json(&result.0, result.1, result.2, "");

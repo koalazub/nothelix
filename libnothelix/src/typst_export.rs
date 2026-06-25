@@ -399,8 +399,7 @@ pub fn latex_to_typst_math(latex: &str) -> String {
             if let Some(body_end) = matching_brace(after) {
                 let body = after[..body_end].to_string();
                 let rest = &after[body_end + 1..];
-                let (ann, consumed) = if rest.starts_with(marker) {
-                    let inner = &rest[marker.len()..];
+                let (ann, consumed) = if let Some(inner) = rest.strip_prefix(marker) {
                     if let Some(end) = matching_brace(inner) {
                         (inner[..end].to_string(), marker.len() + end + 1)
                     } else {
@@ -1175,9 +1174,11 @@ mod tests {
     }
 
     #[test]
-    fn debug_sigma_sqrt() {
-        let result = latex_to_typst_math(r"\sigma\sqrt{2\pi}");
-        eprintln!("RESULT: {result}");
+    fn adjacent_sigma_and_sqrt() {
+        assert_eq!(
+            latex_to_typst_math(r"\sigma\sqrt{2\pi}"),
+            "sigma sqrt(2 pi)"
+        );
         assert_eq!(latex_to_typst_math(r"\sigma"), "sigma");
         assert_eq!(latex_to_typst_math(r"\sqrt{x}"), "sqrt(x)");
     }

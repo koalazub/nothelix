@@ -1,5 +1,5 @@
 //! Comprehensive corpus of LaTeX math expressions used to validate
-//! nothelix's LaTeX -> Typst -> PNG rendering pipeline.
+//! nothelix's LaTeX -> Typst -> SVG rendering pipeline.
 //!
 //! The corpus covers the categories requested for the audit:
 //! Euler identities, Fourier transforms, Taylor series, determinants,

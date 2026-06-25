@@ -4,7 +4,7 @@
 /// Returns `Some(pos)` where `pos` is the byte index after the matching `}`,
 /// or `None` if no matching brace is found.
 #[inline]
-pub fn find_matching_brace(bytes: &[u8], mut start: usize) -> Option<usize> {
+fn find_matching_brace(bytes: &[u8], mut start: usize) -> Option<usize> {
     let mut depth = 1i32;
     while start < bytes.len() && depth > 0 {
         match bytes[start] {
@@ -24,7 +24,7 @@ pub fn find_matching_brace(bytes: &[u8], mut start: usize) -> Option<usize> {
 
 /// Find the matching `}` for content starting after the opening `{`.
 /// Returns the byte index of the matching `}` within `s`, or `None` if not found.
-pub fn matching_brace(s: &str) -> Option<usize> {
+pub(crate) fn matching_brace(s: &str) -> Option<usize> {
     find_matching_brace(s.as_bytes(), 0).map(|pos| pos - 1)
 }
 
