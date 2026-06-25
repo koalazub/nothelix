@@ -23,7 +23,7 @@ mod math_format;
 mod math_corpus;
 pub use math_corpus::CORPUS;
 mod math_image;
-pub use math_image::render_math_to_png;
+pub use math_image::render_math_to_svg;
 mod notebook;
 mod parse;
 mod typst_export;
@@ -44,7 +44,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 3;
+pub const NOTHELIX_FFI_VERSION: u32 = 4;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -89,7 +89,7 @@ fn build_module() -> FFIModule {
     m.register_fn("export-to-markdown!", notebook::export_to_markdown);
     m.register_fn("export-to-typst!", notebook::export_to_typst);
     m.register_fn("format-math", math_format::format_math);
-    m.register_fn("render-math-to-png", math_image::render_math_to_png);
+    m.register_fn("render-math-to-svg", math_image::render_math_to_svg);
 
     // ── Execution ─────────────────────────────────────────────────────────────
     m.register_fn(

@@ -269,8 +269,8 @@
     "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
     "math-render-buffer" "Stack big-operator limits (\\int / \\sum / \\prod …) above/below their glyph via virtual rows."
     "math-render-clear"  "Remove every virtual-row math annotation from the current buffer."
-    "render-math-at-cursor" "Render the # $$ display-math block under the cursor as a Typst PNG image."
-    "render-all-display-math" "Render every # $$ display-math block in the buffer as Typst PNG images."
+    "render-math-at-cursor" "Render the # $$ display-math block under the cursor as a Typst SVG image."
+    "render-all-display-math" "Render every # $$ display-math block in the buffer as Typst SVG images."
     "clear-math-images"     "Remove all inline math-image renderings from the current buffer."
 
     ;; Kernel lifecycle

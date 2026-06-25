@@ -116,9 +116,8 @@ pub fn kitty_placeholder_max_dim() -> isize {
 /// cached under the id but does NOT draw them anywhere. Drawing is
 /// triggered by placeholder cells produced by `kitty_placeholder_rows`.
 ///
-/// `b64_data` is either a base64-encoded PNG (fast path) or a base64-
-/// encoded image in any other format (we decode, re-encode as PNG, and
-/// re-base64).
+/// `b64_data` is a base64-encoded PNG (fast path), SVG (rasterized for
+/// Kitty), or any other image format (decoded and re-encoded as PNG).
 pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
     let trimmed = b64_data.trim();
     let data = match BASE64.decode(trimmed) {
@@ -127,11 +126,39 @@ pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
     };
     let b64 = if data.starts_with(b"\x89PNG") {
         trimmed.to_string()
+    } else if is_svg(&data) {
+        match rasterize_svg_to_png(&data) {
+            Ok(png) => BASE64.encode(&png),
+            Err(e) => return format!("ERROR: svg rasterize: {e}"),
+        }
     } else {
         let png = ensure_png(&data);
         BASE64.encode(&png)
     };
     build_virtual_transmission(&b64, image_id as u32)
+}
+
+fn is_svg(data: &[u8]) -> bool {
+    data.starts_with(b"<svg") || data.starts_with(b"<?xml")
+}
+
+/// Rasterize SVG to PNG at 2× intrinsic size for crisp terminal display.
+fn rasterize_svg_to_png(svg_data: &[u8]) -> Result<Vec<u8>, String> {
+    let opt = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(svg_data, &opt).map_err(|e| format!("svg parse: {e}"))?;
+    let size = tree.size();
+    let scale = 2.0f32;
+    let w = ((size.width() * scale).ceil() as u32).max(1);
+    let h = ((size.height() * scale).ceil() as u32).max(1);
+    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or("pixmap alloc failed")?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    pixmap
+        .encode_png()
+        .map_err(|e| format!("png encode: {e}"))
 }
 
 /// Like `kitty_placeholder_payload` but accepts raw image bytes directly
@@ -243,6 +270,19 @@ pub fn kitty_placeholder_rows(image_id: isize, cols: isize, rows: isize) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payload_rasterizes_svg_to_png() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>"#;
+        let b64 = BASE64.encode(svg);
+        let payload = kitty_placeholder_payload(b64, 42);
+        assert!(
+            payload.contains("f=100"),
+            "svg payload must transmit as PNG to Kitty"
+        );
+        assert!(payload.contains("U=1"));
+        assert!(payload.contains("i=42"));
+    }
 
     #[test]
     fn payload_has_virtual_placement_flag() {

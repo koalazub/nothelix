@@ -1,9 +1,9 @@
-;;; math-image.scm - Render LaTeX display math as inline PNG images.
+;;; math-image.scm - Render LaTeX display math as inline SVG images.
 ;;;
 ;;; Uses Typst to typeset the math and the Kitty Unicode placeholder
-;;; protocol to embed the resulting image inside the Helix buffer. This
-;;; keeps the Helix fork changes minimal (only the existing RawContent
-;;; API) while giving true LaTeX-quality layout for complex display math.
+;;; protocol to embed the resulting image inside the Helix buffer. SVG
+;;; export keeps math resolution-independent; the Kitty payload path
+;;; rasterizes at display time so scaling is not tied to a guessed PPI.
 
 (require "common.scm")
 (require "debug.scm")
@@ -20,7 +20,7 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           getenv
-                          render-math-to-png
+                          render-math-to-svg
                           kitty-placeholder-payload
                           kitty-placeholder-rows))
 
@@ -45,13 +45,12 @@
 ;; vertical space.
 (define *math-image-target-rows* (box 5))
 
-;; Typst font size in points passed to the Rust renderer. This mostly
-;; affects the rendered PNG's resolution at a given PPI, not its on-screen
-;; size (which is governed by the placeholder grid).
+;; Typst font size in points passed to the Rust renderer. This sets the
+;; intrinsic SVG size; on-screen size is governed by the placeholder grid.
 (define *math-image-font-pt* (box 14))
 
 ;; Assumed terminal cell aspect ratio (cell-height / cell-width). Used
-;; to map the PNG's pixel aspect ratio to terminal columns.
+;; to map the SVG's intrinsic aspect ratio to terminal columns.
 (define *math-image-cell-aspect* (box 2.0))
 
 ;;; ---------------------------------------------------------------------------
@@ -87,16 +86,16 @@
 (define (set-math-image-test-mode! val)
   (set-box! *math-image-test-mode* val))
 
-;; Mock JSON emitted by render-math-to-png in test mode. Uses a 160x80
+;; Mock JSON emitted by render-math-to-svg in test mode. Uses a 160x80
 ;; rectangle so the sizing math is still exercised.
 (define *math-image-test-result*
-  "{\"b64\":\"iVBORw0KGgoAAAANSUhEUgAAAKAAAABQCAYAAACeXX40AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6QUbBBgEJ0gH1gAAAB1pVFh0Q29tbWVudAAAAAAAQ3JlYXRlZCB3aXRoIEdJTVBkLmUHAAAAs0lEQVR42u3RMQ0AIBAEwZNUQAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAd0QAf0vQf+NwT8LgAAAABJRU5ErkJggg==\",\"width\":160,\"height\":80,\"error\":\"\"}")
+  "{\"b64\":\"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCAxNjAgODAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIGZpbGw9IndoaXRlIi8+PC9zdmc+\",\"width\":160,\"height\":80,\"error\":\"\"}")
 
 ;;; ---------------------------------------------------------------------------
 ;;; JSON result parsing
 ;;; ---------------------------------------------------------------------------
 
-;; Parse the JSON object emitted by render-math-to-png:
+;; Parse the JSON object emitted by render-math-to-svg:
 ;;   {"b64":"...","width":W,"height":H,"error":""}
 ;; Returns a list (b64 width height error) or #false on parse failure.
 (define (parse-math-image-result json)
@@ -192,12 +191,12 @@
 ;;; FFI wrappers (mockable in test mode)
 ;;; ---------------------------------------------------------------------------
 
-;; Wrapper around render-math-to-png. In test mode returns a deterministic
+;; Wrapper around render-math-to-svg. In test mode returns a deterministic
 ;; mock result so the sizing path is exercised without invoking Typst.
-(define (call-render-math-to-png latex font-pt)
+(define (call-render-math-to-svg latex font-pt)
   (if (math-image-test-mode?)
       *math-image-test-result*
-      (render-math-to-png latex font-pt)))
+      (render-math-to-svg latex font-pt)))
 
 ;; Wrapper around the fork's RawContent registration. In test mode we
 ;; skip the actual terminal payload entirely, which prevents binary Kitty
@@ -241,7 +240,7 @@
   (define doc-id (editor->doc-id focus))
   (define latex (string-join content-lines "\n"))
   (define image-id (math-block-image-id doc-id anchor-line latex))
-  (define result-json (call-render-math-to-png latex (unbox *math-image-font-pt*)))
+  (define result-json (call-render-math-to-svg latex (unbox *math-image-font-pt*)))
   (define result (parse-math-image-result result-json))
 
   (cond
@@ -284,7 +283,7 @@
 
 ;;@doc
 ;; Render the display math block under the cursor as a Typst-typeset
-;; PNG image.
+;; SVG image.
 (define (render-math-at-cursor)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))

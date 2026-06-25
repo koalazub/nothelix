@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use nothelix::{render_math_to_png, CORPUS};
+use nothelix::{render_math_to_svg, CORPUS};
 
 #[test]
 fn render_full_math_corpus() {
@@ -8,7 +8,7 @@ fn render_full_math_corpus() {
     let start = std::time::Instant::now();
 
     for (name, latex) in CORPUS {
-        let json = render_math_to_png(latex.to_string(), 14);
+        let json = render_math_to_svg(latex.to_string(), 14);
         if !json.contains("\"error\":\"\"") {
             failures.push((name.to_string(), json));
         } else if let Some(b64_start) = json.find("\"b64\":\"") {
@@ -23,7 +23,7 @@ fn render_full_math_corpus() {
     let success = count - failures.len();
 
     eprintln!(
-        "math corpus: {success}/{count} rendered, {elapsed:?}, total PNG bytes: {total_bytes}"
+        "math corpus: {success}/{count} rendered, {elapsed:?}, total SVG bytes: {total_bytes}"
     );
 
     if !failures.is_empty() {

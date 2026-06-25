@@ -28,8 +28,9 @@ nix = { version = "0.29", features = ["signal", "process"] }
 
 typst = "0.15"
 typst-layout = "0.15"
-typst-render = "0.15"
+typst-svg = "0.15"
 typst-kit = { version = "0.15", features = ["embedded-fonts"] }
+resvg = "0.47"
 tiny-skia = "0.12"
 
 # Image format handling
