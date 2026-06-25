@@ -18,7 +18,7 @@ use std::borrow::Cow;
 
 use super::fence::{close_fence, mid_fence, open_fence};
 use super::overlay::Overlay;
-use super::sub_super::{SUB_MAP, SUPER_MAP, latex_font_to_julia, map_lookup};
+use super::sub_super::{latex_font_to_julia, sub_lookup, super_lookup};
 use super::symbol_table::unicode_lookup;
 
 /// Per-scan options. Passed by the caller instead of pulled from a
@@ -250,7 +250,7 @@ impl<'a> Scanner<'a> {
         // We used to gate this on `!is_ascii_alphabetic()` back when only
         // `n`/`i` had letter supers; that guard now blocks valid letter
         // supers like `^N` (ℝᴺ), `^T` (transpose), `^k`, etc. Let
-        // `map_lookup` in `scan_inline_superscript` decide — unmapped bytes
+        // `super_lookup` in `scan_inline_superscript` decide — unmapped bytes
         // fall through untouched.
         if b[i] == b'^' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'^'
         {
@@ -791,8 +791,7 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        let supers: Vec<Option<&'static str>> =
-            content.chars().map(|c| map_lookup(SUPER_MAP, c)).collect();
+        let supers: Vec<Option<&'static str>> = content.chars().map(super_lookup).collect();
         let any_mapped = supers.iter().any(Option::is_some);
 
         if any_mapped && is_simple_brace_content(content) {
@@ -843,7 +842,7 @@ impl<'a> Scanner<'a> {
             return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
-        if let Some(rep) = map_lookup(SUPER_MAP, ch) {
+        if let Some(rep) = super_lookup(ch) {
             self.overlays.push(Overlay::at(i, rep));
             self.overlays.push(Overlay::hide(i + 1));
             i + 2
@@ -886,8 +885,7 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        let subs: Vec<Option<&'static str>> =
-            content.chars().map(|c| map_lookup(SUB_MAP, c)).collect();
+        let subs: Vec<Option<&'static str>> = content.chars().map(sub_lookup).collect();
         let any_mapped = subs.iter().any(Option::is_some);
 
         if any_mapped && is_simple_brace_content(content) {
@@ -931,7 +929,7 @@ impl<'a> Scanner<'a> {
             return i + 2;
         }
         let ch = self.bytes[i + 1] as char;
-        if let Some(rep) = map_lookup(SUB_MAP, ch) {
+        if let Some(rep) = sub_lookup(ch) {
             self.overlays.push(Overlay::at(i, rep));
             self.overlays.push(Overlay::hide(i + 1));
             i + 2

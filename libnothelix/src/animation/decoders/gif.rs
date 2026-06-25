@@ -1,5 +1,6 @@
 use crate::animation::decoder::{
-    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError, frame_at_in,
+    hash_bytes,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,15 +13,14 @@ pub struct GifSource {
 impl GifSource {
     pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
         use ::image::{AnimationDecoder, codecs::gif::GifDecoder};
-        let dec = GifDecoder::new(std::io::Cursor::new(bytes))
-            .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+        let dec = GifDecoder::new(std::io::Cursor::new(bytes))?;
         let frames_iter = dec.into_frames();
         let mut frames = Vec::new();
         let mut acc = Duration::ZERO;
         let mut width = 0u16;
         let mut height = 0u16;
         for (idx, f) in frames_iter.enumerate() {
-            let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let f = f?;
             let buf = f.buffer();
             (width, height) =
                 crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
@@ -75,36 +75,16 @@ impl AnimatedDecoder for GifSource {
     }
 
     fn frame_at(&mut self, elapsed: Duration) -> Result<Option<DecodedFrame>, DecoderError> {
-        if self.frames.is_empty() {
-            return Ok(None);
-        }
-        let total = self.metadata.total_duration.unwrap_or(Duration::ZERO);
-        let t = if total.as_millis() == 0 {
-            Duration::ZERO
-        } else {
-            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
-        };
-        let mut chosen = &self.frames[0];
-        for f in &self.frames {
-            if f.presentation_offset <= t {
-                chosen = f;
-            } else {
-                break;
-            }
-        }
-        Ok(Some(chosen.clone()))
+        Ok(frame_at_in(
+            &self.frames,
+            self.metadata.total_duration,
+            elapsed,
+        ))
     }
 
     fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> {
         Ok(())
     }
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
 }
 
 #[cfg(test)]

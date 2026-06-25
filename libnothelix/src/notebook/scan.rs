@@ -14,9 +14,8 @@
 use super::cells::{CellKind, parse_jl_file};
 
 pub fn scan_variable_definition(jl_path: String, var_name: String) -> String {
-    let cells = match parse_jl_file(&jl_path) {
-        Err(_) => return "null".to_string(),
-        Ok((c, _)) => c,
+    let Ok((cells, _)) = parse_jl_file(&jl_path) else {
+        return "null".to_string();
     };
     for cell in &cells {
         if cell.kind != CellKind::Code {

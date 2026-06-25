@@ -102,9 +102,8 @@ pub fn notebook_convert_sync(path: String) -> String {
         Err(e) => return format!("ERROR: {e}"),
         Ok(v) => v,
     };
-    let cells = match nb["cells"].as_array() {
-        Some(c) => c,
-        None => return "ERROR: no cells array".to_string(),
+    let Some(cells) = nb["cells"].as_array() else {
+        return "ERROR: no cells array".to_string();
     };
 
     let lang = nb["metadata"]["kernelspec"]["language"]
@@ -249,18 +248,35 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
     // If the check fails the cell is treated as fresh, so we don't
     // attach stale outputs from the orig .ipynb to a cell whose code
     // has since been edited.
-    let orig_is_valid_for = |orig: &Value, cell: &JlCell| -> bool {
-        let orig_type = orig.get("cell_type").and_then(|v| v.as_str()).unwrap_or("");
-        if orig_type != expected_type(cell) {
-            return false;
-        }
-        let orig_source = source_to_string(&orig["source"]);
-        let new_source = jl_to_ipynb_source(cell);
-        if orig_type == "markdown" {
-            strip_attachment_refs(&orig_source) == strip_attachment_refs(&new_source)
+    //
+    // Each orig's normalized source is the comparison key the guard
+    // tests against: `strip_attachment_refs` for markdown cells (so the
+    // attachment-ref churn can't break the match), trimmed source for
+    // the rest. Both halves of the guard's comparison run through the
+    // same normalization — and a markdown orig can only ever be matched
+    // against a markdown `.jl` cell (the type check gates it) — so
+    // keying every orig on its own type up front is exact. Precomputing
+    // it once turns the inner positional-miss scan from O(n·m) reparses
+    // into O(n) lookups.
+    let normalize_source = |ty: &str, source: &str| -> String {
+        if ty == "markdown" {
+            strip_attachment_refs(source)
         } else {
-            orig_source.trim() == new_source.trim()
+            source.trim().to_string()
         }
+    };
+    let orig_keys: Vec<(&str, String)> = orig_cells
+        .iter()
+        .map(|orig| {
+            let ty = orig.get("cell_type").and_then(|v| v.as_str()).unwrap_or("");
+            let key = normalize_source(ty, &source_to_string(&orig["source"]));
+            (ty, key)
+        })
+        .collect();
+
+    let orig_is_valid_for = |i: usize, cell_type: &str, new_key: &str| -> bool {
+        let (orig_type, orig_key) = &orig_keys[i];
+        *orig_type == cell_type && orig_key == new_key
     };
 
     // Each orig backs at most one .jl cell, so two same-source cells
@@ -269,6 +285,8 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
     let mut new_cells: Vec<Value> = Vec::with_capacity(cells.len());
     for (position, cell) in cells.iter().enumerate() {
         let source_text = jl_to_ipynb_source(cell);
+        let cell_type = expected_type(cell);
+        let new_key = normalize_source(cell_type, &source_text);
 
         // Positional fast path: the orig at the cell's own index. When
         // the user reorders cells in the .jl that index points at a
@@ -278,13 +296,11 @@ pub fn convert_to_ipynb(jl_path: String) -> String {
         let matched = usize::try_from(cell.index)
             .ok()
             .filter(|&i| {
-                i < orig_cells.len() && !orig_used[i] && orig_is_valid_for(&orig_cells[i], cell)
+                i < orig_cells.len() && !orig_used[i] && orig_is_valid_for(i, cell_type, &new_key)
             })
             .or_else(|| {
-                orig_cells
-                    .iter()
-                    .enumerate()
-                    .position(|(i, o)| !orig_used[i] && orig_is_valid_for(o, cell))
+                (0..orig_cells.len())
+                    .find(|&i| !orig_used[i] && orig_is_valid_for(i, cell_type, &new_key))
             });
         let orig = matched.map(|i| {
             orig_used[i] = true;

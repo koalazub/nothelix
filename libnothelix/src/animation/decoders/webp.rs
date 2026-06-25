@@ -1,5 +1,6 @@
 use crate::animation::decoder::{
-    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError, frame_at_in,
+    hash_bytes,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,8 +20,7 @@ impl WebPSource {
         // path yields zero frames), so we inspect the file twice: once for animated
         // frames, and if none surface, fall back to a single-frame static decode.
         let cursor1 = std::io::BufReader::new(std::io::Cursor::new(bytes));
-        let dec_anim =
-            WebPDecoder::new(cursor1).map_err(|e| DecoderError::Malformed(e.to_string()))?;
+        let dec_anim = WebPDecoder::new(cursor1)?;
         let dims = dec_anim.dimensions();
         let frames_iter = dec_anim.into_frames();
 
@@ -29,7 +29,7 @@ impl WebPSource {
         let (mut width, mut height) =
             crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
         for (idx, f) in frames_iter.enumerate() {
-            let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let f = f?;
             let buf = f.buffer();
             (width, height) =
                 crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
@@ -53,13 +53,10 @@ impl WebPSource {
         // Static WebP fallback: re-open and decode the single full image.
         if frames.is_empty() {
             let cursor2 = std::io::BufReader::new(std::io::Cursor::new(bytes));
-            let dec_static =
-                WebPDecoder::new(cursor2).map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let dec_static = WebPDecoder::new(cursor2)?;
             let (w, h) = dec_static.dimensions();
             let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
-            dec_static
-                .read_image(&mut buf)
-                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            dec_static.read_image(&mut buf)?;
             let rgba: Arc<[u8]> = Arc::from(buf.as_slice());
             let content_id = hash_bytes(&rgba);
             (width, height) = crate::animation::decoder::fit_dimensions_to_u16(w, h)?;
@@ -109,36 +106,16 @@ impl AnimatedDecoder for WebPSource {
     }
 
     fn frame_at(&mut self, elapsed: Duration) -> Result<Option<DecodedFrame>, DecoderError> {
-        if self.frames.is_empty() {
-            return Ok(None);
-        }
-        let total = self.metadata.total_duration.unwrap_or(Duration::ZERO);
-        let t = if total.as_millis() == 0 {
-            Duration::ZERO
-        } else {
-            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
-        };
-        let mut chosen = &self.frames[0];
-        for f in &self.frames {
-            if f.presentation_offset <= t {
-                chosen = f;
-            } else {
-                break;
-            }
-        }
-        Ok(Some(chosen.clone()))
+        Ok(frame_at_in(
+            &self.frames,
+            self.metadata.total_duration,
+            elapsed,
+        ))
     }
 
     fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> {
         Ok(())
     }
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
 }
 
 #[cfg(test)]

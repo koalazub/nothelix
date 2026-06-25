@@ -4,6 +4,7 @@ use crate::animation::renderer::select_renderer;
 use crate::animation::renderer::{
     AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
 };
+use crate::animation::renderers::encode_rgba_to_png;
 
 pub struct StaticFallbackRenderer {
     last_id: Option<u64>,
@@ -39,16 +40,6 @@ impl AnimationRenderer for StaticFallbackRenderer {
         self.last_id = Some(frame.content_id);
         encode_rgba_to_png(frame.rgba.as_ref(), frame.width, frame.height)
     }
-}
-
-fn encode_rgba_to_png(rgba: &[u8], w: u16, h: u16) -> Vec<u8> {
-    use ::image::codecs::png::PngEncoder;
-    use ::image::{ColorType, ImageEncoder};
-    let mut buf = Vec::new();
-    PngEncoder::new(&mut buf)
-        .write_image(rgba, w as u32, h as u32, ColorType::Rgba8.into())
-        .ok(); // empty Vec on failure
-    buf
 }
 
 #[cfg(test)]

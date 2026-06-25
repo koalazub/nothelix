@@ -76,11 +76,14 @@ pub fn read_notebook(path: &str) -> Result<Value, String> {
 /// Join notebook cell `source` lines into a single `String`.
 pub fn source_to_string(source: &Value) -> String {
     match source {
-        Value::Array(lines) => lines
-            .iter()
-            .map(|l| l.as_str().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join(""),
+        Value::Array(lines) => {
+            let parts = lines.iter().map(|l| l.as_str().unwrap_or(""));
+            let mut out = String::with_capacity(parts.clone().map(str::len).sum());
+            for part in parts {
+                out.push_str(part);
+            }
+            out
+        }
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
@@ -219,6 +222,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     if first_marker_line > 0 {
         let preamble: String = lines[..first_marker_line]
             .iter()
+            .copied()
             .filter(|l| {
                 let t = l.trim();
                 if t.is_empty() || t.starts_with('#') {
@@ -229,8 +233,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 }
                 true
             })
-            .cloned()
-            .collect::<Vec<_>>()
+            .collect::<Vec<&str>>()
             .join("\n");
         if !preamble.trim().is_empty() {
             cells.insert(

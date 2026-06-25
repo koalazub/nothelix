@@ -17,8 +17,11 @@ pub enum PlaybackState {
     Finished,
 }
 
-pub struct TickOutput {
-    pub bytes: Vec<u8>,
+pub struct TickOutput<'a> {
+    /// Borrowed view of the producing engine's `last_tick_bytes`; the engine
+    /// stays borrowed for the lifetime of the `TickOutput`. Callers needing an
+    /// owned buffer (the C-ABI export) clone it explicitly.
+    pub bytes: &'a [u8],
     pub height: u16,
     pub next_delay_ms: u32,
     pub frame_index: u64,
@@ -114,7 +117,7 @@ impl AnimationEngine {
         }
     }
 
-    pub fn tick(&mut self, now: Instant) -> Option<TickOutput> {
+    pub fn tick(&mut self, now: Instant) -> Option<TickOutput<'_>> {
         let elapsed = if let PlaybackState::Playing {
             started_at,
             accumulated_paused,
@@ -179,9 +182,14 @@ impl AnimationEngine {
             next_delay_ms: next_delay_ms as isize,
             frame_index: frame.frame_index as isize,
         };
-        self.last_tick_bytes = bytes.clone();
+        // `last_tick_bytes` is the single owner of this tick's frame bytes:
+        // the Steel accessor (`animation_tick_bytes`) reads it, and the C-ABI
+        // `nothelix_animation_tick` clones from it on demand. The returned
+        // `TickOutput` borrows rather than owning a second buffer, so a Steel
+        // `tick` (which discards the `TickOutput`) performs no byte copy here.
+        self.last_tick_bytes = bytes;
         Some(TickOutput {
-            bytes,
+            bytes: &self.last_tick_bytes,
             height,
             next_delay_ms,
             frame_index: frame.frame_index,

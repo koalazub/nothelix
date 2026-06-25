@@ -1,5 +1,6 @@
 use crate::animation::decoder::{
-    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError,
+    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError, frame_at_in,
+    hash_bytes,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,12 +19,9 @@ impl ApngSource {
         // First pass: try the animated path. PNGs that are not APNGs surface
         // through `into_frames()` with zero frames; for those we fall back to
         // a static single-frame decode so callers can render the still image.
-        let dec_anim = PngDecoder::new(std::io::Cursor::new(bytes))
-            .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+        let dec_anim = PngDecoder::new(std::io::Cursor::new(bytes))?;
         let dims = dec_anim.dimensions();
-        let apng = dec_anim
-            .apng()
-            .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+        let apng = dec_anim.apng()?;
         let frames_iter = apng.into_frames();
 
         let mut frames = Vec::new();
@@ -31,7 +29,7 @@ impl ApngSource {
         let (mut width, mut height) =
             crate::animation::decoder::fit_dimensions_to_u16(dims.0, dims.1)?;
         for (idx, f) in frames_iter.enumerate() {
-            let f = f.map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let f = f?;
             let buf = f.buffer();
             (width, height) =
                 crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
@@ -53,12 +51,10 @@ impl ApngSource {
         }
 
         if frames.is_empty() {
-            let dec_static = PngDecoder::new(std::io::Cursor::new(bytes))
-                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let dec_static = PngDecoder::new(std::io::Cursor::new(bytes))?;
             let (w, h) = dec_static.dimensions();
             // Read into Rgba8 — PNGs may be Rgb8 or Indexed; convert via image's DynamicImage.
-            let dyn_img = ::image::DynamicImage::from_decoder(dec_static)
-                .map_err(|e| DecoderError::Malformed(e.to_string()))?;
+            let dyn_img = ::image::DynamicImage::from_decoder(dec_static)?;
             let rgba8 = dyn_img.to_rgba8();
             let raw = rgba8.into_raw();
             let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
@@ -110,36 +106,16 @@ impl AnimatedDecoder for ApngSource {
     }
 
     fn frame_at(&mut self, elapsed: Duration) -> Result<Option<DecodedFrame>, DecoderError> {
-        if self.frames.is_empty() {
-            return Ok(None);
-        }
-        let total = self.metadata.total_duration.unwrap_or(Duration::ZERO);
-        let t = if total.as_millis() == 0 {
-            Duration::ZERO
-        } else {
-            Duration::from_millis((elapsed.as_millis() as u64) % (total.as_millis() as u64).max(1))
-        };
-        let mut chosen = &self.frames[0];
-        for f in &self.frames {
-            if f.presentation_offset <= t {
-                chosen = f;
-            } else {
-                break;
-            }
-        }
-        Ok(Some(chosen.clone()))
+        Ok(frame_at_in(
+            &self.frames,
+            self.metadata.total_duration,
+            elapsed,
+        ))
     }
 
     fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> {
         Ok(())
     }
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
 }
 
 #[cfg(test)]

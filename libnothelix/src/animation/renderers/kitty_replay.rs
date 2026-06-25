@@ -2,6 +2,7 @@ use crate::animation::decoder::DecodedFrame;
 use crate::animation::renderer::{
     AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
 };
+use crate::animation::renderers::encode_rgba_to_png;
 
 pub struct KittyReplayRenderer {
     last_id: Option<u64>,
@@ -46,16 +47,6 @@ impl AnimationRenderer for KittyReplayRenderer {
         );
         escape.into_bytes()
     }
-}
-
-fn encode_rgba_to_png(rgba: &[u8], w: u16, h: u16) -> Vec<u8> {
-    use ::image::codecs::png::PngEncoder;
-    use ::image::{ColorType, ImageEncoder};
-    let mut buf = Vec::new();
-    PngEncoder::new(&mut buf)
-        .write_image(rgba, w as u32, h as u32, ColorType::Rgba8.into())
-        .ok();
-    buf
 }
 
 #[cfg(test)]

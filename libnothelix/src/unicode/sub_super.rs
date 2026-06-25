@@ -9,7 +9,7 @@ use super::symbol_table::SYMBOLS;
 /// Characters that have a Unicode superscript form. Handles digits,
 /// arithmetic operators, parentheses, and the two letters n/i which are
 /// the only letters with dedicated superscript codepoints in common use.
-pub(super) static SUPER_MAP: &[(&str, &str)] = &[
+static SUPER_MAP: &[(&str, &str)] = &[
     ("0", "⁰"),
     ("1", "¹"),
     ("2", "²"),
@@ -75,7 +75,7 @@ pub(super) static SUPER_MAP: &[(&str, &str)] = &[
 
 /// Characters that have a Unicode subscript form. Broader than the
 /// superscript set because more letters have dedicated subscript codepoints.
-pub(super) static SUB_MAP: &[(&str, &str)] = &[
+static SUB_MAP: &[(&str, &str)] = &[
     ("0", "₀"),
     ("1", "₁"),
     ("2", "₂"),
@@ -110,18 +110,50 @@ pub(super) static SUB_MAP: &[(&str, &str)] = &[
     ("h", "ₕ"),
 ];
 
-/// Look up a single character in a (char → replacement) map.
-/// Returns `None` if the character has no replacement form.
-#[inline]
-pub(super) fn map_lookup(map: &[(&'static str, &'static str)], ch: char) -> Option<&'static str> {
-    let mut buf = [0u8; 4];
-    let key = ch.encode_utf8(&mut buf);
-    for (k, v) in map {
-        if *k == key {
-            return Some(*v);
-        }
+/// An ASCII-indexed lookup table: position `b` holds the replacement for the
+/// character whose byte value is `b`, or `None`. Every key in `SUPER_MAP` and
+/// `SUB_MAP` is a single ASCII byte, so a 128-entry array gives O(1) lookup
+/// without scanning the table per content char.
+type AsciiLut = [Option<&'static str>; 128];
+
+/// Build an ASCII LUT from a `(char_str → replacement)` table at compile time.
+/// Keeps `SUPER_MAP`/`SUB_MAP` as the single source of truth — the LUT is
+/// derived from them rather than duplicating the data. Each key is asserted to
+/// be exactly one ASCII byte.
+const fn build_lut(map: &[(&'static str, &'static str)]) -> AsciiLut {
+    let mut lut: AsciiLut = [None; 128];
+    let mut i = 0;
+    while i < map.len() {
+        let key = map[i].0.as_bytes();
+        assert!(key.len() == 1, "sub/super map key must be one ASCII byte");
+        lut[key[0] as usize] = Some(map[i].1);
+        i += 1;
     }
-    None
+    lut
+}
+
+static SUPER_LUT: AsciiLut = build_lut(SUPER_MAP);
+static SUB_LUT: AsciiLut = build_lut(SUB_MAP);
+
+/// Look up a single character in an ASCII LUT. Returns `None` if the character
+/// has no replacement form. Non-ASCII chars never have a replacement, so they
+/// short-circuit to `None`.
+#[inline]
+fn lut_lookup(lut: &AsciiLut, ch: char) -> Option<&'static str> {
+    let b = ch as u32;
+    if b < 128 { lut[b as usize] } else { None }
+}
+
+/// Look up a character's Unicode superscript form, or `None`.
+#[inline]
+pub(super) fn super_lookup(ch: char) -> Option<&'static str> {
+    lut_lookup(&SUPER_LUT, ch)
+}
+
+/// Look up a character's Unicode subscript form, or `None`.
+#[inline]
+pub(super) fn sub_lookup(ch: char) -> Option<&'static str> {
+    lut_lookup(&SUB_LUT, ch)
 }
 
 /// Map a LaTeX font command + letter to a Julia symbol table name.

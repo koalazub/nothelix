@@ -7,16 +7,14 @@ use super::types::ErrorFrame;
 
 // ─── Message tidying ─────────────────────────────────────────────────────────
 
-pub(super) fn clean_message(msg: &str) -> String {
+pub(super) fn clean_message(msg: &str) -> &str {
     let msg = msg
         .find("\nClosest candidates")
         .or_else(|| msg.find("\n\nClosest candidates"))
         .or_else(|| msg.find("Closest candidates are:"))
         .map_or(msg, |idx| msg[..idx].trim_end());
-    let msg = msg
-        .find("\nStacktrace:")
-        .map_or(msg, |idx| msg[..idx].trim_end());
-    msg.to_string()
+    msg.find("\nStacktrace:")
+        .map_or(msg, |idx| msg[..idx].trim_end())
 }
 
 pub(super) fn truncate(s: &str, max: usize) -> String {

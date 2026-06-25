@@ -15,81 +15,82 @@ use super::overlay::Overlay;
 
 /// Common Typst math symbol names → Unicode replacements.
 /// Only names that have a distinct visual symbol — NOT single letters.
+///
+/// Sorted by key (byte-lexicographic) so `lookup_symbol` can binary-search
+/// instead of scanning all entries per word. The `typst_symbols_sorted`
+/// test enforces the ordering invariant.
 static TYPST_SYMBOLS: &[(&str, &str)] = &[
-    // Greek lowercase
+    ("CC", "ℂ"),
+    ("Delta", "Δ"),
+    ("Gamma", "Γ"),
+    ("Lambda", "Λ"),
+    ("NN", "ℕ"),
+    ("Omega", "Ω"),
+    ("Phi", "Φ"),
+    ("Pi", "Π"),
+    ("Psi", "Ψ"),
+    ("QQ", "ℚ"),
+    ("RR", "ℝ"),
+    ("Sigma", "Σ"),
+    ("Theta", "Θ"),
+    ("Xi", "Ξ"),
+    ("ZZ", "ℤ"),
     ("alpha", "α"),
+    ("approx", "≈"),
+    ("arrow.l", "←"),
+    ("arrow.l.double", "⇐"),
+    ("arrow.r", "→"),
+    ("arrow.r.double", "⇒"),
     ("beta", "β"),
-    ("gamma", "γ"),
+    ("chi", "χ"),
     ("delta", "δ"),
+    ("dots", "…"),
+    ("ell", "ℓ"),
     ("epsilon", "ε"),
-    ("zeta", "ζ"),
+    ("equiv", "≡"),
     ("eta", "η"),
-    ("theta", "θ"),
+    ("exists", "∃"),
+    ("forall", "∀"),
+    ("gamma", "γ"),
+    ("infinity", "∞"),
+    ("inter", "∩"),
     ("iota", "ι"),
     ("kappa", "κ"),
     ("lambda", "λ"),
+    ("minus.plus", "∓"),
     ("mu", "μ"),
+    ("nabla", "∇"),
     ("nu", "ν"),
-    ("xi", "ξ"),
+    ("omega", "ω"),
+    ("partial", "∂"),
+    ("phi", "φ"),
     ("pi", "π"),
+    ("plus.minus", "±"),
+    ("prop", "∝"),
+    ("psi", "ψ"),
     ("rho", "ρ"),
     ("sigma", "σ"),
-    ("tau", "τ"),
-    ("upsilon", "υ"),
-    ("phi", "φ"),
-    ("chi", "χ"),
-    ("psi", "ψ"),
-    ("omega", "ω"),
-    // Greek uppercase
-    ("Gamma", "Γ"),
-    ("Delta", "Δ"),
-    ("Theta", "Θ"),
-    ("Lambda", "Λ"),
-    ("Xi", "Ξ"),
-    ("Pi", "Π"),
-    ("Sigma", "Σ"),
-    ("Phi", "Φ"),
-    ("Psi", "Ψ"),
-    ("Omega", "Ω"),
-    // Operators / relations
-    ("infinity", "∞"),
-    ("partial", "∂"),
-    ("nabla", "∇"),
-    ("forall", "∀"),
-    ("exists", "∃"),
-    ("ell", "ℓ"),
-    ("times", "×"),
-    ("dots", "…"),
-    ("approx", "≈"),
-    ("equiv", "≡"),
-    ("prop", "∝"),
-    ("plus.minus", "±"),
-    ("minus.plus", "∓"),
     ("subset", "⊂"),
     ("supset", "⊃"),
+    ("tau", "τ"),
+    ("theta", "θ"),
+    ("times", "×"),
     ("union", "∪"),
-    ("inter", "∩"),
-    // Blackboard bold shorthand
-    ("NN", "ℕ"),
-    ("ZZ", "ℤ"),
-    ("QQ", "ℚ"),
-    ("RR", "ℝ"),
-    ("CC", "ℂ"),
-    // Arrows
-    ("arrow.r", "→"),
-    ("arrow.l", "←"),
-    ("arrow.r.double", "⇒"),
-    ("arrow.l.double", "⇐"),
+    ("upsilon", "υ"),
+    ("xi", "ξ"),
+    ("zeta", "ζ"),
 ];
 
 /// Look up a Typst symbol name. Returns None for unknown names.
 /// This is the ONLY lookup — no fallback to the Julia table, which
 /// would match single letters and cause false positives.
+///
+/// `TYPST_SYMBOLS` is kept sorted by key so this is a binary search.
 fn lookup_symbol(name: &str) -> Option<&'static str> {
     TYPST_SYMBOLS
-        .iter()
-        .find(|&&(k, _)| k == name)
-        .map(|&(_, v)| v)
+        .binary_search_by_key(&name, |&(k, _)| k)
+        .ok()
+        .map(|i| TYPST_SYMBOLS[i].1)
 }
 
 /// Scan a Typst document and produce concealment overlays.
@@ -281,6 +282,16 @@ pub fn typst_overlays_to_tsv(text: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typst_symbols_sorted() {
+        // `lookup_symbol` binary-searches this table; the keys must stay
+        // strictly sorted (byte-lexicographic) or lookups silently miss.
+        assert!(
+            TYPST_SYMBOLS.windows(2).all(|w| w[0].0 < w[1].0),
+            "TYPST_SYMBOLS must be sorted by key with no duplicates"
+        );
+    }
 
     #[test]
     fn inline_math_alpha() {

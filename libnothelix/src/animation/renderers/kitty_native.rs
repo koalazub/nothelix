@@ -2,18 +2,29 @@ use crate::animation::decoder::DecodedFrame;
 use crate::animation::renderer::{
     AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
 };
+use crate::animation::renderers::encode_rgba_to_png_into;
 use base64::Engine;
-use std::collections::HashMap;
+use std::collections::HashSet;
+use std::io::Write;
 
 pub struct KittyNativeRenderer {
-    sent_first_frame: HashMap<u64, bool>,
+    /// Engine ids whose first frame has already been transmitted with
+    /// action `T`; subsequent frames for those ids use action `a`.
+    sent_first_frame: HashSet<u64>,
+    /// Reusable scratch for the PNG bytes of the current frame, cleared and
+    /// refilled each `transmit_frame` rather than reallocated per frame.
+    png_scratch: Vec<u8>,
+    /// Reusable scratch for the base64 encoding of `png_scratch`.
+    b64_scratch: String,
 }
 
 impl KittyNativeRenderer {
     pub fn try_new(caps: &TerminalCaps) -> Option<Box<dyn AnimationRenderer>> {
         if caps.kitty_graphics && caps.kitty_animation_protocol {
             Some(Box::new(KittyNativeRenderer {
-                sent_first_frame: HashMap::new(),
+                sent_first_frame: HashSet::new(),
+                png_scratch: Vec::new(),
+                b64_scratch: String::new(),
             }))
         } else {
             None
@@ -39,20 +50,27 @@ impl AnimationRenderer for KittyNativeRenderer {
     }
 
     fn transmit_frame(&mut self, frame: &DecodedFrame, ctx: &RenderContext) -> Vec<u8> {
-        let first = !self
-            .sent_first_frame
-            .get(&ctx.engine_id)
-            .copied()
-            .unwrap_or(false);
-        let png = encode_rgba_to_png(frame.rgba.as_ref(), frame.width, frame.height);
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        let first = !self.sent_first_frame.contains(&ctx.engine_id);
+        self.png_scratch.clear();
+        encode_rgba_to_png_into(
+            &mut self.png_scratch,
+            frame.rgba.as_ref(),
+            frame.width,
+            frame.height,
+        );
+        self.b64_scratch.clear();
+        base64::engine::general_purpose::STANDARD
+            .encode_string(&self.png_scratch, &mut self.b64_scratch);
         let image_id = ctx.engine_id as u32;
-        if first {
-            self.sent_first_frame.insert(ctx.engine_id, true);
-            kitty_full_transmission(image_id, &b64)
+        let mut out = Vec::new();
+        let key_value = if first {
+            self.sent_first_frame.insert(ctx.engine_id);
+            format!("a=T,f=100,i={image_id},q=2")
         } else {
-            kitty_add_frame(image_id, &b64)
-        }
+            format!("a=a,i={image_id},r=1,q=2")
+        };
+        chunked_apc(&mut out, &key_value, &self.b64_scratch);
+        out
     }
 
     fn teardown(&mut self, engine_id: u64) -> Vec<u8> {
@@ -61,20 +79,10 @@ impl AnimationRenderer for KittyNativeRenderer {
     }
 }
 
-fn kitty_full_transmission(image_id: u32, b64: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    chunked_apc(&mut out, &format!("a=T,f=100,i={image_id},q=2"), b64);
-    out
-}
-
-fn kitty_add_frame(image_id: u32, b64: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    chunked_apc(&mut out, &format!("a=a,i={image_id},r=1,q=2"), b64);
-    out
-}
-
-/// Emit one or more APC sequences to transmit `payload_b64` in 4096-byte chunks.
-/// First chunk carries `key_value`; continuations carry only `m=<more>`.
+/// Emit one or more APC sequences to transmit `payload_b64` in 4096-byte chunks
+/// directly into `out`. First chunk carries `key_value`; continuations carry
+/// only `m=<more>`. The chunk bytes are appended verbatim — no throwaway
+/// per-chunk `String` — using `write!` for the small APC framing only.
 fn chunked_apc(out: &mut Vec<u8>, key_value: &str, payload_b64: &str) {
     const CHUNK: usize = 4096;
     let bytes = payload_b64.as_bytes();
@@ -82,24 +90,14 @@ fn chunked_apc(out: &mut Vec<u8>, key_value: &str, payload_b64: &str) {
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
         let last = i + 1 == total_chunks;
         let m = if last { 0 } else { 1 };
-        let chunk_str = std::str::from_utf8(chunk).unwrap_or("");
-        let prefix = if i == 0 {
-            format!("{key_value},m={m}")
+        if i == 0 {
+            let _ = write!(out, "\x1b_G{key_value},m={m};");
         } else {
-            format!("m={m}")
-        };
-        out.extend_from_slice(format!("\x1b_G{prefix};{chunk_str}\x1b\\").as_bytes());
+            let _ = write!(out, "\x1b_Gm={m};");
+        }
+        out.extend_from_slice(chunk);
+        out.extend_from_slice(b"\x1b\\");
     }
-}
-
-fn encode_rgba_to_png(rgba: &[u8], w: u16, h: u16) -> Vec<u8> {
-    use ::image::codecs::png::PngEncoder;
-    use ::image::{ColorType, ImageEncoder};
-    let mut buf = Vec::new();
-    PngEncoder::new(&mut buf)
-        .write_image(rgba, w as u32, h as u32, ColorType::Rgba8.into())
-        .ok();
-    buf
 }
 
 #[cfg(test)]

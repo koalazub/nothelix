@@ -105,7 +105,10 @@ pub unsafe extern "C" fn nothelix_animation_tick(
             *out_payload_len = 0;
             return 1; // no new frame to send
         }
-        let mut boxed = out.bytes.into_boxed_slice();
+        // `out.bytes` borrows the engine's `last_tick_bytes`; the caller owns
+        // the returned buffer (freed via `nothelix_animation_free_buffer`), so
+        // copy it into a heap-owned boxed slice and leak ownership across FFI.
+        let mut boxed = Box::<[u8]>::from(out.bytes);
         *out_payload_ptr = boxed.as_mut_ptr();
         *out_payload_len = boxed.len();
         std::mem::forget(boxed);

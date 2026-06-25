@@ -15,7 +15,7 @@ use super::util::{build_call_chain, clean_message, truncate, wrap};
 // ─── Structured formatting ───────────────────────────────────────────────────
 
 pub(super) fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
-    let clean_msg = clean_message(&err.message);
+    let clean_msg = clean_message(&err.message).to_string();
     let tokens = tokenize_error(&err.error_type, &clean_msg);
     let matched = find_hint(hints, &tokens);
     let mut out = String::new();
@@ -179,7 +179,7 @@ fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell:
 // ─── Raw formatting ──────────────────────────────────────────────────────────
 
 pub(super) fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
-    let cleaned = clean_message(raw);
+    let cleaned = clean_message(raw).to_string();
     let tokens = tokenize_error("", &cleaned);
     let matched = find_hint(hints, &tokens);
     let mut out = String::new();
