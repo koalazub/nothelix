@@ -26,25 +26,27 @@ export JULIA_DEPOT_PATH="$NOXDIR/depot:$HOME/.julia"
 # notebook (e.g. a shared course directory declaring only
 # CellMarkers), SymbolServer indexes only that env's tiny dep set
 # and every `using FFTW`-style reference becomes unresolved.
-exec julia \
-  --startup-file=no \
-  --history-file=no \
-  --quiet \
-  -e 'macro cell(args...) nothing end
-      macro markdown(args...) nothing end
-      using LanguageServer
-      @eval LanguageServer begin
-          function request_julia_config(server::LanguageServerInstance, conn)
-              nothing
-          end
-      end
-      let env_path = begin
-              v = "v$(VERSION.major).$(VERSION.minor)"
-              candidates = [joinpath(d, "environments", v) for d in DEPOT_PATH]
-              idx = findfirst(p -> isdir(p) && isfile(joinpath(p, "Project.toml")), candidates)
-              idx === nothing ? LanguageServer.choose_env() : candidates[idx]
-          end
-          server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
-          server.lint_missingrefs = :none
-          run(server)
-      end'
+# Disabled: migrated to JETLS (configured directly in helix languages.toml as
+# the `jetls` language-server). Re-enable by uncommenting the exec block below.
+# exec julia \
+#   --startup-file=no \
+#   --history-file=no \
+#   --quiet \
+#   -e 'macro cell(args...) nothing end
+#       macro markdown(args...) nothing end
+#       using LanguageServer
+#       @eval LanguageServer begin
+#           function request_julia_config(server::LanguageServerInstance, conn)
+#               nothing
+#           end
+#       end
+#       let env_path = begin
+#               v = "v$(VERSION.major).$(VERSION.minor)"
+#               candidates = [joinpath(d, "environments", v) for d in DEPOT_PATH]
+#               idx = findfirst(p -> isdir(p) && isfile(joinpath(p, "Project.toml")), candidates)
+#               idx === nothing ? LanguageServer.choose_env() : candidates[idx]
+#           end
+#           server = LanguageServer.LanguageServerInstance(stdin, stdout, env_path, "", nothing, nothing)
+#           server.lint_missingrefs = :none
+#           run(server)
+#       end'

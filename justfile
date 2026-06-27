@@ -118,11 +118,15 @@ setup-lsp:
         JULIA_DEPOT_PATH="$runtime/depot" \
             julia --startup-file=no --quiet --project="$runtime" \
             "$runtime/bootstrap.jl" "$runtime" "$runtime/symbolserver-1.14.patch" "$runtime/NothelixMacros"
-        # The kernel runs in the user's default env (so cells can import their
-        # own packages). Its one required dep is JSON3; a Julia version bump
-        # gives a fresh empty env, so ensure it here. Idempotent.
-        echo "Ensuring kernel runtime dep (JSON3) in the active Julia env..."
-        julia --startup-file=no --quiet -e 'using Pkg; haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
+        # The kernel and JETLS both resolve `using` against the user's default
+        # env. JSON3 is the kernel's runtime dep; NothelixMacros provides the
+        # @cell/@markdown markers JETLS must resolve to analyse a notebook. A
+        # Julia version bump gives a fresh empty env, so ensure both here.
+        echo "Ensuring default-env deps (JSON3, NothelixMacros)..."
+        julia --startup-file=no --quiet -e 'using Pkg
+            deps = Pkg.project().dependencies
+            haskey(deps, "JSON3") || Pkg.add("JSON3")
+            haskey(deps, "NothelixMacros") || Pkg.develop(path="{{ nothelix_root }}/lsp/NothelixMacros")'
     else
         echo "julia not on PATH — skipping Julia env warm-up (set up on first .jl open)"
     fi
