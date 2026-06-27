@@ -89,6 +89,27 @@ pub fn source_to_string(source: &Value) -> String {
     }
 }
 
+/// True for a line that only loads `NothelixMacros` (`using`/`import`).
+///
+/// The converter injects `using NothelixMacros` so the Julia LSP resolves the
+/// `@cell`/`@markdown` macros, and users sometimes paste it (or `import`) into a
+/// cell body. The package lives only in nothelix's LSP env, never the kernel's
+/// default env, so forwarding the line to the kernel produces a spurious
+/// "Package NothelixMacros not found in current path". The kernel defines those
+/// macros itself, so the line is pure noise at runtime and is dropped.
+fn is_nothelix_macros_load(line: &str) -> bool {
+    let code = line.split('#').next().unwrap_or("").trim();
+    for kw in ["using ", "import "] {
+        if let Some(rest) = code.strip_prefix(kw) {
+            let pkg = rest.trim_end_matches(';').trim();
+            if pkg == "NothelixMacros" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Parse a `.jl` file into a list of cells and the originating `.ipynb` path.
 pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     let content = fs::read_to_string(jl_path).map_err(|e| format!("Cannot read {jl_path}: {e}"))?;
@@ -228,7 +249,7 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 if t.is_empty() || t.starts_with('#') {
                     return false;
                 }
-                if t == "using NothelixMacros" || t.starts_with("using NothelixMacros ") {
+                if is_nothelix_macros_load(l) {
                     return false;
                 }
                 true
@@ -296,6 +317,9 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
                 continue;
             }
             if is_marker_line(line) {
+                continue;
+            }
+            if is_nothelix_macros_load(line) {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("# @image ") {

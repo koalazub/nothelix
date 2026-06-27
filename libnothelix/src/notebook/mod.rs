@@ -296,6 +296,30 @@ mod tests {
     }
 
     #[test]
+    fn cell_body_drops_nothelix_macros_load() {
+        // A `using`/`import NothelixMacros` line pasted *inside* a cell body
+        // must not reach the kernel — the package only lives in the LSP env, so
+        // it would error "not found in current path" while the kernel already
+        // defines @cell/@markdown itself. Surrounding real code must survive.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let jl_path = tmp.path().with_extension("jl");
+        let src = "@cell 0 :julia\n\
+                   import Pkg\n\
+                   using NothelixMacros\n\
+                   import NothelixMacros;\n\
+                   x = 1\n";
+        std::fs::write(&jl_path, src).unwrap();
+        let (cells, _) = parse_jl_file(&jl_path.to_string_lossy()).unwrap();
+        let body = &cells.iter().find(|c| c.index == 0).unwrap().code;
+        assert!(
+            !body.contains("NothelixMacros"),
+            "NothelixMacros load lines must be stripped from the cell body, got:\n{body}"
+        );
+        assert!(body.contains("import Pkg"), "real code dropped, got:\n{body}");
+        assert!(body.contains("x = 1"), "real code dropped, got:\n{body}");
+    }
+
+    #[test]
     fn preamble_filter_keeps_real_user_preamble() {
         // User code that lives above the first @cell marker should
         // still round-trip through an index=-1 preamble cell. The
