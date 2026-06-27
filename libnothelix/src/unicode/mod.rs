@@ -316,35 +316,21 @@ mod tests {
     }
 
     #[test]
-    fn complex_braced_superscript_keeps_braces_visible() {
-        // Regression: `e^{2\pi i kt}` rendered as `e^2π i kt` — hiding
-        // the braces fragmented the exponent group, with `2` looking
-        // like the only superscript and `π i kt` looking like
-        // baseline multiplication. When content has backslashes (or
-        // any non-simple char) we now keep the braces visible so the
-        // group reads as `e^{2π i kt}`.
-        let result = latex_overlays(r"e^{2\pi i kt}".into());
+    fn complex_braced_superscript_drops_braces() {
+        let source = r"e^{2\pi i kt}";
+        let result = latex_overlays(source.into());
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         let arr = v.as_array().unwrap();
-        // Walk overlays for any `hide` (empty replacement) on the `{`
-        // or `}` byte positions. There should be NO such overlays
-        // for complex content.
-        let source = r"e^{2\pi i kt}";
         let open_brace = source.find('{').unwrap();
         let close_brace = source.find('}').unwrap();
-        for o in arr {
-            let off = o["offset"].as_u64().unwrap() as usize;
-            let rep = o["replacement"].as_str().unwrap();
-            assert!(
-                !(off == open_brace && rep.is_empty()),
-                "opening `{{` should stay visible for complex super content; overlays:\n{arr:#?}"
-            );
-            assert!(
-                !(off == close_brace && rep.is_empty()),
-                "closing `}}` should stay visible for complex super content; overlays:\n{arr:#?}"
-            );
-        }
-        // π replacement must still appear (inner conceal still runs).
+        let hidden = |byte: usize| {
+            arr.iter().any(|o| {
+                o["offset"].as_u64().unwrap() as usize == byte
+                    && o["replacement"].as_str().unwrap().is_empty()
+            })
+        };
+        assert!(hidden(open_brace), "opening `{{` should be hidden:\n{arr:#?}");
+        assert!(hidden(close_brace), "closing `}}` should be hidden:\n{arr:#?}");
         let replacements: Vec<&str> = arr
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
@@ -353,6 +339,29 @@ mod tests {
             replacements.contains(&"π"),
             "expected π from \\pi, got {replacements:?}"
         );
+    }
+
+    #[test]
+    fn complex_braced_subscript_drops_braces() {
+        let source = r"x_{L^2(\mathbb{R})}";
+        let result = latex_overlays(source.into());
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let arr = v.as_array().unwrap();
+        let open_brace = source.find('{').unwrap();
+        let close_brace = source.rfind('}').unwrap();
+        let hidden = |byte: usize| {
+            arr.iter().any(|o| {
+                o["offset"].as_u64().unwrap() as usize == byte
+                    && o["replacement"].as_str().unwrap().is_empty()
+            })
+        };
+        assert!(hidden(open_brace), "opening `{{` should be hidden:\n{arr:#?}");
+        assert!(hidden(close_brace), "closing `}}` should be hidden:\n{arr:#?}");
+        let replacements: Vec<&str> = arr
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap())
+            .collect();
+        assert!(replacements.contains(&"ℝ"), "expected ℝ, got {replacements:?}");
     }
 
     #[test]

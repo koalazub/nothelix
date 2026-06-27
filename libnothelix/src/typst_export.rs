@@ -492,7 +492,33 @@ pub fn latex_to_typst_math(latex: &str) -> String {
     s = s.replace("^{", "^(");
     s = s.replace('}', ")");
 
-    normalize_math_spacing(&s)
+    space_script_before_paren(&normalize_math_spacing(&s))
+}
+
+/// Detach a single-token sub/superscript from an immediately following `(` so
+/// Typst does not absorb the parenthesised group into the script. `phi_n(t)`
+/// would otherwise render with `n(t)` as the subscript; emit `phi_n (t)` so the
+/// script is just `n` and `(t)` sits on the baseline.
+fn space_script_before_paren(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        out.push(c);
+        if (c == '_' || c == '^')
+            && let Some(&next) = chars.get(i + 1)
+            && next.is_ascii_alphanumeric()
+            && chars.get(i + 2) == Some(&'(')
+        {
+            out.push(next);
+            out.push(' ');
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Split adjacent identifiers in math mode so Typst does not merge them into a
@@ -544,7 +570,7 @@ fn normalize_math_spacing(s: &str) -> String {
                 i += 1;
                 while i < bytes.len() {
                     let c2 = bytes[i] as char;
-                    if c2.is_ascii_alphanumeric() || c2 == '.' || c2 == '_' {
+                    if c2.is_ascii_alphanumeric() || c2 == '.' {
                         i += 1;
                     } else {
                         break;
@@ -1234,6 +1260,22 @@ mod tests {
         let result = latex_to_typst_math("\\|x\\| \\in \\mathbb{R}");
         assert!(result.contains("||x||"), "got:\n{result}");
         assert!(result.contains("RR"), "got:\n{result}");
+    }
+
+    #[test]
+    fn script_before_paren_detached() {
+        assert_eq!(
+            latex_to_typst_math(r"\varphi_n(t)"),
+            "phi.alt_n (t)"
+        );
+        assert_eq!(latex_to_typst_math(r"x^2(t)"), "x^2 (t)");
+    }
+
+    #[test]
+    fn grouped_subscript_untouched() {
+        let result = latex_to_typst_math(r"\varphi_{nk}(t)");
+        assert!(result.contains("_(n k)"), "got:\n{result}");
+        assert!(!result.contains("_(n k) ("), "got:\n{result}");
     }
 
     #[test]

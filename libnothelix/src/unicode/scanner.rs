@@ -742,13 +742,29 @@ impl<'a> Scanner<'a> {
     /// hide the `^{...}` delimiters and emit what we can; leave unmappable
     /// characters as plain text. This keeps `^{T*}` readable as `ᵀ*` rather
     /// than leaving the whole thing raw.
-    fn scan_braced_superscript(&mut self, i: usize) -> usize {
-        let caret_pos = i;
-        let mut j = i + 2;
-        let content_start = j;
-        while j < self.bytes.len() && self.bytes[j] != b'}' {
+    fn scan_to_matching_brace(&self, from: usize) -> usize {
+        let mut j = from;
+        let mut depth = 1;
+        while j < self.bytes.len() {
+            match self.bytes[j] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return j;
+                    }
+                }
+                _ => {}
+            }
             j += 1;
         }
+        j
+    }
+
+    fn scan_braced_superscript(&mut self, i: usize) -> usize {
+        let caret_pos = i;
+        let content_start = i + 2;
+        let j = self.scan_to_matching_brace(content_start);
         if j >= self.bytes.len() {
             return j;
         }
@@ -783,16 +799,8 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        // Content isn't simple enough for in-place unicode super substitution
-        // (contains backslash commands like `\pi`, nested braces, etc.). Keep
-        // BOTH the `^` and the braces visible so the exponent reads as
-        // a clearly-grouped expression — `e^{2π i kt}` rather than the
-        // earlier `e^2π i kt`, where hiding the braces fragmented the
-        // group: the `2` looked like the only exponent and `π i kt`
-        // looked like multiplication at baseline. Return `content_start`
-        // so the main loop still walks the body for `\pi` → π etc.;
-        // when it later reaches the (now visible) `}` it just passes
-        // through unchanged.
+        self.overlays.push(Overlay::hide(caret_pos + 1));
+        self.overlays.push(Overlay::hide(past_close - 1));
         content_start
     }
 
@@ -826,11 +834,8 @@ impl<'a> Scanner<'a> {
     /// whole thing raw.
     fn scan_braced_subscript(&mut self, i: usize) -> usize {
         let underscore_pos = i;
-        let mut j = i + 2;
-        let content_start = j;
-        while j < self.bytes.len() && self.bytes[j] != b'}' {
-            j += 1;
-        }
+        let content_start = i + 2;
+        let j = self.scan_to_matching_brace(content_start);
         if j >= self.bytes.len() {
             return j;
         }
@@ -862,11 +867,8 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
-        // Complex content — keep `_`, `{`, `}` ALL visible so the
-        // subscript reads as a clearly-grouped expression. See the
-        // matching note in `scan_braced_superscript`. Returns
-        // `content_start` so the main loop still concealas inner
-        // backslash commands.
+        self.overlays.push(Overlay::hide(underscore_pos + 1));
+        self.overlays.push(Overlay::hide(past_close - 1));
         content_start
     }
 
