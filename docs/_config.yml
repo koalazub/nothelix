@@ -1,0 +1,26 @@
+title: Nothelix
+description: Jupyter-style notebooks inside the Helix editor, for people who would rather not open a browser.
+remote_theme: just-the-docs/just-the-docs
+
+url: https://koalazub.github.io
+baseurl: "/nothelix"
+
+color_scheme: dark
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  Source on GitHub:
+    - "https://github.com/koalazub/nothelix"
+aux_links_new_tab: true
+
+footer_content: "Nothelix is MIT licensed. It stands on Helix, Steel, Julia, and Typst, among others — see the credits."
+
+plugins:
+  - jekyll-remote-theme
+
+exclude:
+  - dev/
+  - "*.original.md"
+  - Gemfile
+  - Gemfile.lock

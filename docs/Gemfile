@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Mirrors what GitHub Pages runs, so `bundle exec jekyll serve` previews the
+# site exactly as it will be built. Not used by the GitHub Pages build itself.
+gem "github-pages", group: :jekyll_plugins
