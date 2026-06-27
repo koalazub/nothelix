@@ -70,6 +70,7 @@
 (require "nothelix/math-render.scm")
 (require "nothelix/math-image.scm")
 (require "nothelix/table-image.scm")
+(require "nothelix/markdown-render.scm")
 (require "nothelix/animation.scm")
 (require "nothelix/health.scm")
 

@@ -24,6 +24,7 @@ mod math_format;
 pub use math_corpus::CORPUS;
 mod math_image;
 pub use math_image::render_math_to_svg;
+mod markdown_overlays;
 mod notebook;
 mod parse;
 mod table_image;
@@ -45,7 +46,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 10;
+pub const NOTHELIX_FFI_VERSION: u32 = 11;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -93,6 +94,10 @@ fn build_module() -> FFIModule {
     m.register_fn("render-math-to-svg", math_image::render_math_to_svg);
     m.register_fn("render-math-batch", math_image::render_math_batch);
     m.register_fn("render-table-to-svg", table_image::render_table_to_svg);
+    m.register_fn(
+        "scan-markdown-overlays",
+        markdown_overlays::scan_markdown_overlays,
+    );
     m.register_fn("math-image-grid", math_image::math_image_grid_ffi);
 
     // ── Execution ─────────────────────────────────────────────────────────────

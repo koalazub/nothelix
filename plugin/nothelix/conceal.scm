@@ -29,7 +29,14 @@
          apply-conceal-for-cursor!
          schedule-reconceal
          *math-render-active*
-         *math-render-refresh-hook*)
+         *math-render-refresh-hook*
+         *markdown-marker-hook*
+         *markdown-style-hook*)
+
+;; Installed by markdown-render.scm so markdown rendering rides the conceal
+;; cache + cursor-reveal without a circular require. Inert by default.
+(define *markdown-marker-hook* (box (lambda () '())))
+(define *markdown-style-hook* (box (lambda (line-start line-end) #f)))
 
 ;; Flag flipped by the math-render plugin when it stages virtual above/
 ;; below rows for big operators and `\frac`. When on, the scanner hides
@@ -52,6 +59,10 @@
 ;;; For .jl files, only scans comment lines (# ...) to avoid false $ matches.
 ;;; For other files (.md, .tex, etc.), scans the full document.
 (define (compute-conceal-overlays)
+  (append (compute-math-conceal-overlays)
+          ((unbox *markdown-marker-hook*))))
+
+(define (compute-math-conceal-overlays)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define rope (editor->text doc-id))
@@ -202,7 +213,8 @@
                     (or (< off line-start-char)
                         (>= off line-end-char)))
                   cached))
-        (set-overlays! filtered)])]))
+        (set-overlays! filtered)
+        ((unbox *markdown-style-hook*) line-start-char line-end-char)])]))
 
 ;; Debounce generation counter. Every call to schedule-reconceal bumps it so
 ;; only the most recent scheduled callback actually runs.
