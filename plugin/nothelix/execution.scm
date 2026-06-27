@@ -270,7 +270,7 @@
         ;; slicing the last grapheme.
         (define insert-at-line
           (find-last-non-blank-line-before get-line cell-marker-line cell-code-end))
-        (helix.goto (number->string (+ insert-at-line 1)))
+        (move-to-line-start-no-center! updated-rope insert-at-line)
         (helix.static.goto_line_end_newline)
         (spinner-reset)
         (define spinner-frame (spinner-next-frame))
@@ -308,8 +308,7 @@
       [(string-contains?
          (text.rope->string (text.rope->line post-rope idx))
          "─── Output ───")
-       (helix.goto (number->string (+ idx 2)))
-       (helix.static.goto_line_start)]
+       (move-to-line-start-no-center! post-rope (+ idx 1))]
       [else (scan (+ idx 1) lim)]))
 
   (helix.static.insert_string (string-append "# ERROR: " err "\n# ─────────────\n"))
@@ -331,6 +330,12 @@
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
      (update-cell-output result-json jl-path cell-idx kernel-dir)
+     ;; Snap the cursor back to the user's anchor after this cell's output is
+     ;; inserted, so the view doesn't visibly chase each cell's output down the
+     ;; buffer during a `:xca` run. restore-cursor-for! is non-centering and
+     ;; cell-relative, so it returns to the same spot regardless of the lines
+     ;; the inserts shifted.
+     (restore-cursor-for! doc-id)
      (enqueue-thread-local-callback-with-delay 10
        (lambda () (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]))
 
