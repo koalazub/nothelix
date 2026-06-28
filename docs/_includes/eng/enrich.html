@@ -3,7 +3,7 @@
     <span class="nx__dot nx__dot--a"></span>
     <span class="nx__kicker">error enrichment</span>
     <span class="nx__spacer"></span>
-    <span class="nx__kicker" style="letter-spacing:.1em">no method matching Matrix(::Vector{ComplexF64})</span>
+    <span style="font-family:var(--nx-mono);font-size:.68rem;color:var(--nx-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%">no method matching Matrix(::Vector{ComplexF64})</span>
   </div>
 
   <div class="nx-err__toggle" role="tablist" aria-label="Error view">
@@ -28,7 +28,7 @@ Stacktrace:
       <pre class="nx-term"><span class="nx-err-red">MethodError: no method matching Matrix(::Vector{ComplexF64})</span>
 <span class="nx-ann">in scope, <span class="nx-var">&psi;</span> :: <span class="nx-type">Vector{ComplexF64}</span> <span class="nx-dim">&mdash;</span> <span class="nx-where">defined in cell 3</span></span>
 <span class="nx-ann"><span class="nx-var">Matrix()</span> would accept <span class="nx-var">H</span> :: <span class="nx-type">Matrix{ComplexF64}</span> <span class="nx-dim">&mdash;</span> <span class="nx-where">defined in cell 2</span></span></pre>
-      <p style="color:var(--nx-muted);font-size:.84rem;line-height:1.6;margin:.7rem 0 0">
+      <p style="font-size:.84rem;line-height:1.6;margin:.7rem 0 0">
         The kernel records the type of every binding and probes which in-scope values each
         candidate would accept; libnothelix maps the failing <code>::T</code> signature back to
         your actual variables. So the message points at the stray <code>&psi;</code> and at the
