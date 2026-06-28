@@ -37,19 +37,3 @@ Stacktrace:
     </div>
   </div>
 </div>
-
-<script>
-(function () {
-  document.querySelectorAll('[data-nx-err]').forEach(function (root) {
-    var tabs  = root.querySelectorAll('[data-nx-tab]');
-    var panes = root.querySelectorAll('[data-nx-pane]');
-    tabs.forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        var idx = tab.getAttribute('data-nx-tab');
-        tabs.forEach(function (t) { t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
-        panes.forEach(function (p) { p.classList.toggle('is-on', p.getAttribute('data-nx-pane') === idx); });
-      });
-    });
-  });
-})();
-</script>
