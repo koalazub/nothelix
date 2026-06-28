@@ -80,9 +80,11 @@
 .nx-sim__rail { display: flex; align-items: stretch; gap: 0; padding: .85rem 1rem 0; }
 .nx-sim__seg {
   flex: 1; text-align: center; font-family: var(--nx-mono); font-size: .64rem; letter-spacing: .02em;
-  color: var(--nx-faint); padding: .35rem .2rem; border-bottom: 2px solid var(--nx-line);
-  transition: color .2s, border-color .2s;
+  color: var(--nx-faint); padding: .45rem .2rem; border: 0; border-bottom: 2px solid var(--nx-line);
+  background: transparent; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
 }
+.nx-sim__seg:hover { color: var(--nx-ink); background: var(--nx-code); }
+.nx-sim__seg:focus-visible { outline: 2px solid var(--ac, var(--nx-line-strong)); outline-offset: -2px; }
 .nx-sim__seg.is-on { color: var(--ac, var(--nx-ink)); border-color: var(--ac, var(--nx-line-strong)); font-weight: 600; }
 
 .nx-sim__stage { position: relative; padding: 1rem 1rem .4rem; min-height: 17rem; }
@@ -133,15 +135,9 @@
 .nx-doc__body .k { color: var(--ac); }
 .nx-doc__note { font-family: var(--nx-mono); font-size: .68rem; color: var(--nx-ink-soft); padding: 0 .8rem .6rem; }
 
-.nx-sim__ctrl { display: flex; align-items: center; gap: .5rem; padding: .55rem 1rem; border-top: 1.5px dashed var(--nx-line); }
-.nx-sim__nav {
-  font-family: var(--nx-mono); font-size: .9rem; line-height: 1; color: var(--nx-ink);
-  background: var(--nx-card); border: 1.5px solid var(--nx-line-strong); border-radius: 8px 6px 9px 6px;
-  width: 30px; height: 28px; cursor: pointer; transition: background .15s;
-}
-.nx-sim__nav:hover { background: var(--nx-lift); }
-.nx-sim__nav[disabled] { opacity: .35; cursor: default; }
-.nx-sim__dots { display: flex; gap: .45rem; margin: 0 auto; }
+.nx-sim__ctrl { display: flex; align-items: center; gap: .6rem; padding: .55rem 1rem; border-top: 1.5px dashed var(--nx-line); }
+.nx-sim__hint { font-family: var(--nx-hand); font-size: .9rem; color: var(--nx-faint); }
+.nx-sim__dots { display: flex; gap: .45rem; margin-left: auto; }
 .nx-sim__pip { width: 9px; height: 9px; padding: 0; border-radius: 50%; cursor: pointer; background: transparent; border: 1.5px solid var(--nx-line-strong); transition: background .15s, transform .15s; }
 .nx-sim__pip.is-on { background: var(--nx-ink); transform: scale(1.15); }
 .nx-sim__count { font-family: var(--nx-mono); font-size: .68rem; color: var(--nx-faint); }

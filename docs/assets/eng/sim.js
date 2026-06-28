@@ -4,8 +4,6 @@
     var railEl = root.querySelector('[data-nx-rail]');
     var dotsEl = root.querySelector('[data-nx-dots]');
     var countEl = root.querySelector('[data-nx-count]');
-    var prevBtn = root.querySelector('[data-nx-prev]');
-    var nextBtn = root.querySelector('[data-nx-next]');
     var replay = root.querySelector('[data-nx-replay]');
     var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -82,7 +80,7 @@
     }
 
     railEl.innerHTML = RAIL.map(function (name, i) {
-      return '<div class="nx-sim__seg" data-seg="' + i + '" style="--ac:var(--nx-' + ACCENT[i] + ')">' + name + '</div>';
+      return '<button type="button" class="nx-sim__seg" data-seg="' + i + '" style="--ac:var(--nx-' + ACCENT[i] + ')">' + name + '</button>';
     }).join('');
     stage.innerHTML = frames.map(function (f) {
       var inner = f.kind === 'buf' ? buildBuf(f) : buildDoc(f);
@@ -104,8 +102,6 @@
       pipEls.forEach(function (el, k) { el.classList.toggle('is-on', k === n); });
       segEls.forEach(function (el, k) { el.classList.toggle('is-on', k === frames[n].layer); });
       countEl.textContent = (n + 1) + ' / ' + frames.length;
-      prevBtn.disabled = n === 0;
-      nextBtn.disabled = n === frames.length - 1;
     }
     function stopAuto() { if (timer) { clearTimeout(timer); timer = null; } }
     function tick() {
@@ -115,8 +111,17 @@
     }
     function autoFrom(n) { show(n); tick(); }
 
-    prevBtn.addEventListener('click', function () { stopAuto(); if (i > 0) { show(i - 1); } });
-    nextBtn.addEventListener('click', function () { stopAuto(); if (i < frames.length - 1) { show(i + 1); } });
+    segEls.forEach(function (seg) {
+      seg.addEventListener('click', function () {
+        stopAuto();
+        var layer = +seg.getAttribute('data-seg');
+        var group = [];
+        frames.forEach(function (f, k) { if (f.layer === layer) { group.push(k); } });
+        if (!group.length) { return; }
+        var pos = group.indexOf(i);
+        show(pos === -1 ? group[0] : group[(pos + 1) % group.length]);
+      });
+    });
     pipEls.forEach(function (p, k) { p.addEventListener('click', function () { stopAuto(); show(k); }); });
     replay.addEventListener('click', function () { autoFrom(0); });
 
