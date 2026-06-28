@@ -11,33 +11,12 @@ notes live under `docs/dev/` in the source tree.
 
 ## Four cooperating layers
 
-Nothelix is four pieces, each doing the kind of work it is best at.
+Nothelix is four pieces, each doing the kind of work it is best at. The schematic
+below walks them top to bottom; hover or click any layer to read what it does, and
+use **Replay** to watch a single cell run move down to the kernel and back.
 
-```
-              ┌──────────────────────────────────────────┐
-              │              Forked Helix                 │
-              │  koalazub/helix feature/inline-image-     │
-              │  rendering — adds the fork-only APIs       │
-              └──────────────┬───────────────────────────┘
-                             │  loads
-              ┌──────────────▼───────────────────────────┐
-              │        plugin/ (Steel / Scheme)           │
-              │   editor commands, keymaps, rendering,     │
-              │   document lifecycle hooks                 │
-              └──────────────┬───────────────────────────┘
-                             │  FFI (#%require-dylib)
-              ┌──────────────▼───────────────────────────┐
-              │     libnothelix (Rust cdylib)             │
-              │   notebook parsing, kernel IPC, image      │
-              │   encoding, math/typst, error enrichment   │
-              └──────────────┬───────────────────────────┘
-                             │  spawns + file IPC
-              ┌──────────────▼───────────────────────────┐
-              │        Julia kernel (one per doc)          │
-              │   cell registry, AST analysis,             │
-              │   output capture                           │
-              └──────────────────────────────────────────┘
-```
+{% include eng/styles.html %}
+{% include eng/arch.html %}
 
 **Rust** handles everything system-shaped: notebook JSON parsing, kernel process
 management, image decoding and Kitty-protocol encoding, Typst compilation, and
@@ -101,6 +80,9 @@ handles the wire format.
 The kernel catches runtime errors and emits them as structured JSON. libnothelix
 then runs each one through a pipeline of enrichers that fold source context,
 cross-cell context, and kernel-side type hints into the message you actually see.
+Toggle the two views below to see the difference on a real `MethodError`.
+
+{% include eng/enrich.html %}
 
 - **`UndefVarError`** gains a note saying where the variable is defined, or would
   be. If the kernel has not indexed it yet, a static `.jl` scanner in Rust catches

@@ -1,0 +1,187 @@
+<div class="nx nx-arch" data-nx-arch>
+  <div class="nx__bar">
+    <span class="nx__dot nx__dot--b"></span>
+    <span class="nx__dot nx__dot--a"></span>
+    <span class="nx__dot nx__dot--c"></span>
+    <span class="nx__kicker">system architecture</span>
+    <span class="nx__spacer"></span>
+    <button class="nx__run" data-nx-run type="button" aria-label="Replay the walkthrough">&#8635; Replay</button>
+  </div>
+
+  <div class="nx-arch__stage">
+    <ol class="nx-arch__nodes">
+      <li>
+        <details class="nx-arch__node" style="--nx-c: var(--nx-helix)" data-i="0">
+          <summary class="nx-arch__btn">
+            <span class="nx-arch__badge">01</span>
+            <span>
+              <span class="nx-arch__name">Forked Helix <span class="nx-arch__tech">&middot; the host</span></span>
+              <span class="nx-arch__role">editor core &middot; RawContent annotation layer &middot; math-line rows &middot; Steel FFI surfaces</span>
+            </span>
+            <span class="nx-arch__chev">&#9656;</span>
+          </summary>
+          <div class="nx-arch__detail">
+            Renders the buffer and owns the one idea the core had to grow: a plugin can attach
+            raw bytes at a document position, and those bytes consume visual rows. Images are
+            drawn through Kitty&rsquo;s Unicode-placeholder protocol so they survive scrolling and
+            edits. Everything above this is policy the plugin supplies.
+            <div class="nx-arch__tags"><span class="nx-arch__tag">Rust</span><span class="nx-arch__tag">helix-view</span><span class="nx-arch__tag">helix-tui</span></div>
+          </div>
+        </details>
+      </li>
+      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li>
+        <details class="nx-arch__node" style="--nx-c: var(--nx-steel)" data-i="1">
+          <summary class="nx-arch__btn">
+            <span class="nx-arch__badge">02</span>
+            <span>
+              <span class="nx-arch__name">plugin/ <span class="nx-arch__tech">&middot; Steel / Scheme</span></span>
+              <span class="nx-arch__role">commands &middot; keymaps &middot; pickers &middot; overlay + image placement &middot; lifecycle hooks</span>
+            </span>
+            <span class="nx-arch__chev">&#9656;</span>
+          </summary>
+          <div class="nx-arch__detail">
+            Everything editor-shaped. The <code>:commands</code>, the keymaps, the cell and chart
+            pickers, where overlays and images land, and the document-lifecycle hooks that conceal
+            math, reserve space for renders, and refresh on save. It is the caller and the UI; the
+            heavy lifting is delegated downward.
+            <div class="nx-arch__tags"><span class="nx-arch__tag">Steel</span><span class="nx-arch__tag">Scheme</span></div>
+          </div>
+        </details>
+      </li>
+      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li>
+        <details class="nx-arch__node" style="--nx-c: var(--nx-rust)" data-i="2">
+          <summary class="nx-arch__btn">
+            <span class="nx-arch__badge">03</span>
+            <span>
+              <span class="nx-arch__name">libnothelix <span class="nx-arch__tech">&middot; Rust cdylib</span></span>
+              <span class="nx-arch__role">notebook parsing &middot; kernel IPC &middot; Kitty encoding &middot; Typst + MiTeX &middot; error enrichment</span>
+            </span>
+            <span class="nx-arch__chev">&#9656;</span>
+          </summary>
+          <div class="nx-arch__detail">
+            The system work, kept off the editor thread. <code>.ipynb</code>&#8596;<code>.jl</code>
+            conversion, kernel process management and file IPC, image decode and Kitty encoding,
+            the LaTeX&#8594;Typst math pipeline, and the enrichers that turn a bare stack trace into
+            something that names your variables.
+            <div class="nx-arch__tags"><span class="nx-arch__tag">Rust</span><span class="nx-arch__tag">serde</span><span class="nx-arch__tag">typst</span><span class="nx-arch__tag">mitex</span></div>
+          </div>
+        </details>
+      </li>
+      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li>
+        <details class="nx-arch__node" style="--nx-c: var(--nx-julia)" data-i="3">
+          <summary class="nx-arch__btn">
+            <span class="nx-arch__badge">04</span>
+            <span>
+              <span class="nx-arch__name">Julia kernel <span class="nx-arch__tech">&middot; one per document</span></span>
+              <span class="nx-arch__role">persistent module &middot; cell registry &middot; output capture &middot; type introspection</span>
+            </span>
+            <span class="nx-arch__chev">&#9656;</span>
+          </summary>
+          <div class="nx-arch__detail">
+            A long-lived process that runs each cell in a persistent module, so definitions
+            accumulate exactly like a REPL session. It tracks the cell registry and the type of
+            every binding, captures stdout and figures, and emits structured JSON for both results
+            and errors.
+            <div class="nx-arch__tags"><span class="nx-arch__tag">Julia</span><span class="nx-arch__tag">JSON3</span></div>
+          </div>
+        </details>
+      </li>
+    </ol>
+
+    <div class="nx-arch__packet" data-nx-packet><i></i><b data-nx-chip></b></div>
+  </div>
+
+  <div class="nx__status"><span class="nx__tick">&#9656;</span><span data-nx-status>Hover or click any layer to read what it does. Replay walks the four layers, then traces one cell run through them.</span></div>
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll('[data-nx-arch]').forEach(function (root) {
+    var nodes  = Array.prototype.slice.call(root.querySelectorAll('.nx-arch__node'));
+    var stage  = root.querySelector('.nx-arch__stage');
+    var packet = root.querySelector('[data-nx-packet]');
+    var chip   = root.querySelector('[data-nx-chip]');
+    var status = root.querySelector('[data-nx-status]');
+    var runBtn = root.querySelector('[data-nx-run]');
+    var badges = nodes.map(function (n) { return n.querySelector('.nx-arch__badge'); });
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var token = 0;
+    var DEFAULT = status.textContent;
+
+    var tour = [
+      'Layer 01 — the forked editor renders the buffer and hosts inline images through its RawContent layer.',
+      'Layer 02 — the Steel plugin drives every command and keymap, and decides where output and images land.',
+      'Layer 03 — libnothelix does the system work: parsing, kernel IPC, the image and math pipelines, error enrichment.',
+      'Layer 04 — a Julia kernel per document runs your cells with persistent state and captures their output.'
+    ];
+    var trace = [
+      { i: 1, dir: 'down', chip: '',            text: 'A run begins: :execute-cell on the cell under the cursor.' },
+      { i: 2, dir: 'down', chip: 'input.json',  text: 'libnothelix writes the cell code and index to input.json.' },
+      { i: 3, dir: 'down', chip: 'input.json',  text: 'The kernel reads it and runs the cell in its persistent module.' },
+      { i: 2, dir: 'up',   chip: 'output.json', text: 'The kernel writes results, images, and errors to output.json.' },
+      { i: 1, dir: 'up',   chip: 'output.json', text: 'Steel polls the result, renders output, and registers any images.' },
+      { i: 0, dir: 'up',   chip: '',            text: 'The output, text or a plot, appears inline in the buffer.' }
+    ];
+
+    function placeAt(i) {
+      var b = badges[i].getBoundingClientRect();
+      var s = stage.getBoundingClientRect();
+      packet.style.left = (b.left - s.left + b.width / 2) + 'px';
+      packet.style.top  = (b.top  - s.top  + b.height / 2) + 'px';
+    }
+    function active(i) { nodes.forEach(function (n, k) { n.classList.toggle('is-active', k === i); }); }
+    function wait(ms, t) { return new Promise(function (r) { setTimeout(function () { r(t === token); }, reduce ? Math.min(ms, 600) : ms); }); }
+
+    async function play() {
+      var t = ++token;
+      runBtn.disabled = true;
+      nodes.forEach(function (n) { n.open = false; });
+      packet.style.opacity = '0'; chip.textContent = '';
+
+      for (var k = 0; k < tour.length; k++) {
+        active(k); status.textContent = tour[k];
+        if (!(await wait(950, t))) return;
+      }
+
+      active(-1);
+      placeAt(1); packet.classList.remove('is-up');
+      if (!(await wait(120, t))) return;
+      packet.style.opacity = '1';
+
+      for (var s = 0; s < trace.length; s++) {
+        var step = trace[s];
+        packet.classList.toggle('is-up', step.dir === 'up');
+        chip.textContent = step.chip;
+        status.textContent = step.text;
+        active(step.i);
+        placeAt(step.i);
+        if (!(await wait(s === 2 ? 1150 : 1000, t))) return;
+      }
+
+      if (!(await wait(750, t))) return;
+      packet.style.opacity = '0'; chip.textContent = '';
+      active(-1); status.textContent = DEFAULT; runBtn.disabled = false;
+    }
+
+    function stop() { token++; runBtn.disabled = false; }
+
+    runBtn.addEventListener('click', play);
+    nodes.forEach(function (n) {
+      n.querySelector('.nx-arch__btn').addEventListener('click', stop);
+    });
+
+    if ('IntersectionObserver' in window) {
+      var seen = false;
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting && !seen) { seen = true; io.disconnect(); play(); }
+        });
+      }, { threshold: 0.4 });
+      io.observe(root);
+    }
+  });
+})();
+</script>

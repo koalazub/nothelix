@@ -1,0 +1,55 @@
+<div class="nx nx-err" data-nx-err>
+  <div class="nx__bar">
+    <span class="nx__dot nx__dot--a"></span>
+    <span class="nx__kicker">error enrichment</span>
+    <span class="nx__spacer"></span>
+    <span class="nx__kicker" style="letter-spacing:.1em">no method matching Matrix(::Vector{ComplexF64})</span>
+  </div>
+
+  <div class="nx-err__toggle" role="tablist" aria-label="Error view">
+    <button role="tab" data-nx-tab="0" aria-selected="true">Raw Julia</button>
+    <button role="tab" data-nx-tab="1" aria-selected="false">Enriched by nothelix</button>
+  </div>
+
+  <div class="nx-err__panes">
+    <div class="nx-err__pane is-on" data-nx-pane="0">
+      <div class="nx-err__head">what the kernel throws</div>
+      <pre class="nx-term"><span class="nx-err-red">ERROR: MethodError: no method matching Matrix(::Vector{ComplexF64})</span>
+<span class="nx-dim">Closest candidates are:
+  Matrix(::UniformScaling, ::Integer, ::Integer)
+  Matrix{T}(::AbstractMatrix{S}) where {T, S}
+Stacktrace:
+  [1] top-level scope
+    @ cell 4</span></pre>
+    </div>
+
+    <div class="nx-err__pane" data-nx-pane="1">
+      <div class="nx-err__head">what nothelix shows you</div>
+      <pre class="nx-term"><span class="nx-err-red">MethodError: no method matching Matrix(::Vector{ComplexF64})</span>
+<span class="nx-ann">in scope, <span class="nx-var">&psi;</span> :: <span class="nx-type">Vector{ComplexF64}</span> <span class="nx-dim">&mdash;</span> <span class="nx-where">defined in cell 3</span></span>
+<span class="nx-ann"><span class="nx-var">Matrix()</span> would accept <span class="nx-var">H</span> :: <span class="nx-type">Matrix{ComplexF64}</span> <span class="nx-dim">&mdash;</span> <span class="nx-where">defined in cell 2</span></span></pre>
+      <p style="color:var(--nx-muted);font-size:.84rem;line-height:1.6;margin:.7rem 0 0">
+        The kernel records the type of every binding and probes which in-scope values each
+        candidate would accept; libnothelix maps the failing <code>::T</code> signature back to
+        your actual variables. So the message points at the stray <code>&psi;</code> and at the
+        <code>H</code> that <code>Matrix()</code> wanted &mdash; not a generic placeholder.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll('[data-nx-err]').forEach(function (root) {
+    var tabs  = root.querySelectorAll('[data-nx-tab]');
+    var panes = root.querySelectorAll('[data-nx-pane]');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var idx = tab.getAttribute('data-nx-tab');
+        tabs.forEach(function (t) { t.setAttribute('aria-selected', t === tab ? 'true' : 'false'); });
+        panes.forEach(function (p) { p.classList.toggle('is-on', p.getAttribute('data-nx-pane') === idx); });
+      });
+    });
+  });
+})();
+</script>
