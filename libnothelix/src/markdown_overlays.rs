@@ -177,7 +177,17 @@ fn scan_inline(chars: &[char], start: usize, abs0: usize, emit: &mut Emit) {
     while i < n {
         let c = chars[i];
 
-        if c == '\\' && i + 1 < n {
+        if c == '$'
+            && let Some(j) = find_char(chars, i + 1, '$')
+        {
+            i = j + 1;
+            continue;
+        }
+
+        if c == '\\'
+            && let Some(&next) = chars.get(i + 1)
+            && next.is_ascii_punctuation()
+        {
             emit.hide(abs(i));
             i += 2;
             continue;
@@ -338,5 +348,18 @@ mod tests {
         let out = scan_markdown_overlays("# **b**\n".to_string(), 100);
         assert!(out.contains("O\t102\t\n"), "base-shifted offset: {out}");
         assert!(out.contains("S\t104\t105\tmarkup.bold"), "base-shifted span: {out}");
+    }
+
+    #[test]
+    fn inline_math_spans_left_alone() {
+        let out = scan("# span of $\\mathbb{R}^3$ and $x_1 * y_2$\n");
+        assert!(out.is_empty(), "inline math untouched: {out:?}");
+    }
+
+    #[test]
+    fn backslash_escape_only_before_punctuation() {
+        let out = scan("# a \\* b and \\mathbb\n");
+        assert!(out.contains("O\t4\t\n"), "hide escape before *: {out}");
+        assert!(!out.contains("O\t13\t\n"), "\\m is not an escape: {out}");
     }
 }

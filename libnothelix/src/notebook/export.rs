@@ -73,7 +73,10 @@ pub fn export_to_typst(jl_path: String) -> String {
                     .map(|l| l.strip_prefix("# ").unwrap_or(l))
                     .collect::<Vec<_>>()
                     .join("\n");
-                out.push_str(&crate::typst_export::md_to_typst(&stripped));
+                match crate::typst_export::md_to_typst(&stripped) {
+                    Ok(typst) => out.push_str(&typst),
+                    Err(e) => return format!("ERROR: {e}"),
+                }
                 out.push('\n');
             }
             // Raw cells pass through without markdown→typst rewriting —

@@ -109,7 +109,17 @@ pub fn write_kernel_command(kernel_dir: &str, cmd: &Value) -> Result<(), String>
 
 // ─── FFI-facing functions ─────────────────────────────────────────────────────
 
-pub fn kernel_start_macro(kernel_dir: String) -> String {
+/// Start a Julia kernel in `kernel_dir`. `julia_bin` overrides the PATH julia
+/// when non-empty (a project may pin a specific interpreter); `julia_project`
+/// is passed as `--project=<…>` when non-empty (a project may pin its env).
+/// Both arrive ONLY after the project directory has been explicitly trusted
+/// (see the trust allowlist) — opening an untrusted repo passes "" for both.
+pub fn kernel_start_macro(
+    kernel_dir: String,
+    julia_bin: String,
+    julia_project: String,
+    notebook_path: String,
+) -> String {
     let kdir = Path::new(&kernel_dir);
 
     // Kill any pre-existing process cleanly via SIGTERM.
@@ -142,11 +152,21 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
         Err(e) => return json!({"status": "error", "error": e}).to_string(),
     };
 
-    let julia = match which("julia") {
-        Ok(p) => p,
-        Err(_) => {
-            return json!({"status": "error", "error": "julia not found in PATH"}).to_string();
+    let julia = if julia_bin.trim().is_empty() {
+        match which("julia") {
+            Ok(p) => p,
+            Err(_) => {
+                return json!({"status": "error", "error": "julia not found in PATH"}).to_string();
+            }
         }
+    } else {
+        let p = std::path::PathBuf::from(julia_bin.trim());
+        if !p.exists() {
+            return json!({"status": "error",
+                "error": format!("configured julia-bin does not exist: {}", p.display())})
+            .to_string();
+        }
+        p
     };
 
     let runner = scripts_dir.join("runner.jl");
@@ -166,7 +186,29 @@ pub fn kernel_start_macro(kernel_dir: String) -> String {
     // env (where Pkg, LinearAlgebra, etc. live). NothelixMacros is only
     // needed by the LSP, and the kernel has its own CellMacros module
     // that defines @cell/@markdown for runtime execution.
-    match Command::new(&julia)
+    let mut cmd = Command::new(&julia);
+    // `--project` must precede the script argument.
+    let project = julia_project.trim();
+    if !project.is_empty() {
+        cmd.arg(format!("--project={project}"));
+    }
+
+    // Run the kernel in the notebook's own directory so relative paths in
+    // cells (load_strain("data.hdf5"), include("helpers.jl"), readdir(), …)
+    // resolve next to the notebook, exactly like Jupyter and Marimo. IPC is
+    // unaffected: kernel_dir is an absolute scratch path. Scratch/unsaved
+    // notebooks pass an empty path and keep the inherited working directory.
+    let nb = notebook_path.trim();
+    if !nb.is_empty()
+        && let Some(dir) = Path::new(nb).parent()
+    {
+        let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        if dir.is_dir() {
+            cmd.current_dir(dir);
+        }
+    }
+
+    match cmd
         .arg(&runner)
         .arg(&kernel_dir)
         // Headless graphics backends: prevent GR/Plots.jl from opening GUI windows

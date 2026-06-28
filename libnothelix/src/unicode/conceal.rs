@@ -271,4 +271,12 @@ mod tests {
         assert!(tsv.contains('α'), "math should still conceal: {tsv:?}");
         assert!(!tsv.contains('│'), "no box rows: {tsv:?}");
     }
+
+    #[test]
+    fn mathbb_conceals_to_double_struck() {
+        let text = "# subspace of $\\mathbb{R}^3$.\n";
+        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
+        assert!(tsv.contains('ℝ'), "double-struck R emitted: {tsv:?}");
+        assert!(tsv.contains('³'), "superscript 3 emitted: {tsv:?}");
+    }
 }

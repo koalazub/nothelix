@@ -7,12 +7,13 @@ use std::sync::{Mutex, OnceLock};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use typst::diag::FileError;
 use typst::foundations::{Bytes, Datetime, Duration};
-use typst::syntax::{FileId, Source};
+use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
+use typst_pdf::{PdfOptions, pdf};
 use typst_svg::{SvgOptions, svg};
 
 use crate::typst_export::latex_to_typst_math;
@@ -45,20 +46,119 @@ pub fn render_math_to_svg(latex: String, font_size_pt: isize, text_color: String
 }
 
 /// Record Separator: never appears in LaTeX/Typst or base64.
-const BATCH_SEP: char = '\u{1e}';
+pub(crate) const BATCH_SEP: char = '\u{1e}';
 
-/// Render `BATCH_SEP`-joined LaTeX blocks in parallel; returns their JSON
-/// results joined the same way, in order.
-pub fn render_math_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
+/// Compile a `BATCH_SEP`-joined batch in parallel via `render_one`, returning
+/// the JSON results joined the same way, in order. Shared by the synchronous
+/// `render_math_batch` (used in tests) and the async `spawn_batch`.
+fn run_batch(
+    blocks: String,
+    font_size_pt: isize,
+    text_color: String,
+    render_one: fn(String, isize, String) -> String,
+) -> String {
     use rayon::prelude::*;
 
     let results: Vec<String> = blocks
         .split(BATCH_SEP)
         .collect::<Vec<_>>()
         .par_iter()
-        .map(|latex| render_math_to_svg((*latex).to_string(), font_size_pt, text_color.clone()))
+        .map(|b| render_one((*b).to_string(), font_size_pt, text_color.clone()))
         .collect();
     results.join(&BATCH_SEP.to_string())
+}
+
+/// Render `BATCH_SEP`-joined LaTeX blocks in parallel; returns their JSON
+/// results joined the same way, in order.
+#[cfg(test)]
+fn render_math_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
+    run_batch(blocks, font_size_pt, text_color, render_math_to_svg)
+}
+
+/// State of an in-flight `start_render_batch` job. The `Instant` is the job's
+/// creation time, used to evict abandoned entries — a poll chain that is
+/// superseded by a newer render (generation guard) or times out simply stops
+/// polling, so without a sweep the `Done` payload (the full base64 SVG batch)
+/// would leak for the life of the process.
+enum RenderJob {
+    Pending(std::time::Instant),
+    Done(std::time::Instant, String),
+}
+
+impl RenderJob {
+    fn started(&self) -> std::time::Instant {
+        match self {
+            RenderJob::Pending(t) | RenderJob::Done(t, _) => *t,
+        }
+    }
+}
+
+fn render_jobs() -> &'static Mutex<HashMap<u64, RenderJob>> {
+    static JOBS: OnceLock<Mutex<HashMap<u64, RenderJob>>> = OnceLock::new();
+    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// How long a job may sit unclaimed before the next `spawn_batch` evicts it.
+/// Comfortably longer than the plugin's poll ceiling (~24s) so a live poll
+/// never races the sweep, but bounded so abandoned jobs can't accumulate.
+const RENDER_JOB_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+static RENDER_JOB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Kick off a batch Typst compile on a plain Rust thread and return a job id
+/// immediately. `render_one` compiles a single `BATCH_SEP`-delimited block
+/// (`render_math_to_svg` for equations, `render_table_to_svg` for tables).
+///
+/// The work runs on a `std::thread` (NOT a Steel VM thread), so it is invisible
+/// to Steel's GC safepoint machinery and never freezes the editor — unlike
+/// calling the synchronous batch inside Steel's `spawn-native-thread`, where the
+/// cloned VM stuck in this FFI makes the main-thread garbage collector busy-spin
+/// until the compile finishes.
+pub(crate) fn spawn_batch(
+    blocks: String,
+    font_size_pt: isize,
+    text_color: String,
+    render_one: fn(String, isize, String) -> String,
+) -> String {
+    let job_id = RENDER_JOB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let now = std::time::Instant::now();
+    if let Ok(mut g) = render_jobs().lock() {
+        // Sweep entries abandoned by a superseded or timed-out poll chain.
+        g.retain(|_, job| now.duration_since(job.started()) < RENDER_JOB_TTL);
+        g.insert(job_id, RenderJob::Pending(now));
+    }
+    std::thread::spawn(move || {
+        let joined = run_batch(blocks, font_size_pt, text_color, render_one);
+        if let Ok(mut g) = render_jobs().lock() {
+            g.insert(job_id, RenderJob::Done(now, joined));
+        }
+    });
+    job_id.to_string()
+}
+
+pub fn start_render_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
+    spawn_batch(blocks, font_size_pt, text_color, render_math_to_svg)
+}
+
+/// Poll a job started by `start_render_batch`. Returns `"PENDING"` while the
+/// compile is still running, `"ERROR:<reason>"` on a bad/expired id, or the
+/// `BATCH_SEP`-joined JSON results (consuming the job) once complete. JSON
+/// results always start with `{`, so they can never collide with the sentinels.
+pub fn poll_render_batch(job_id: String) -> String {
+    let Ok(id) = job_id.trim().parse::<u64>() else {
+        return "ERROR:bad-job-id".to_string();
+    };
+    let Ok(mut g) = render_jobs().lock() else {
+        return "ERROR:lock-poisoned".to_string();
+    };
+    match g.remove(&id) {
+        Some(RenderJob::Done(_, result)) => result,
+        Some(pending @ RenderJob::Pending(_)) => {
+            g.insert(id, pending);
+            "PENDING".to_string()
+        }
+        None => "ERROR:expired".to_string(),
+    }
 }
 
 fn get_cached(latex: &str, font_size_pt: isize, color: &str) -> Result<(String, u32, u32), ()> {
@@ -85,7 +185,7 @@ fn render_math_to_svg_impl(
     font_size_pt: f64,
     text_color: &str,
 ) -> Result<(String, u32, u32), String> {
-    let typst_math = latex_to_typst_math(latex);
+    let typst_math = latex_to_typst_math(latex)?;
     let doc_source = build_typst_document(&typst_math, font_size_pt, text_color);
     compile_typst_to_svg(doc_source)
 }
@@ -132,18 +232,67 @@ pub(crate) fn compile_typst_to_svg(doc_source: String) -> Result<(String, u32, u
     Ok((b64, width, height))
 }
 
+pub fn render_typst_to_pdf(typst_source: String, out_path: String) -> String {
+    match compile_typst_to_pdf(&typst_source) {
+        Ok(bytes) => match std::fs::write(&out_path, &bytes) {
+            Ok(()) => String::new(),
+            Err(e) => format!("ERROR:{e}"),
+        },
+        Err(e) => format!("ERROR:{e}"),
+    }
+}
+
+pub(crate) fn compile_typst_to_pdf(typst_source: &str) -> Result<Vec<u8>, String> {
+    let world = build_world(Source::detached(typst_source.to_string()));
+
+    let warned = typst::compile::<PagedDocument>(&world);
+    let document = warned
+        .output
+        .map_err(|errors| format_diagnostics(&errors))?;
+
+    pdf(&document, &PdfOptions::default()).map_err(|errors| format_diagnostics(&errors))
+}
+
 fn build_typst_document(typst_math: &str, font_size_pt: f64, text_color: &str) -> String {
+    let escaped = typst_math
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace(['\n', '\r'], " ");
     format!(
-        "#set page(width: auto, height: auto, margin: 3pt, fill: none)\n\
+        "#import \"/mitex/mod.typ\": mitex-scope\n\
+         #import \"/mitex/compat.typ\": typst-compat-scope\n\
+         #set page(width: auto, height: auto, margin: 3pt, fill: none)\n\
          #set text(size: {font_size_pt:.1}pt, fill: rgb(\"{text_color}\"))\n\
          #set math.equation(numbering: none)\n\
          #block(\n\
          \x20 stroke: (top: 0.6pt + gray, bottom: 0.6pt + gray),\n\
          \x20 inset: (top: 9pt, bottom: 9pt, left: 16pt, right: 16pt),\n\
          )[\n\
-         \x20 $ {typst_math} $\n\
+         \x20 #eval(\"$ {escaped} $\", scope: mitex-scope + typst-compat-scope)\n\
          ]"
     )
+}
+
+fn mitex_scope_sources() -> &'static [(FileId, Source)] {
+    static SOURCES: OnceLock<Vec<(FileId, Source)>> = OnceLock::new();
+    SOURCES.get_or_init(|| {
+        [
+            ("/mitex/mod.typ", include_str!("mitex/mod.typ")),
+            ("/mitex/prelude.typ", include_str!("mitex/prelude.typ")),
+            (
+                "/mitex/latex/standard.typ",
+                include_str!("mitex/latex/standard.typ"),
+            ),
+            ("/mitex/compat.typ", include_str!("mitex/compat.typ")),
+        ]
+        .into_iter()
+        .map(|(path, text)| {
+            let vpath = VirtualPath::new(path).expect("static mitex vpath");
+            let id = FileId::new(RootedPath::new(VirtualRoot::Project, vpath));
+            (id, Source::new(id, text.to_string()))
+        })
+        .collect()
+    })
 }
 
 /// Typst fonts + library are identical for every render, but rebuilding
@@ -201,18 +350,18 @@ impl World for MathWorld {
 
     fn source(&self, id: FileId) -> Result<Source, FileError> {
         if id == self.main {
-            Ok(self.source.clone())
-        } else {
-            Err(FileError::NotFound(PathBuf::new()))
+            return Ok(self.source.clone());
         }
+        mitex_scope_sources()
+            .iter()
+            .find(|(fid, _)| *fid == id)
+            .map(|(_, src)| src.clone())
+            .ok_or_else(|| FileError::NotFound(PathBuf::new()))
     }
 
     fn file(&self, id: FileId) -> Result<Bytes, FileError> {
-        if id == self.main {
-            Ok(Bytes::from_string(self.source.text().to_string()))
-        } else {
-            Err(FileError::NotFound(PathBuf::new()))
-        }
+        self.source(id)
+            .map(|src| Bytes::from_string(src.text().to_string()))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
@@ -304,6 +453,31 @@ mod tests {
     // height/width ratio is `cell_aspect`.
     fn visual_aspect(rows: u32, cols: u32, cell_aspect: f64) -> f64 {
         (f64::from(rows) / f64::from(cols)) * cell_aspect
+    }
+
+    #[test]
+    fn async_batch_round_trips() {
+        // The freeze fix runs the batch on a plain std::thread and hands results
+        // back via poll. Start a 2-block batch and poll to completion; both
+        // results must come back as JSON in order, with no PENDING leaking
+        // through and no error sentinel.
+        let blob = format!("alpha{BATCH_SEP}\\beta");
+        let job = start_render_batch(blob, 14, "e8e8e8".to_string());
+        let mut reply = poll_render_batch(job.clone());
+        let mut waited = 0;
+        while reply == "PENDING" {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            waited += 20;
+            assert!(waited < 30_000, "batch never completed");
+            reply = poll_render_batch(job.clone());
+        }
+        assert!(!reply.starts_with("ERROR:"), "batch errored: {reply}");
+        let parts: Vec<&str> = reply.split(BATCH_SEP).collect();
+        assert_eq!(parts.len(), 2, "expected 2 results, got: {reply}");
+        assert!(parts.iter().all(|p| p.starts_with('{')), "got: {reply}");
+        // The job is consumed once Done — a second poll must report expiry,
+        // never a stale duplicate.
+        assert_eq!(poll_render_batch(job), "ERROR:expired");
     }
 
     #[test]
@@ -441,6 +615,54 @@ mod tests {
         assert!(
             json.contains("\"b64\":\"PHN2Zy"),
             "expected svg payload: {json}"
+        );
+    }
+
+    #[test]
+    fn compiles_full_typst_source_to_pdf() {
+        let bytes =
+            compile_typst_to_pdf("= Hello\n\nSome $x^2$ math.").expect("pdf compile succeeds");
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "missing PDF magic: {:?}",
+            &bytes[..bytes.len().min(8)]
+        );
+        assert!(bytes.len() > 500, "PDF unexpectedly small: {} bytes", bytes.len());
+    }
+
+    #[test]
+    fn render_typst_to_pdf_writes_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("out.pdf");
+        let out_path = out.to_string_lossy().into_owned();
+        let result = render_typst_to_pdf("= Title\n\nBody text.".to_string(), out_path);
+        assert_eq!(result, "", "expected success, got: {result}");
+        let written = std::fs::read(&out).expect("pdf written to disk");
+        assert!(written.starts_with(b"%PDF-"), "file is not a PDF");
+    }
+
+    #[test]
+    fn render_typst_to_pdf_reports_compile_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("bad.pdf");
+        let out_path = out.to_string_lossy().into_owned();
+        let result = render_typst_to_pdf("#panic(\"boom\")".to_string(), out_path);
+        assert!(
+            result.starts_with("ERROR:"),
+            "expected ERROR sentinel, got: {result}"
+        );
+        assert!(!out.exists(), "no file should be written on failure");
+    }
+
+    #[test]
+    fn braceless_tfrac_with_quad_and_primes_renders() {
+        // Braceless args (`\tfrac13` = `\tfrac{1}{3}`), `\quad` spacing and
+        // primes on subscripted symbols must all survive conversion + compile.
+        let latex = r"p_0(\tfrac13)=p_1(\tfrac13),\quad p_0'(\tfrac13)=p_1'(\tfrac13),\quad p_1(\tfrac23)=p_2(\tfrac23),\quad p_1'(\tfrac23)=p_2'(\tfrac23).";
+        let json = render_math_to_svg(latex.to_string(), 14, "e8e8e8".to_string());
+        assert!(
+            json.contains("\"error\":\"\""),
+            "braceless tfrac render failed: {json}"
         );
     }
 
