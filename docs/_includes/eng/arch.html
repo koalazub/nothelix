@@ -3,7 +3,7 @@
     <span class="nx__dot nx__dot--b"></span>
     <span class="nx__dot nx__dot--a"></span>
     <span class="nx__dot nx__dot--c"></span>
-    <span class="nx__kicker">system architecture</span>
+    <span class="nx__kicker">how nothelix runs a cell</span>
     <span class="nx__spacer"></span>
     <button class="nx__run" data-nx-run type="button" aria-label="Replay the walkthrough">&#8635; Replay</button>
   </div>
@@ -24,12 +24,12 @@
             Renders the buffer and owns the one idea the core had to grow: a plugin can attach
             raw bytes at a document position, and those bytes consume visual rows. Images are
             drawn through Kitty&rsquo;s Unicode-placeholder protocol so they survive scrolling and
-            edits. Everything above this is policy the plugin supplies.
+            edits.
             <div class="nx-arch__tags"><span class="nx-arch__tag">Rust</span><span class="nx-arch__tag">helix-view</span><span class="nx-arch__tag">helix-tui</span></div>
           </div>
         </details>
       </li>
-      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li class="nx-arch__link" data-link="0" aria-hidden="true"></li>
       <li>
         <details class="nx-arch__node" style="--nx-c: var(--nx-steel)" data-i="1">
           <summary class="nx-arch__btn">
@@ -43,13 +43,13 @@
           <div class="nx-arch__detail">
             Everything editor-shaped. The <code>:commands</code>, the keymaps, the cell and chart
             pickers, where overlays and images land, and the document-lifecycle hooks that conceal
-            math, reserve space for renders, and refresh on save. It is the caller and the UI; the
-            heavy lifting is delegated downward.
+            math and refresh renders on save. It is the caller and the UI; the heavy lifting is
+            delegated downward.
             <div class="nx-arch__tags"><span class="nx-arch__tag">Steel</span><span class="nx-arch__tag">Scheme</span></div>
           </div>
         </details>
       </li>
-      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li class="nx-arch__link" data-link="1" aria-hidden="true"></li>
       <li>
         <details class="nx-arch__node" style="--nx-c: var(--nx-rust)" data-i="2">
           <summary class="nx-arch__btn">
@@ -69,7 +69,7 @@
           </div>
         </details>
       </li>
-      <li class="nx-arch__link" aria-hidden="true"></li>
+      <li class="nx-arch__link" data-link="2" aria-hidden="true"></li>
       <li>
         <details class="nx-arch__node" style="--nx-c: var(--nx-julia)" data-i="3">
           <summary class="nx-arch__btn">
@@ -91,94 +91,119 @@
       </li>
     </ol>
 
-    <div class="nx-arch__packet" data-nx-packet><i></i><b data-nx-chip></b></div>
+    <div class="nx-arch__art" data-nx-art hidden>
+      <div class="nx-arch__art-head">
+        <span class="nx-arch__art-step" data-nx-step></span>
+        <span class="nx-arch__art-count" data-nx-count></span>
+      </div>
+      <pre class="nx-arch__art-code" data-nx-code></pre>
+    </div>
   </div>
 
-  <div class="nx__status"><span class="nx__tick">&#9656;</span><span data-nx-status>Hover or click any layer to read what it does. Replay walks the four layers, then traces one cell run through them.</span></div>
+  <div class="nx__status"><span class="nx__tick">&#9656;</span><span data-nx-status>Hover or click a layer to explore it. Press Replay to watch one cell run, step by step.</span></div>
 </div>
 
 <script>
 (function () {
   document.querySelectorAll('[data-nx-arch]').forEach(function (root) {
     var nodes  = Array.prototype.slice.call(root.querySelectorAll('.nx-arch__node'));
-    var stage  = root.querySelector('.nx-arch__stage');
-    var packet = root.querySelector('[data-nx-packet]');
-    var chip   = root.querySelector('[data-nx-chip]');
+    var links  = Array.prototype.slice.call(root.querySelectorAll('.nx-arch__link'));
+    var art    = root.querySelector('[data-nx-art]');
+    var stepEl = root.querySelector('[data-nx-step]');
+    var countEl= root.querySelector('[data-nx-count]');
+    var codeEl = root.querySelector('[data-nx-code]');
     var status = root.querySelector('[data-nx-status]');
     var runBtn = root.querySelector('[data-nx-run]');
-    var badges = nodes.map(function (n) { return n.querySelector('.nx-arch__badge'); });
     var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var ACCENT = ['var(--nx-helix)', 'var(--nx-steel)', 'var(--nx-rust)', 'var(--nx-julia)'];
     var token = 0;
-    var DEFAULT = status.textContent;
+    var HINT = status.textContent;
 
-    var tour = [
-      'Layer 01 — the forked editor renders the buffer and hosts inline images through its RawContent layer.',
-      'Layer 02 — the Steel plugin drives every command and keymap, and decides where output and images land.',
-      'Layer 03 — libnothelix does the system work: parsing, kernel IPC, the image and math pipelines, error enrichment.',
-      'Layer 04 — a Julia kernel per document runs your cells with persistent state and captures their output.'
-    ];
-    var trace = [
-      { i: 1, dir: 'down', chip: '',            text: 'A run begins: :execute-cell on the cell under the cursor.' },
-      { i: 2, dir: 'down', chip: 'input.json',  text: 'libnothelix writes the cell code and index to input.json.' },
-      { i: 3, dir: 'down', chip: 'input.json',  text: 'The kernel reads it and runs the cell in its persistent module.' },
-      { i: 2, dir: 'up',   chip: 'output.json', text: 'The kernel writes results, images, and errors to output.json.' },
-      { i: 1, dir: 'up',   chip: 'output.json', text: 'Steel polls the result, renders output, and registers any images.' },
-      { i: 0, dir: 'up',   chip: '',            text: 'The output, text or a plot, appears inline in the buffer.' }
+    var intro = [
+      'First, the layers. The forked editor hosts everything and can now draw images inline.',
+      'The Steel plugin is the brain inside the editor: commands, keymaps, and rendering.',
+      'libnothelix does the heavy system work in Rust, kept off the editor thread.',
+      'A Julia kernel actually runs your code, with one process per open notebook.'
     ];
 
-    function placeAt(i) {
-      var b = badges[i].getBoundingClientRect();
-      var s = stage.getBoundingClientRect();
-      packet.style.left = (b.left - s.left + b.width / 2) + 'px';
-      packet.style.top  = (b.top  - s.top  + b.height / 2) + 'px';
-    }
+    var mech = [
+      { layer: 1, dir: null,   step: 'Request',  text: 'You run a cell. The plugin captures its code and index and calls into Rust.',
+        code: ':execute-cell\n# cursor is inside cell #3  ->  plot(x, y)' },
+      { layer: 2, dir: 'down', step: 'Serialise', text: 'libnothelix writes the cell to a JSON file the kernel is watching. The IPC is just files.',
+        code: 'input.json\n{ "index": 3, "code": "plot(x, y)" }' },
+      { layer: 3, dir: 'down', step: 'Evaluate',  text: 'The kernel evaluates it in ONE long-lived module, so earlier cells’ variables still exist.',
+        code: 'Core.eval(Notebook, :( plot(x, y) ))\n# x and y were defined back in cell 1 - still in scope' },
+      { layer: 3, dir: null,   step: 'Capture',   text: 'It captures text, figures, errors, and a snapshot of the cell registry, then writes them back.',
+        code: 'output.json\n{ "text": "", "png_b64": "iVBORw0KG...", "error": null }' },
+      { layer: 2, dir: 'up',   step: 'Encode',    text: 'Back in Rust the PNG becomes a Kitty graphics escape. The kernel never thinks about terminals.',
+        code: 'ESC _G a=T,f=100,t=d,c=64,r=18; <base64 PNG> ESC \\\\' },
+      { layer: 1, dir: 'up',   step: 'Paint',     text: 'The plugin registers it as RawContent, and the forked Helix draws it inline, under the cell.',
+        code: '(add-raw-content! payload id rows char-idx)' },
+      { layer: 0, dir: 'up',   step: 'Done',      text: 'Your plot appears in the buffer. The whole loop stayed in the editor - no browser, no window.',
+        code: '# figure rendered below cell #3' }
+    ];
+
     function active(i) { nodes.forEach(function (n, k) { n.classList.toggle('is-active', k === i); }); }
-    function wait(ms, t) { return new Promise(function (r) { setTimeout(function () { r(t === token); }, reduce ? Math.min(ms, 600) : ms); }); }
+    function clearLinks() { links.forEach(function (l) { l.classList.remove('is-down', 'is-up'); }); }
+    function fmt(code) {
+      return code.split('\n').map(function (line) {
+        var e = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var m = e.match(/^(\s*)(#.*)$/);
+        return m ? m[1] + '<span class="c">' + m[2] + '</span>' : e;
+      }).join('\n');
+    }
+    function wait(ms, t) { return new Promise(function (r) { setTimeout(function () { r(t === token); }, reduce ? Math.min(ms, 650) : ms); }); }
+
+    async function showArt(s, idx) {
+      art.style.opacity = '0';
+      await new Promise(function (r) { setTimeout(r, reduce ? 0 : 140); });
+      art.hidden = false;
+      art.style.setProperty('--ac', ACCENT[s.layer]);
+      stepEl.textContent = s.step;
+      countEl.textContent = (idx + 1) + ' / ' + mech.length;
+      codeEl.innerHTML = fmt(s.code);
+      art.style.opacity = '1';
+    }
 
     async function play() {
       var t = ++token;
       runBtn.disabled = true;
       nodes.forEach(function (n) { n.open = false; });
-      packet.style.opacity = '0'; chip.textContent = '';
+      clearLinks(); art.hidden = true;
 
-      for (var k = 0; k < tour.length; k++) {
-        active(k); status.textContent = tour[k];
+      for (var k = 0; k < intro.length; k++) {
+        active(k); status.textContent = intro[k];
         if (!(await wait(950, t))) return;
       }
 
-      active(-1);
-      placeAt(1); packet.classList.remove('is-up');
-      if (!(await wait(120, t))) return;
-      packet.style.opacity = '1';
-
-      for (var s = 0; s < trace.length; s++) {
-        var step = trace[s];
-        packet.classList.toggle('is-up', step.dir === 'up');
-        chip.textContent = step.chip;
-        status.textContent = step.text;
-        active(step.i);
-        placeAt(step.i);
-        if (!(await wait(s === 2 ? 1150 : 1000, t))) return;
+      var prev = null;
+      for (var s = 0; s < mech.length; s++) {
+        var m = mech[s];
+        active(m.layer);
+        clearLinks();
+        if (m.dir && prev !== null && Math.abs(prev - m.layer) === 1) {
+          links[Math.min(prev, m.layer)].classList.add(m.dir === 'down' ? 'is-down' : 'is-up');
+        }
+        status.textContent = m.text;
+        await showArt(m, s);
+        prev = m.layer;
+        if (!(await wait(s === 2 ? 2100 : 1850, t))) return;
       }
 
-      if (!(await wait(750, t))) return;
-      packet.style.opacity = '0'; chip.textContent = '';
-      active(-1); status.textContent = DEFAULT; runBtn.disabled = false;
+      if (!(await wait(900, t))) return;
+      clearLinks(); active(-1); art.hidden = true;
+      status.textContent = HINT; runBtn.disabled = false;
     }
 
-    function stop() { token++; runBtn.disabled = false; }
+    function stop() { token++; clearLinks(); art.hidden = true; runBtn.disabled = false; }
 
     runBtn.addEventListener('click', play);
-    nodes.forEach(function (n) {
-      n.querySelector('.nx-arch__btn').addEventListener('click', stop);
-    });
+    nodes.forEach(function (n) { n.querySelector('.nx-arch__btn').addEventListener('click', stop); });
 
     if ('IntersectionObserver' in window) {
       var seen = false;
       var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) {
-          if (e.isIntersecting && !seen) { seen = true; io.disconnect(); play(); }
-        });
+        entries.forEach(function (e) { if (e.isIntersecting && !seen) { seen = true; io.disconnect(); play(); } });
       }, { threshold: 0.4 });
       io.observe(root);
     }

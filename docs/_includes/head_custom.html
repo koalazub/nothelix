@@ -1,0 +1,120 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ===== nothelix site theme: paper (light) / blueprint (dark), by system ===== */
+:root {
+  --st-bg: #f2ead6;
+  --st-sidebar: #ece1c8;
+  --st-surface: #fbf6e9;
+  --st-fg: #2f3e4d;
+  --st-heading: #21303f;
+  --st-muted: #5c6b78;
+  --st-link: #4d7aa6;
+  --st-link-hover: #c1764f;
+  --st-border: rgba(47,62,77,.22);
+  --st-grid: rgba(57,86,116,.10);
+  --st-accent: #c1764f;
+
+  /* code blocks: a constant dark slate so syntax highlighting keeps contrast */
+  --st-code-bg: #112536;
+  --st-code-fg: #dbe7f1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --st-bg: #0f2435;
+    --st-sidebar: #0c1d2c;
+    --st-surface: #112a3e;
+    --st-fg: #dbe7f1;
+    --st-heading: #eef4fb;
+    --st-muted: #9fb6c9;
+    --st-link: #7fabe2;
+    --st-link-hover: #e09368;
+    --st-border: rgba(190,215,235,.24);
+    --st-grid: rgba(150,190,225,.12);
+    --st-accent: #e09368;
+    --st-code-bg: #0b1d2c;
+  }
+}
+
+body {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
+  color: var(--st-fg);
+  background-color: var(--st-bg);
+  background-image:
+    linear-gradient(var(--st-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--st-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+h1, h2, h3, h4, h5, h6,
+.site-title, .text-alpha, .text-beta, .text-gamma {
+  font-family: 'Architects Daughter', 'Comic Sans MS', cursive !important;
+  color: var(--st-heading) !important;
+  letter-spacing: .01em;
+}
+
+.side-bar { background-color: var(--st-sidebar); border-right: 1px solid var(--st-border); }
+.site-header { border-bottom: 1px solid var(--st-border); }
+.site-title { color: var(--st-heading) !important; }
+.site-button { color: var(--st-muted); }
+
+.main-content,
+.main-content p,
+.main-content li,
+.main-content td { color: var(--st-fg); }
+
+.main-content a, a, .nav-list .nav-list-item .nav-list-link:hover {
+  color: var(--st-link);
+}
+a:hover, .main-content a:hover { color: var(--st-link-hover); }
+
+.nav-list .nav-list-item .nav-list-link { color: var(--st-fg); }
+.nav-list .nav-list-item .nav-list-link.active,
+.nav-list .nav-list-item .nav-list-link.active:hover { color: var(--st-link); font-weight: 600; }
+
+hr { background-color: var(--st-border); }
+
+/* tables and quotes */
+.main-content table th, .main-content table td { border-color: var(--st-border); }
+.main-content table th { background-color: var(--st-surface); }
+.main-content tr:nth-child(2n) td { background-color: color-mix(in srgb, var(--st-surface) 55%, transparent); }
+.main-content blockquote { border-left: 3px solid var(--st-accent); color: var(--st-muted); }
+
+/* inline code: a quiet chip that adapts to the page */
+.main-content code.language-plaintext,
+.main-content p > code, .main-content li > code, .main-content td > code {
+  background-color: color-mix(in srgb, var(--st-fg) 9%, transparent);
+  color: var(--st-fg);
+  border: 1px solid var(--st-border);
+}
+
+/* fenced code blocks: constant dark slate */
+.main-content pre.highlight,
+.main-content div.highlighter-rouge,
+.main-content figure.highlight,
+.highlight {
+  background-color: var(--st-code-bg) !important;
+  border: 1px solid var(--st-border);
+  border-radius: 8px;
+}
+.main-content pre.highlight, .main-content pre.highlight code,
+.highlight, .highlight code { color: var(--st-code-fg); }
+
+/* search */
+.search-input { background-color: var(--st-surface); color: var(--st-fg); }
+.search-result-title { color: var(--st-fg); }
+
+/* buttons */
+.btn {
+  color: var(--st-fg);
+  background-color: var(--st-surface);
+  border: 1px solid var(--st-border);
+  box-shadow: none;
+}
+.btn:hover { background-color: var(--st-bg); border-color: var(--st-accent); }
+
+/* footer */
+.site-footer { color: var(--st-muted); border-top: 1px solid var(--st-border); }
+</style>

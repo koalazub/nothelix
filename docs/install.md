@@ -55,6 +55,49 @@ files. Run `nothelix --help` for the other subcommands.
 Julia code intelligence (hover, completion, go-to-definition) is a separate,
 optional step. See [Language server](lsp.md).
 
+## Install with Nix
+
+The repository is a flake, so if you run Nix you can build the pieces directly
+rather than fetching a prebuilt tarball.
+
+```bash
+# The forked Helix binary on its own
+nix build github:koalazub/nothelix#hx-nothelix
+./result/bin/hx-nothelix --version
+
+# The Rust FFI library
+nix build github:koalazub/nothelix#libnothelix
+```
+
+The default package assembles the same release bundle the installer ships. Build
+it, then run the bundled local installer, which lays everything out under
+`~/.local/bin` and `~/.local/share/nothelix` exactly as the curl path does:
+
+```bash
+nix build github:koalazub/nothelix       # default output: the release bundle
+sh result/nothelix-*/install-local.sh
+```
+
+Contributors can drop into a pinned development shell — the fork toolchain, Julia,
+and tree-sitter, all wired up — with `nix develop`. The flake pins its toolchain
+inputs to known-good revisions, so a `nix flake update` will not silently move the
+build out from under you.
+
+## The Julia kernel
+
+Nothelix executes your code through a Julia kernel — the one runtime requirement
+that is not Rust. The supported way to install Julia is
+[juliaup](https://julialang.org/install/):
+
+```bash
+curl -fsSL https://install.julialang.org | sh
+```
+
+Any Julia 1.9 or newer works. Nothelix uses whatever `julia` your PATH resolves; it
+does not vendor a copy or create per-notebook environments. The first cell run adds
+the kernel's small dependency set to your default environment, and the optional
+[language server](lsp.md) needs two packages in that same environment.
+
 ## When something breaks
 
 ```bash
