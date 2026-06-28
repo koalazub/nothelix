@@ -11,9 +11,12 @@ notes live under `docs/dev/` in the source tree.
 
 ## Four cooperating layers
 
-Nothelix is four pieces, each doing the kind of work it is best at. The schematic
-below walks them top to bottom; hover or click any layer to read what it does, and
-use **Replay** to watch a single cell run move down to the kernel and back.
+Nothelix is four pieces, each doing the kind of work it is best at. Rather than
+describe them in the abstract, the walkthrough below follows one real cell —
+`plot(x, y)` — end to end: the keystroke that runs it, the JSON the kernel reads,
+the evaluation that keeps your earlier variables alive, the figure that comes back,
+and the plot rendered inline in the buffer. Step through it with the arrows, or let
+it play.
 
 {% include eng/styles.html %}
 {% include eng/arch.html %}
