@@ -16,6 +16,7 @@ name = "nothelix-animation-smoke"
 path = "src/bin/animation_smoke.rs"
 
 [dependencies]
+mitex = "0.2.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
@@ -29,6 +30,7 @@ nix = { version = "0.29", features = ["signal", "process"] }
 typst = "0.15"
 typst-layout = "0.15"
 typst-svg = "0.15"
+typst-pdf = "0.15"
 typst-kit = { version = "0.15", features = ["embedded-fonts"] }
 resvg = "0.47"
 tiny-skia = "0.12"
@@ -46,6 +48,7 @@ abi_stable = "0.11"
 
 inventory = "0.3"
 thiserror = "1"
+comrak = { version = "0.53.0", default-features = false }
 
 [features]
 default = ["gif", "apng", "webp"]

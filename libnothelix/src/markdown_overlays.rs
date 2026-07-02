@@ -1,5 +1,6 @@
-//! In-buffer markdown rendering: scan markdown comment text and emit display
-//! overlays + style spans that the fork applies WITHOUT mutating the buffer.
+//! In-buffer markdown rendering: parse markdown comment text with comrak and
+//! emit display overlays + style spans that the fork applies WITHOUT mutating
+//! the buffer.
 //!
 //! Output is TSV, one record per line, all offsets absolute document char
 //! indices (`char_base` + local):
@@ -7,11 +8,14 @@
 //!   `S<TAB>START<TAB>END<TAB>SCOPE`   style span over a char range
 //!
 //! The plugin hands one `@markdown` cell's buffer text (lines still carry the
-//! Julia `# ` comment prefix) plus the cell's absolute char base. Math (`$$`)
-//! and table (`|`) lines are skipped — they have their own renderers
-//! (math_image / table_image) and stay source-visible.
+//! Julia `# ` comment prefix) plus the cell's absolute char base. Math and
+//! table nodes emit nothing — they have their own renderers (math_image /
+//! table_image) and stay source-visible.
 
 #![allow(clippy::needless_pass_by_value)]
+
+use comrak::nodes::{AstNode, ListType, NodeValue, Sourcepos};
+use comrak::{Arena, Options, parse_document};
 
 const SCOPE_BOLD: &str = "markup.bold";
 const SCOPE_ITALIC: &str = "markup.italic";
@@ -37,6 +41,12 @@ impl Emit {
         self.overlay(char_off, "");
     }
 
+    fn hide_range(&mut self, start: usize, end: usize) {
+        for off in start..end {
+            self.hide(off);
+        }
+    }
+
     fn style(&mut self, start: usize, end: usize, scope: &str) {
         if end <= start {
             return;
@@ -52,45 +62,191 @@ impl Emit {
     }
 }
 
+/// Absolute char offset of each stripped line's first char in the original
+/// document, so comrak's (line, column) positions map back through the Julia
+/// comment prefixes.
+struct LineMap {
+    starts: Vec<usize>,
+}
+
+impl LineMap {
+    fn abs(&self, pos: comrak::nodes::LineColumn) -> usize {
+        self.starts[pos.line - 1] + (pos.column - 1)
+    }
+
+    fn abs_start(&self, sp: Sourcepos) -> usize {
+        self.abs(sp.start)
+    }
+
+    fn abs_end_exclusive(&self, sp: Sourcepos) -> usize {
+        self.abs(sp.end) + 1
+    }
+}
+
+fn parse_options() -> Options<'static> {
+    let mut opts = Options::default();
+    opts.extension.table = true;
+    opts.extension.math_dollars = true;
+    opts.render.sourcepos = true;
+    opts.parse.sourcepos_chars = true;
+    opts.parse.escaped_char_spans = true;
+    opts
+}
+
 /// Scan one markdown cell's text. `char_base` is the absolute document char
 /// index of `text`'s first char.
 pub fn scan_markdown_overlays(text: String, char_base: isize) -> String {
     let base = char_base.max(0) as usize;
-    let mut emit = Emit { out: String::new() };
-    let mut line_char_start = base;
-    let mut in_math = false;
+    let mut stripped = String::new();
+    let mut starts = Vec::new();
+    let mut line_abs = base;
 
     for (line, had_nl) in lines_with_nl(&text) {
         let line_char_len = line.chars().count() + usize::from(had_nl);
-
-        let Some(prefix_chars) = comment_prefix_chars(line) else {
-            line_char_start += line_char_len;
-            continue;
-        };
-        let body: String = line.chars().skip(prefix_chars).collect();
-        let body_trim = body.trim();
-
-        if body_trim == "$$" {
-            in_math = !in_math;
-            line_char_start += line_char_len;
-            continue;
+        match comment_prefix_chars(line) {
+            Some(prefix) => {
+                starts.push(line_abs + prefix);
+                stripped.extend(line.chars().skip(prefix));
+            }
+            None => starts.push(line_abs),
         }
-        if in_math || is_single_line_math(body_trim) || body_trim.starts_with('|') {
-            line_char_start += line_char_len;
-            continue;
-        }
-
-        let body_abs = line_char_start + prefix_chars;
-        scan_line(&body, body_abs, &mut emit);
-
-        line_char_start += line_char_len;
+        stripped.push('\n');
+        line_abs += line_char_len;
     }
 
+    let map = LineMap { starts };
+    let arena = Arena::new();
+    let root = parse_document(&arena, &stripped, &parse_options());
+    let mut emit = Emit { out: String::new() };
+    for child in root.children() {
+        walk(child, &map, &mut emit);
+    }
     emit.out
 }
 
-/// Split into lines, reporting whether each had a trailing newline (so the
-/// caller can count the `\n` as one document char).
+fn walk<'a>(node: &'a AstNode<'a>, map: &LineMap, emit: &mut Emit) {
+    let (value_kind, sp) = {
+        let data = node.data.borrow();
+        (discriminant_info(&data.value), data.sourcepos)
+    };
+
+    match value_kind {
+        Kind::Skip => {}
+        Kind::Heading(level) => {
+            if let Some(inner) = child_span(node) {
+                hide_gap(map, emit, sp.start, inner.start);
+                emit.style(
+                    map.abs(inner.start),
+                    map.abs(inner.end) + 1,
+                    &format!("markup.heading.{}", level.clamp(1, 6)),
+                );
+            }
+            walk_children(node, map, emit);
+        }
+        Kind::Styled(scope) => {
+            if let Some(inner) = child_span(node) {
+                hide_gap(map, emit, sp.start, inner.start);
+                hide_after(map, emit, inner.end, sp.end);
+                emit.style(map.abs(inner.start), map.abs(inner.end) + 1, scope);
+            }
+            walk_children(node, map, emit);
+        }
+        Kind::Code(backticks) => {
+            let start = map.abs_start(sp);
+            let end = map.abs_end_exclusive(sp);
+            if end > start + 2 * backticks {
+                emit.hide_range(start, start + backticks);
+                emit.hide_range(end - backticks, end);
+                emit.style(start + backticks, end - backticks, SCOPE_CODE);
+            }
+        }
+        Kind::Link => {
+            if let Some(inner) = child_span(node) {
+                hide_gap(map, emit, sp.start, inner.start);
+                hide_after(map, emit, inner.end, sp.end);
+                emit.style(map.abs(inner.start), map.abs(inner.end) + 1, SCOPE_LINK);
+            }
+            walk_children(node, map, emit);
+        }
+        Kind::BulletItem => {
+            let start = map.abs_start(sp);
+            emit.overlay(start, "•");
+            emit.style(start, start + 1, SCOPE_LIST);
+            walk_children(node, map, emit);
+        }
+        Kind::Escaped => {
+            emit.hide(map.abs_start(sp));
+        }
+        Kind::Recurse => walk_children(node, map, emit),
+    }
+}
+
+enum Kind {
+    Heading(usize),
+    Styled(&'static str),
+    Code(usize),
+    Link,
+    BulletItem,
+    Escaped,
+    Skip,
+    Recurse,
+}
+
+fn discriminant_info(value: &NodeValue) -> Kind {
+    match value {
+        NodeValue::Heading(h) => Kind::Heading(h.level as usize),
+        NodeValue::Strong => Kind::Styled(SCOPE_BOLD),
+        NodeValue::Emph => Kind::Styled(SCOPE_ITALIC),
+        NodeValue::Code(c) => Kind::Code(c.num_backticks),
+        NodeValue::Link(_) => Kind::Link,
+        NodeValue::Item(list) if list.list_type == ListType::Bullet => Kind::BulletItem,
+        NodeValue::Escaped => Kind::Escaped,
+        NodeValue::Math(_) | NodeValue::Table(_) => Kind::Skip,
+        _ => Kind::Recurse,
+    }
+}
+
+fn walk_children<'a>(node: &'a AstNode<'a>, map: &LineMap, emit: &mut Emit) {
+    for child in node.children() {
+        walk(child, map, emit);
+    }
+}
+
+fn child_span<'a>(node: &'a AstNode<'a>) -> Option<Sourcepos> {
+    let first = node.first_child()?.data.borrow().sourcepos;
+    let last = node.last_child()?.data.borrow().sourcepos;
+    Some(Sourcepos {
+        start: first.start,
+        end: last.end,
+    })
+}
+
+/// Hide the marker chars between a node's start and its first child's start,
+/// when both sit on the same line.
+fn hide_gap(
+    map: &LineMap,
+    emit: &mut Emit,
+    outer_start: comrak::nodes::LineColumn,
+    inner_start: comrak::nodes::LineColumn,
+) {
+    if outer_start.line == inner_start.line {
+        emit.hide_range(map.abs(outer_start), map.abs(inner_start));
+    }
+}
+
+/// Hide the marker chars between a node's last child's end and the node's
+/// own end, when both sit on the same line.
+fn hide_after(
+    map: &LineMap,
+    emit: &mut Emit,
+    inner_end: comrak::nodes::LineColumn,
+    outer_end: comrak::nodes::LineColumn,
+) {
+    if inner_end.line == outer_end.line {
+        emit.hide_range(map.abs(inner_end) + 1, map.abs(outer_end) + 1);
+    }
+}
+
 fn lines_with_nl(text: &str) -> Vec<(&str, bool)> {
     let mut v = Vec::new();
     let mut start = 0;
@@ -117,148 +273,6 @@ fn comment_prefix_chars(line: &str) -> Option<usize> {
         Some(' ') => Some(2),
         _ => Some(1),
     }
-}
-
-fn is_single_line_math(body: &str) -> bool {
-    body.starts_with("$$") && body.ends_with("$$") && body.chars().count() > 4
-}
-
-/// Scan one markdown line body. `abs0` is the absolute char offset of `body`'s
-/// first char.
-fn scan_line(body: &str, abs0: usize, emit: &mut Emit) {
-    let chars: Vec<char> = body.chars().collect();
-    let abs = |i: usize| abs0 + i;
-
-    // Heading: leading run of '#' then a space.
-    if let Some((hashes, text_start)) = heading_prefix(&chars) {
-        for i in 0..text_start {
-            emit.hide(abs(i));
-        }
-        emit.style(abs(text_start), abs(chars.len()), &heading_scope(hashes));
-        return;
-    }
-
-    // List bullet at line start: `- `, `* `, `+ ` → render a bullet glyph.
-    if chars.len() >= 2 && matches!(chars[0], '-' | '*' | '+') && chars[1] == ' ' {
-        emit.overlay(abs(0), "•");
-        emit.style(abs(0), abs(1), SCOPE_LIST);
-        scan_inline(&chars, 2, abs0, emit);
-        return;
-    }
-
-    scan_inline(&chars, 0, abs0, emit);
-}
-
-fn heading_prefix(chars: &[char]) -> Option<(usize, usize)> {
-    if chars.first() != Some(&'#') {
-        return None;
-    }
-    let mut hashes = 0;
-    while chars.get(hashes) == Some(&'#') {
-        hashes += 1;
-    }
-    if chars.get(hashes) == Some(&' ') {
-        Some((hashes, hashes + 1))
-    } else {
-        None
-    }
-}
-
-fn heading_scope(level: usize) -> String {
-    format!("markup.heading.{}", level.clamp(1, 6))
-}
-
-/// Scan inline markdown (bold/italic/code/link) over `chars[start..]`.
-fn scan_inline(chars: &[char], start: usize, abs0: usize, emit: &mut Emit) {
-    let abs = |i: usize| abs0 + i;
-    let n = chars.len();
-    let mut i = start;
-
-    while i < n {
-        let c = chars[i];
-
-        if c == '$'
-            && let Some(j) = find_char(chars, i + 1, '$')
-        {
-            i = j + 1;
-            continue;
-        }
-
-        if c == '\\'
-            && let Some(&next) = chars.get(i + 1)
-            && next.is_ascii_punctuation()
-        {
-            emit.hide(abs(i));
-            i += 2;
-            continue;
-        }
-
-        if c == '`'
-            && let Some(j) = find_char(chars, i + 1, '`')
-        {
-            emit.hide(abs(i));
-            emit.hide(abs(j));
-            emit.style(abs(i + 1), abs(j), SCOPE_CODE);
-            i = j + 1;
-            continue;
-        }
-
-        if (c == '*' || c == '_')
-            && chars.get(i + 1) == Some(&c)
-            && let Some(j) = find_double(chars, i + 2, c)
-        {
-            emit.hide(abs(i));
-            emit.hide(abs(i + 1));
-            emit.hide(abs(j));
-            emit.hide(abs(j + 1));
-            emit.style(abs(i + 2), abs(j), SCOPE_BOLD);
-            i = j + 2;
-            continue;
-        }
-
-        if (c == '*' || c == '_')
-            && let Some(j) = find_char(chars, i + 1, c)
-        {
-            emit.hide(abs(i));
-            emit.hide(abs(j));
-            emit.style(abs(i + 1), abs(j), SCOPE_ITALIC);
-            i = j + 1;
-            continue;
-        }
-
-        if c == '['
-            && let Some(close) = find_char(chars, i + 1, ']')
-            && chars.get(close + 1) == Some(&'(')
-            && let Some(rparen) = find_char(chars, close + 2, ')')
-        {
-            emit.hide(abs(i));
-            emit.hide(abs(close));
-            for k in (close + 1)..=rparen {
-                emit.hide(abs(k));
-            }
-            emit.style(abs(i + 1), abs(close), SCOPE_LINK);
-            i = rparen + 1;
-            continue;
-        }
-
-        i += 1;
-    }
-}
-
-fn find_char(chars: &[char], from: usize, target: char) -> Option<usize> {
-    (from..chars.len()).find(|&i| chars[i] == target)
-}
-
-/// Find a doubled marker (`**` / `__`) starting at or after `from`.
-fn find_double(chars: &[char], from: usize, marker: char) -> Option<usize> {
-    let mut i = from;
-    while i + 1 < chars.len() {
-        if chars[i] == marker && chars[i + 1] == marker {
-            return Some(i);
-        }
-        i += 1;
-    }
-    None
 }
 
 #[cfg(test)]
@@ -324,7 +338,7 @@ mod tests {
 
     #[test]
     fn table_rows_are_skipped() {
-        let out = scan("# | a | b |\n# |---|---|\n");
+        let out = scan("# | a | b |\n# |---|---|\n# | x | y |\n");
         assert!(out.is_empty(), "table rows skipped: {out:?}");
     }
 
@@ -361,5 +375,13 @@ mod tests {
         let out = scan("# a \\* b and \\mathbb\n");
         assert!(out.contains("O\t4\t\n"), "hide escape before *: {out}");
         assert!(!out.contains("O\t13\t\n"), "\\m is not an escape: {out}");
+    }
+
+    #[test]
+    fn multibyte_text_keeps_offsets_aligned() {
+        // "# héß **b**": h=2 é=3 ß=4 sp=5 *=6 *=7 b=8 *=9 *=10
+        let out = scan("# héß **b**\n");
+        assert!(out.contains("O\t6\t\n"), "hide * after multibyte text: {out}");
+        assert!(out.contains("S\t8\t9\tmarkup.bold"), "bold span: {out}");
     }
 }
