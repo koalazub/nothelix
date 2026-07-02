@@ -1,19 +1,15 @@
-;;; kernel.scm - Kernel lifecycle management
-;;;
-;;; Manages Julia kernel processes.  Each notebook gets at most one kernel,
-;;; tracked in the `*kernels*` hash keyed by notebook path.  The Rust FFI
-;;; handles the actual process spawning and IPC via kernel-start-macro /
-;;; kernel-stop / kernel-stop-all-processes.
+;;; kernel.scm — Kernel lifecycle management
 
 (require "string-utils.scm")
+(require "project-config.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
 
-;; FFI imports for kernel functions
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           kernel-start-macro
+                          kernel-adopt-macro
                           kernel-stop
                           kernel-stop-all-processes
                           path-exists
@@ -30,22 +26,55 @@
 ;; Hash of notebook-path -> kernel-state for all running kernels.
 (define *kernels* (hash))
 
-;; The kernel directory of the currently executing cell, or #false.
-;; Used by `cancel-cell` to know which process to SIGINT.
+;; Kernel directory of the currently executing cell, or #false.
 (define *executing-kernel-dir* #false)
 
+;; djb2 over the notebook path — same algorithm as the image-id hashes.
+(define (kernel-path-hash s)
+  (let loop ([i 0] [h 5381])
+    (if (>= i (string-length s))
+        h
+        (loop (+ i 1)
+              (modulo (+ (* h 33) (char->integer (string-ref s i)))
+                      2147483647)))))
+
+;; Per-notebook runtime dir. A single shared dir let a second notebook's
+;; kernel-start SIGTERM the first notebook's kernel and wipe its IPC files
+;; (kernel_start_macro clears pid/ready/input.json/output.json on start), so
+;; derive a stable, path-unique directory instead.
+(define (kernel-dir-for notebook-path)
+  (string-append "/tmp/helix-kernel-"
+                 (number->string (kernel-path-hash (or notebook-path "scratch")))))
+
 ;;@doc
-;; Start a new kernel for the given language and notebook path.
-;; Non-blocking: spawns the kernel process, then polls for readiness
-;; via delayed callbacks. Calls `on-ready` with the kernel-state hash
-;; on success, or shows an error in the status bar on failure.
-;; Returns #true if the spawn succeeded (polling has started), #false
-;; if it failed immediately.
+;; Start a kernel for `lang`/`notebook-path`, poll for readiness, then call `on-ready`; returns #true if the spawn began.
 (define (kernel-start lang notebook-path on-ready)
-  (define kernel-dir "/tmp/helix-kernel-1")
+  (define kernel-dir (kernel-dir-for notebook-path))
+  (cond
+    [(string-contains? (kernel-adopt-macro kernel-dir) "\"status\":\"ok\"")
+     (define kernel-state
+       (hash 'lang lang
+             'kernel-dir kernel-dir
+             'input-file (string-append kernel-dir "/input.json")
+             'output-file (string-append kernel-dir "/output.json")
+             'pid-file (string-append kernel-dir "/pid")
+             'ready #true))
+     (set! *kernels* (hash-insert *kernels* notebook-path kernel-state))
+     (set-status! (string-append "Reattached to running " lang " kernel — session state preserved"))
+     (on-ready kernel-state)
+     #true]
+    [else (kernel-start-fresh lang notebook-path kernel-dir on-ready)]))
+
+(define (kernel-start-fresh lang notebook-path kernel-dir on-ready)
+  ;; (julia-bin . julia-project) — empty strings unless this notebook's project
+  ;; is trusted; the macro then falls back to PATH julia + default env.
+  (define runtime (project-runtime-for notebook-path))
   (set-status! (string-append "Starting kernel in " kernel-dir "..."))
 
-  (define result-json (kernel-start-macro kernel-dir))
+  ;; Pass the notebook file so the kernel runs in its directory — relative
+  ;; paths in cells (data files, includes) resolve next to the notebook.
+  (define result-json
+    (kernel-start-macro kernel-dir (car runtime) (cdr runtime) (or notebook-path "")))
 
   (cond
     [(string-contains? result-json "julia not found")
@@ -61,16 +90,13 @@
      #false]
 
     [else
-     ;; Begin async polling for the ready file.
-     ;; 150 attempts * 200 ms = 30 s max wait.
+     ;; 150 attempts × 200 ms = 30 s max wait.
      (poll-kernel-ready kernel-dir lang notebook-path on-ready 150)
      #true]))
 
-;; Internal: async poll loop for kernel readiness.
 (define (poll-kernel-ready kernel-dir lang notebook-path on-ready attempts)
   (cond
     [(equal? (path-exists (string-append kernel-dir "/ready")) "yes")
-     ;; Kernel is up.
      (define kernel-state
        (hash 'lang lang
              'kernel-dir kernel-dir
@@ -84,12 +110,11 @@
      (on-ready kernel-state)]
 
     [(<= attempts 0)
-     ;; Timed out.
      (define log-tail (read-file-tail (string-append kernel-dir "/kernel.log") 3))
      (define msg (sanitise-error-message log-tail))
      (if (> (string-length msg) 0)
          (set-status! (string-append "Kernel not ready after 30 s. Julia output: " msg))
-         (set-status! "Kernel not ready after 30 s. Check kernel.log in /tmp/helix-kernel-1/ for details."))
+         (set-status! (string-append "Kernel not ready after 30 s. Check kernel.log in " kernel-dir "/ for details.")))
      (helix.redraw)]
 
     [else
@@ -97,10 +122,7 @@
        (lambda () (poll-kernel-ready kernel-dir lang notebook-path on-ready (- attempts 1))))]))
 
 ;;@doc
-;; Get or start a kernel for a notebook.
-;; If a kernel is already running, calls (on-ready kernel-state) immediately.
-;; Otherwise starts a new one asynchronously and calls on-ready when ready.
-;; Returns #false if the kernel fails to start.
+;; Get the existing kernel for `notebook-path` or start one, then call `on-ready` with the kernel-state.
 (define (kernel-get-for-notebook notebook-path lang on-ready)
   (define existing (hash-try-get *kernels* notebook-path))
   (if existing
@@ -122,8 +144,7 @@
             (set-status! result)))))
 
 ;;@doc
-;; Stop all running kernels.
-;; First stops every tracked kernel, then kills any orphaned runner.jl processes.
+;; Stop all tracked kernels, then kill any orphaned runner.jl processes.
 (define (stop-all-kernels)
   (define keys (hash-keys->list *kernels*))
   (for-each

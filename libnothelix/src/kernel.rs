@@ -97,6 +97,50 @@ fn sigint_pid(pid: u32) {
     }
 }
 
+/// #true when the process is alive and its command line names our runner.jl
+/// with this kernel dir — guards against PID recycling handing us a stranger.
+fn is_live_runner(pid: u32, kernel_dir: &str) -> bool {
+    if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
+        return false;
+    }
+    let output = match Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
+    let command = String::from_utf8_lossy(&output.stdout);
+    command.contains("runner.jl") && command.contains(kernel_dir)
+}
+
+/// Adopt a kernel left running by a previous editor session. Succeeds when
+/// `<kernel_dir>/pid` names a live runner.jl for this dir and the ready
+/// marker exists; stale in-flight IPC files are cleared so the next command
+/// starts clean. Returns `{"status":"ok"}` or `{"status":"none"}`.
+pub fn kernel_adopt(kernel_dir: String) -> String {
+    let kdir = Path::new(&kernel_dir);
+    let Some(pid) = read_pid(kdir) else {
+        return json!({"status": "none", "reason": "no pid file"}).to_string();
+    };
+    if !is_live_runner(pid, &kernel_dir) {
+        return json!({"status": "none", "reason": "process not alive"}).to_string();
+    }
+    if !kdir.join("ready").exists() {
+        return json!({"status": "none", "reason": "kernel not ready"}).to_string();
+    }
+    for f in &[
+        "input.json",
+        "output.json",
+        "output.json.done",
+        "output.msgpack",
+        "output.done",
+    ] {
+        let _ = fs::remove_file(kdir.join(f));
+    }
+    json!({"status": "ok", "pid": pid}).to_string()
+}
+
 // ─── IPC helpers ──────────────────────────────────────────────────────────────
 
 pub fn write_kernel_command(kernel_dir: &str, cmd: &Value) -> Result<(), String> {
@@ -356,5 +400,36 @@ pub fn kernel_interrupt(kernel_dir: String) -> String {
             sigint_pid(pid);
             "ok".to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adopt_refuses_missing_dir() {
+        let out = kernel_adopt("/tmp/nothelix-adopt-test-nonexistent".to_string());
+        assert!(out.contains("\"status\":\"none\""), "{out}");
+    }
+
+    #[test]
+    fn adopt_refuses_dead_or_foreign_pid() {
+        let dir = std::env::temp_dir().join("nothelix-adopt-test-foreign");
+        let _ = fs::create_dir_all(&dir);
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        fs::write(dir.join("pid"), child.id().to_string()).expect("write pid");
+        fs::write(dir.join("ready"), "").expect("write ready");
+        let out = kernel_adopt(dir.to_string_lossy().into_owned());
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            out.contains("\"status\":\"none\""),
+            "sleep is not runner.jl: {out}"
+        );
     }
 }

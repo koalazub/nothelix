@@ -19,7 +19,12 @@
 //! Julia comment prefix (`# `) is preserved on every emitted line so the
 //! output is still a valid Julia notebook comment block.
 
+use crate::math_image::BATCH_SEP;
 use crate::unicode::math_regions::find_math_regions;
+
+/// Hard ceiling on reservation lines per block, a backstop against a runaway
+/// row count; the effective cap is already the renderer's `*math-image-target-rows*`.
+const MAX_RESERVE_LINES: usize = 64;
 
 /// Environments whose rows should live on their own lines.
 const BLOCK_ENVS: &[&str] = &[
@@ -83,26 +88,99 @@ pub fn format_math(text: String) -> String {
     out
 }
 
+/// The Julia-comment body of a line, with any trailing CR removed. A bare
+/// `#` carries an empty body; a `# ` prefix yields the rest. Non-comment
+/// lines yield `None`. Block detection routes through this so a bare `#`
+/// reservation line (e.g. a save-time trailing-space trim) does not silently
+/// terminate a `$$` block the way a literal `"# "` prefix check would.
+fn comment_body(line: &str) -> Option<&str> {
+    let body = line.trim_end_matches('\r');
+    if body == "#" {
+        Some("")
+    } else {
+        body.strip_prefix("# ")
+    }
+}
+
+/// A comment line whose body is empty or whitespace — renderer-owned
+/// reservation space.
+fn is_blank_comment_line(line: &str) -> bool {
+    matches!(comment_body(line), Some(b) if b.trim().is_empty())
+}
+
+/// `"\r"` when the line carries a trailing CR, so emitted lines preserve a
+/// document's CRLF endings; `""` otherwise.
+fn cr_suffix(line: &str) -> &'static str {
+    if line.ends_with('\r') { "\r" } else { "" }
+}
+
+/// The inner LaTeX of a single-line block `# $$ … $$`, or `None`. Mirrors the
+/// Steel `single-line-block-body` so Rust and the plugin enumerate the same
+/// blocks in the same order.
+fn single_line_block_body(line: &str) -> Option<String> {
+    let body = comment_body(line)?;
+    if body.len() > 4 && body.starts_with("$$") && body.ends_with("$$") {
+        Some(body[2..body.len() - 2].trim().to_string())
+    } else {
+        None
+    }
+}
+
 /// When `lines[start]` is a `# $$` opener, return the index of the matching
 /// `# $$` closer. Returns `None` if this isn't an opener or no closer is
 /// found inside the contiguous Julia comment block.
 fn find_dollar_block(lines: &[&str], start: usize) -> Option<usize> {
-    let body = lines.get(start)?.trim_end_matches('\r');
-    let content = body.strip_prefix("# ")?;
-    if content.trim() != "$$" {
+    if comment_body(lines.get(start)?)?.trim() != "$$" {
         return None;
     }
     for (j, candidate) in lines.iter().enumerate().skip(start + 1) {
-        let jl = candidate.trim_end_matches('\r');
-        if let Some(jc) = jl.strip_prefix("# ") {
-            if jc.trim() == "$$" {
-                return Some(j);
-            }
-        } else {
-            break;
+        match comment_body(candidate) {
+            Some(b) if b.trim() == "$$" => return Some(j),
+            Some(_) => {}
+            None => break,
         }
     }
     None
+}
+
+/// A display-math block keyed by its opening line: a multi-line `# $$ … # $$`
+/// block (carrying its closer line index) or a single-line `# $$ … $$`.
+#[derive(Clone, Copy)]
+enum BlockKind {
+    Multi(usize),
+    Single,
+}
+
+/// Enumerate every display-math block in `lines` in document order. The render
+/// blob (`math_block_latex_batch`) and the reservation rewrite
+/// (`reserve_math_lines`) both walk this list, so the k-th rendered result, the
+/// k-th spec entry, and the k-th reserved block are guaranteed to line up.
+fn enumerate_blocks(lines: &[&str]) -> Vec<(usize, BlockKind)> {
+    let mut blocks = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if let Some(close) = find_dollar_block(lines, i) {
+            blocks.push((i, BlockKind::Multi(close)));
+            i = close + 1;
+        } else if single_line_block_body(lines[i]).is_some() {
+            blocks.push((i, BlockKind::Single));
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    blocks
+}
+
+/// Interior content lines of a multi-line block with the trailing run of
+/// renderer-owned blank lines removed, leaving user content (including any
+/// blank line a user placed *between* equations) intact.
+fn block_content_range(lines: &[&str], open: usize, close: usize) -> std::ops::Range<usize> {
+    let mut last = close;
+    while last > open + 1 && is_blank_comment_line(lines[last - 1]) {
+        last -= 1;
+    }
+    (open + 1)..last
 }
 
 /// Merge cases/matrix row continuations so each logical row is on one
@@ -472,6 +550,112 @@ fn classify_region_delim(content: &str, region_start: usize, region_end: usize) 
     }
 }
 
+/// The LaTeX of every display-math block, `BATCH_SEP`-joined in document
+/// order, for the async renderer. The buffer is canonicalised with
+/// `format_math` first and each block's trailing renderer-owned blank run is
+/// excluded, so a block's LaTeX — and therefore its measured natural height —
+/// is invariant to how much reservation padding it currently carries. That
+/// invariance is what makes the reserve cycle converge. Returns `""` when the
+/// document has no display math.
+pub fn math_block_latex_batch(text: String) -> String {
+    let formatted = format_math(text);
+    let lines: Vec<&str> = formatted.split('\n').collect();
+    let latex: Vec<String> = enumerate_blocks(&lines)
+        .iter()
+        .map(|(open, kind)| match *kind {
+            BlockKind::Multi(close) => block_content_range(&lines, *open, close)
+                .map(|k| comment_body(lines[k]).unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            BlockKind::Single => single_line_block_body(lines[*open]).unwrap_or_default(),
+        })
+        .collect();
+    latex.join(&BATCH_SEP.to_string())
+}
+
+/// Rewrite the document so each display-math block reserves real blank lines
+/// equal to its rendered image height. `spec` is a comma-separated list of
+/// natural row counts, one per block in `enumerate_blocks` order; a `0` (render
+/// error or parse failure) leaves that block untouched. The buffer is
+/// canonicalised with `format_math`, every block's trailing renderer-owned
+/// blank run is stripped, single-line blocks are expanded to multi-line, and
+/// `nat - 2` interior lines are repadded. Emit and strip share one empty-body
+/// predicate, so the transform is its own fixed point: re-running it with the
+/// same spec is a no-op.
+pub fn reserve_math_lines(text: String, spec: String) -> String {
+    let formatted = format_math(text);
+    let specs: Vec<usize> = spec
+        .split(',')
+        .map(|s| s.trim().parse().unwrap_or(0))
+        .collect();
+    let lines: Vec<&str> = formatted.split('\n').collect();
+    let blocks = enumerate_blocks(&lines);
+
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + blocks.len());
+    let mut bi = 0;
+    let mut idx = 0;
+    while idx < lines.len() {
+        if bi < blocks.len() && blocks[bi].0 == idx {
+            let (open, kind) = blocks[bi];
+            let nat = specs.get(bi).copied().unwrap_or(0);
+            let cr = cr_suffix(lines[open]);
+            match kind {
+                BlockKind::Multi(close) => {
+                    if nat == 0 {
+                        for line in &lines[open..=close] {
+                            out.push((*line).to_string());
+                        }
+                    } else {
+                        out.push(lines[open].to_string());
+                        let content = block_content_range(&lines, open, close);
+                        let content_count = content.len();
+                        for k in content {
+                            out.push(lines[k].to_string());
+                        }
+                        push_reservation(&mut out, nat, content_count, cr);
+                        out.push(lines[close].to_string());
+                    }
+                    idx = close + 1;
+                }
+                BlockKind::Single => {
+                    if nat == 0 {
+                        out.push(lines[open].to_string());
+                    } else {
+                        let inner = single_line_block_body(lines[open]).unwrap_or_default();
+                        out.push(format!("# $${cr}"));
+                        let content_count = if inner.is_empty() {
+                            0
+                        } else {
+                            out.push(format!("# {inner}{cr}"));
+                            1
+                        };
+                        push_reservation(&mut out, nat, content_count, cr);
+                        out.push(format!("# $${cr}"));
+                    }
+                    idx = open + 1;
+                }
+            }
+            bi += 1;
+        } else {
+            out.push(lines[idx].to_string());
+            idx += 1;
+        }
+    }
+    out.join("\n")
+}
+
+/// Push `nat - 2 - content_count` blank `# ` reservation lines (clamped to
+/// `[0, MAX_RESERVE_LINES]`); the `- 2` accounts for the opener and closer.
+fn push_reservation(out: &mut Vec<String>, nat: usize, content_count: usize, cr: &str) {
+    let pad = nat
+        .saturating_sub(2)
+        .saturating_sub(content_count)
+        .min(MAX_RESERVE_LINES);
+    for _ in 0..pad {
+        out.push(format!("# {cr}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,5 +846,147 @@ mod tests {
         // Output lines all end with \r\n (original had CRLF on the input line;
         // we preserve the CR on emitted lines).
         assert!(out.contains("\r\n"), "out:\n{out}");
+    }
+
+    fn count_lines(out: &str, pred: impl Fn(&str) -> bool) -> usize {
+        out.split('\n').filter(|l| pred(l)).count()
+    }
+
+    #[test]
+    fn pads_short_block_to_natural_rows() {
+        let input = "# $$\n# E=mc^2\n# $$";
+        let out = reserve_math_lines(input.to_string(), "8".to_string());
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines.len(), 8, "block should span 8 lines:\n{out}");
+        assert_eq!(lines.first().copied(), Some("# $$"));
+        assert_eq!(lines.get(1).copied(), Some("# E=mc^2"));
+        assert_eq!(lines.last().copied(), Some("# $$"));
+        assert_eq!(count_lines(&out, |l| l == "# "), 5, "5 pad lines:\n{out}");
+    }
+
+    #[test]
+    fn never_shrinks_taller_content() {
+        let input = "# $$\n# a\n# b\n# c\n# d\n# e\n# $$";
+        let out = reserve_math_lines(input.to_string(), "4".to_string());
+        for c in ["# a", "# b", "# c", "# d", "# e"] {
+            assert!(out.split('\n').any(|l| l == c), "{c} preserved:\n{out}");
+        }
+        assert_eq!(count_lines(&out, |l| l == "# "), 0, "no pad added:\n{out}");
+    }
+
+    #[test]
+    fn strip_then_repad_is_idempotent() {
+        let input = "# $$\n# E=mc^2\n# $$";
+        let once = reserve_math_lines(input.to_string(), "8".to_string());
+        let twice = reserve_math_lines(once.clone(), "8".to_string());
+        assert_eq!(once, twice, "reserve must be its own fixed point:\n{twice}");
+    }
+
+    #[test]
+    fn zero_spec_leaves_block_untouched() {
+        let input = "# $$\n# x\n# \n# \n# $$";
+        let out = reserve_math_lines(input.to_string(), "0".to_string());
+        assert_eq!(input, out, "nat=0 must not mutate a block:\n{out}");
+    }
+
+    #[test]
+    fn expands_plain_single_line_then_pads() {
+        let input = "# $$ \\int_0^1 x = 1 $$";
+        let out = reserve_math_lines(input.to_string(), "6".to_string());
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines.len(), 6, "single-line expands to 6 lines:\n{out}");
+        assert_eq!(lines.first().copied(), Some("# $$"));
+        assert_eq!(lines.get(1).copied(), Some("# \\int_0^1 x = 1"));
+        assert_eq!(lines.last().copied(), Some("# $$"));
+        assert_eq!(count_lines(&out, |l| l == "# "), 3, "3 pad lines:\n{out}");
+    }
+
+    #[test]
+    fn middle_blank_preserved_only_trailing_stripped() {
+        let input = "# $$\n# a\n# \n# b\n# $$";
+        let out = reserve_math_lines(input.to_string(), "8".to_string());
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines.len(), 8, "block spans 8 lines:\n{out}");
+        assert_eq!(lines.first().copied(), Some("# $$"));
+        assert_eq!(lines.get(1).copied(), Some("# a"));
+        assert_eq!(lines.get(2).copied(), Some("# "));
+        assert_eq!(lines.get(3).copied(), Some("# b"));
+        let again = reserve_math_lines(out.clone(), "8".to_string());
+        assert_eq!(out, again, "middle blank must be stable:\n{again}");
+    }
+
+    #[test]
+    fn bare_hash_reservation_detected() {
+        let input = "# $$\n# x\n#\n#\n# $$";
+        let out = reserve_math_lines(input.to_string(), "8".to_string());
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines.len(), 8, "bare-# block detected and repadded:\n{out}");
+        assert_eq!(lines.get(1).copied(), Some("# x"));
+        assert_eq!(count_lines(&out, |l| l == "# "), 5, "5 pad lines:\n{out}");
+    }
+
+    #[test]
+    fn preserves_crlf_pad() {
+        let input = "# $$\r\n# x\r\n# $$\r\n";
+        let out = reserve_math_lines(input.to_string(), "6".to_string());
+        assert!(out.contains("# \r\n"), "pad lines keep CRLF:\n{out:?}");
+        assert!(out.contains("# x\r\n"), "content keeps CRLF:\n{out:?}");
+    }
+
+    #[test]
+    fn spec_fewer_than_blocks_and_garbage_is_safe() {
+        let input = "# $$\n# a\n# $$\n# $$\n# b\n# $$";
+        let out = reserve_math_lines(input.to_string(), "8".to_string());
+        assert_eq!(
+            count_lines(&out, |l| l == "# "),
+            5,
+            "only block 1 pads:\n{out}"
+        );
+        let garbage = reserve_math_lines(input.to_string(), "abc,4".to_string());
+        assert!(
+            garbage.contains("# a"),
+            "no panic on garbage spec:\n{garbage}"
+        );
+    }
+
+    #[test]
+    fn reserve_no_blocks_is_format_only() {
+        let input = "# just prose\n# more prose\nx = 1";
+        let out = reserve_math_lines(input.to_string(), String::new());
+        assert_eq!(out, format_math(input.to_string()));
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn batch_latex_count_and_order() {
+        let input = "# $$\n# alpha\n# $$\n# text\n# $$\n# beta\n# $$";
+        let blob = math_block_latex_batch(input.to_string());
+        let parts: Vec<&str> = blob.split(BATCH_SEP).collect();
+        assert_eq!(
+            parts,
+            vec!["alpha", "beta"],
+            "two blocks in order:\n{blob:?}"
+        );
+    }
+
+    #[test]
+    fn batch_latex_is_pad_invariant() {
+        let bare = math_block_latex_batch("# $$\n# E=mc^2\n# $$".to_string());
+        let padded = math_block_latex_batch("# $$\n# E=mc^2\n# \n# \n# \n# $$".to_string());
+        assert_eq!(bare, padded, "pad must not change rendered latex");
+    }
+
+    #[test]
+    fn batch_latex_empty_without_blocks() {
+        assert_eq!(
+            math_block_latex_batch("# prose only\nx = 1".to_string()),
+            ""
+        );
+    }
+
+    #[test]
+    fn batch_latex_expands_single_line() {
+        let blob = math_block_latex_batch("# $$ x = 1 $$".to_string());
+        assert_eq!(blob, "x = 1");
     }
 }

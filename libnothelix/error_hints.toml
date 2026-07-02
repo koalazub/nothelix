@@ -621,6 +621,14 @@ help = "An @assert condition evaluated to false. Check your assumptions."
 example = ""
 
 [[hint]]
+id = "E100"
+match_type = "AssertionError"
+match = { all = ["eig", "svd"] }
+title = "eigenvalues and singular values are sorted in opposite orders"
+help = "eigen/eigvals return values in ASCENDING order, but svd/svdvals return them in DESCENDING order — sort or reverse one side before comparing element-by-element. Singular values of X relate to eigenvalues of X'X by squaring."
+example = "before: @assert eigvals(X'X) ≈ svdvals(X).^2\nafter:  @assert reverse(eigvals(X'X)) ≈ svdvals(X).^2"
+
+[[hint]]
 id = "E032"
 match_type = "TaskFailedException"
 match_tokens = []

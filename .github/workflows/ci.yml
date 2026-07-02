@@ -22,6 +22,8 @@ jobs:
       # without repo secrets (needs `permissions: id-token: write,
       # contents: read` on the job).
 
+      - uses: taiki-e/install-action@nextest
+
       - name: Test
         run: nix develop -c cargo nextest run -p libnothelix
 

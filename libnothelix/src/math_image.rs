@@ -627,7 +627,11 @@ mod tests {
             "missing PDF magic: {:?}",
             &bytes[..bytes.len().min(8)]
         );
-        assert!(bytes.len() > 500, "PDF unexpectedly small: {} bytes", bytes.len());
+        assert!(
+            bytes.len() > 500,
+            "PDF unexpectedly small: {} bytes",
+            bytes.len()
+        );
     }
 
     #[test]

@@ -165,7 +165,10 @@ fn inline_to_typst<'a>(node: &'a AstNode<'a>, out: &mut String) -> Result<(), St
 fn escape_typst(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
-        if matches!(ch, '\\' | '#' | '$' | '[' | ']' | '*' | '_' | '@' | '<' | '>') {
+        if matches!(
+            ch,
+            '\\' | '#' | '$' | '[' | ']' | '*' | '_' | '@' | '<' | '>'
+        ) {
             out.push('\\');
         }
         out.push(ch);
@@ -192,10 +195,19 @@ mod tests {
         let md = "$$\ny_n = x_n - \\alpha^2\\, x_{n-2}\n$$";
         let typst = conv(md);
         let compact: String = typst.chars().filter(|c| !c.is_whitespace()).collect();
-        assert!(compact.contains("alpha"), "should convert \\alpha, got:\n{typst}");
-        assert!(compact.contains("_(n-2)"), "should convert subscript, got:\n{typst}");
+        assert!(
+            compact.contains("alpha"),
+            "should convert \\alpha, got:\n{typst}"
+        );
+        assert!(
+            compact.contains("_(n-2)"),
+            "should convert subscript, got:\n{typst}"
+        );
         assert!(!typst.contains("$$"), "should not have $$, got:\n{typst}");
-        assert!(!typst.contains("\\alpha"), "should strip backslash, got:\n{typst}");
+        assert!(
+            !typst.contains("\\alpha"),
+            "should strip backslash, got:\n{typst}"
+        );
     }
 
     #[test]
@@ -251,16 +263,25 @@ mod tests {
     fn table_exports_as_typst_table() {
         let typst = conv("| a | b |\n|---|---|\n| $x^2$ | **y** |");
         let compact: String = typst.chars().filter(|c| !c.is_whitespace()).collect();
-        assert!(compact.starts_with("#table(columns:2,"), "table call: {typst}");
+        assert!(
+            compact.starts_with("#table(columns:2,"),
+            "table call: {typst}"
+        );
         assert!(compact.contains("[a],[b],"), "header cells: {typst}");
-        assert!(compact.contains("[$x^(2)$],[*y*],"), "body cells converted: {typst}");
+        assert!(
+            compact.contains("[$x^(2)$],[*y*],"),
+            "body cells converted: {typst}"
+        );
     }
 
     #[test]
     fn lists_and_code_blocks() {
         let typst = conv("- one\n- two $\\pi$\n\n```julia\nx = 1\n```");
         assert!(typst.contains("- one\n- two $pi"), "bullets: {typst}");
-        assert!(typst.contains("```julia\nx = 1\n```"), "code fence: {typst}");
+        assert!(
+            typst.contains("```julia\nx = 1\n```"),
+            "code fence: {typst}"
+        );
     }
 
     #[test]

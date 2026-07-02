@@ -320,7 +320,10 @@ mod tests {
         assert!(out.contains("O\t6\t\n"), "hide ]: {out}");
         assert!(out.contains("O\t7\t\n"), "hide (: {out}");
         assert!(out.contains("O\t9\t\n"), "hide ): {out}");
-        assert!(out.contains("S\t3\t6\tmarkup.link.text"), "label span: {out}");
+        assert!(
+            out.contains("S\t3\t6\tmarkup.link.text"),
+            "label span: {out}"
+        );
     }
 
     #[test]
@@ -348,7 +351,10 @@ mod tests {
         let out = scan("# plain\n# **b**\n");
         // body of line 2 starts at char 8 + prefix 2 = 10; markers at 10,11.
         assert!(out.contains("O\t10\t\n"), "second-line offset: {out}");
-        assert!(out.contains("S\t12\t13\tmarkup.bold"), "second-line span: {out}");
+        assert!(
+            out.contains("S\t12\t13\tmarkup.bold"),
+            "second-line span: {out}"
+        );
     }
 
     #[test]
@@ -361,7 +367,10 @@ mod tests {
     fn char_base_offsets_absolute() {
         let out = scan_markdown_overlays("# **b**\n".to_string(), 100);
         assert!(out.contains("O\t102\t\n"), "base-shifted offset: {out}");
-        assert!(out.contains("S\t104\t105\tmarkup.bold"), "base-shifted span: {out}");
+        assert!(
+            out.contains("S\t104\t105\tmarkup.bold"),
+            "base-shifted span: {out}"
+        );
     }
 
     #[test]
@@ -381,7 +390,10 @@ mod tests {
     fn multibyte_text_keeps_offsets_aligned() {
         // "# héß **b**": h=2 é=3 ß=4 sp=5 *=6 *=7 b=8 *=9 *=10
         let out = scan("# héß **b**\n");
-        assert!(out.contains("O\t6\t\n"), "hide * after multibyte text: {out}");
+        assert!(
+            out.contains("O\t6\t\n"),
+            "hide * after multibyte text: {out}"
+        );
         assert!(out.contains("S\t8\t9\tmarkup.bold"), "bold span: {out}");
     }
 }

@@ -61,24 +61,35 @@ pub(super) fn enrich(message: &str, source: &str, err: &StructuredError) -> Opti
     };
 
     let arg_types = scan_types_from_call(message);
-    let arg_exprs = scan_call_args(source, &func_name);
-    if arg_types.is_empty() || arg_exprs.is_empty() {
+    if arg_types.is_empty() {
         return None;
     }
+    let arg_exprs = scan_call_args(source, &func_name);
+    let single_call_site = count_call_sites(source, &func_name) == 1;
 
     let mut out = String::new();
 
-    let pairs: Vec<_> = arg_exprs.iter().zip(arg_types.iter()).collect();
-    if !pairs.is_empty() {
+    if single_call_site && !arg_exprs.is_empty() && arg_exprs.len() == arg_types.len() {
         out.push_str("   = note: argument types:\n");
-        for (expr, typ) in &pairs {
+        for (expr, typ) in arg_exprs.iter().zip(arg_types.iter()) {
             let _ = writeln!(out, "   |   `{expr}` is {typ}");
         }
+        let _ = write!(out, "   = help: check types with: ");
+        let checks: Vec<String> = arg_exprs.iter().map(|a| format!("typeof({a})")).collect();
+        out.push_str(&checks.join(", "));
+        out.push('\n');
+    } else {
+        let _ = writeln!(
+            out,
+            "   = note: `{func_name}` got argument types ({})",
+            arg_types.join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "   = help: no `{func_name}` method accepts ({}); check each argument's type and value",
+            arg_types.join(", ")
+        );
     }
-    let _ = write!(out, "   = help: check types with: ");
-    let checks: Vec<String> = arg_exprs.iter().map(|a| format!("typeof({a})")).collect();
-    out.push_str(&checks.join(", "));
-    out.push('\n');
 
     // Kernel-powered hints: for each ::T in the error, surface every
     // in-scope variable of that type with cell attribution.
@@ -181,6 +192,29 @@ fn scan_call_args(source: &str, func: &str) -> Vec<String> {
     split_top_level_commas(&after_func[paren_open + 1..paren_close])
 }
 
+/// Number of word-boundaried `func(` call sites in `source`.
+fn count_call_sites(source: &str, func: &str) -> usize {
+    if func.is_empty() {
+        return 0;
+    }
+    let bytes = source.as_bytes();
+    let mut count = 0;
+    let mut start = 0;
+    while let Some(rel) = source[start..].find(func) {
+        let i = start + rel;
+        let left_ok = i == 0 || {
+            let c = bytes[i - 1];
+            !(c.is_ascii_alphanumeric() || c == b'_')
+        };
+        let right_ok = source[i + func.len()..].trim_start().starts_with('(');
+        if left_ok && right_ok {
+            count += 1;
+        }
+        start = i + func.len();
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +235,49 @@ mod tests {
     fn scan_call_args_extracts_expressions() {
         let args = scan_call_args("B = similar(n, Float64)", "similar");
         assert_eq!(args, vec!["n", "Float64"]);
+    }
+
+    #[test]
+    fn enrich_emits_type_note_when_source_missing() {
+        let err = StructuredError::default();
+        let out = enrich("MethodError: no method matching add(::Module)", "", &err)
+            .expect("should enrich from the type signature alone");
+        assert!(
+            out.contains("`add` got argument types (Module)"),
+            "got: {out}"
+        );
+        assert!(
+            out.contains("no `add` method accepts (Module)"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn enrich_pairs_args_with_types_when_source_present() {
+        let err = StructuredError::default();
+        let out = enrich(
+            "MethodError: no method matching similar(::Int64, ::Type{Float64})",
+            "B = similar(n, Float64)",
+            &err,
+        )
+        .expect("should enrich with paired note");
+        assert!(out.contains("`n` is Int64"), "got: {out}");
+        assert!(out.contains("typeof(n), typeof(Float64)"), "got: {out}");
+    }
+
+    #[test]
+    fn enrich_uses_type_note_for_ambiguous_multi_call_line() {
+        let err = StructuredError::default();
+        let src = "Pkg.add(\"FFTW\"); Pkg.add(DSP); Pkg.add(\"Plots\")";
+        let out = enrich("MethodError: no method matching add(::Module)", src, &err)
+            .expect("ambiguous line still enriches via type-only note");
+        assert!(
+            out.contains("`add` got argument types (Module)"),
+            "got: {out}"
+        );
+        assert!(
+            !out.contains("= note: argument types:"),
+            "must not emit a misleading paired note for an ambiguous line: {out}"
+        );
     }
 }

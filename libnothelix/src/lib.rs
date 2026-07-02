@@ -18,7 +18,6 @@ mod health;
 mod json_utils;
 mod kernel;
 mod kitty_placeholder;
-mod lsp;
 mod math_corpus;
 mod math_format;
 pub use math_corpus::CORPUS;
@@ -26,8 +25,8 @@ mod math_image;
 pub use math_image::render_math_to_svg;
 mod markdown_overlays;
 mod notebook;
-mod parse;
 mod table_image;
+mod trust;
 mod typst_export;
 mod unicode;
 
@@ -46,7 +45,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 11;
+pub const NOTHELIX_FFI_VERSION: u32 = 18;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -69,6 +68,7 @@ fn build_module() -> FFIModule {
 
     // ── Kernel management ─────────────────────────────────────────────────────
     m.register_fn("kernel-start-macro", kernel::kernel_start_macro);
+    m.register_fn("kernel-adopt-macro", kernel::kernel_adopt);
     m.register_fn("kernel-stop", kernel::kernel_stop);
     m.register_fn(
         "kernel-stop-all-processes",
@@ -90,10 +90,21 @@ fn build_module() -> FFIModule {
     m.register_fn("convert-to-ipynb!", notebook::convert_to_ipynb);
     m.register_fn("export-to-markdown!", notebook::export_to_markdown);
     m.register_fn("export-to-typst!", notebook::export_to_typst);
+    m.register_fn("render-typst-to-pdf", math_image::render_typst_to_pdf);
     m.register_fn("format-math", math_format::format_math);
+    m.register_fn("reserve-math-lines", math_format::reserve_math_lines);
+    m.register_fn(
+        "math-block-latex-batch",
+        math_format::math_block_latex_batch,
+    );
     m.register_fn("render-math-to-svg", math_image::render_math_to_svg);
-    m.register_fn("render-math-batch", math_image::render_math_batch);
+    m.register_fn("start-render-batch", math_image::start_render_batch);
+    m.register_fn("poll-render-batch", math_image::poll_render_batch);
     m.register_fn("render-table-to-svg", table_image::render_table_to_svg);
+    m.register_fn(
+        "start-render-table-batch",
+        table_image::start_render_table_batch,
+    );
     m.register_fn(
         "scan-markdown-overlays",
         markdown_overlays::scan_markdown_overlays,
@@ -160,6 +171,10 @@ fn build_module() -> FFIModule {
     m.register_fn("write-string-to-file!", write_string_to_file);
     m.register_fn("path-exists", path_exists);
     m.register_fn("read-file-tail", read_file_tail);
+    m.register_fn("nothelix-trust-list", trust::trust_list);
+    m.register_fn("nothelix-trust-contains", trust::trust_contains);
+    m.register_fn("nothelix-trust-add", trust::trust_add);
+    m.register_fn("nothelix-trust-remove", trust::trust_remove);
     m.register_fn("resolve-symlink-dir", resolve_symlink_dir);
     m.register_fn("sleep-ms", sleep_ms);
     m.register_fn("getenv", getenv);
@@ -211,12 +226,6 @@ fn build_module() -> FFIModule {
         "nothelix-health-check-tsv",
         health::nothelix_health_check_tsv,
     );
-
-    // ── LSP environment ───────────────────────────────────────────────
-    m.register_fn("ensure-lsp-environment", lsp::ensure_lsp_environment);
-    m.register_fn("lsp-environment-ready", lsp::lsp_environment_ready);
-    m.register_fn("lsp-project-dir", lsp::lsp_project_dir);
-    m.register_fn("lsp-depot-dir", lsp::lsp_depot_dir);
 
     // ── Animation ─────────────────────────────────────────────────────────────
     // These complement the raw C-ABI exports (`nothelix_animation_*`). Steel

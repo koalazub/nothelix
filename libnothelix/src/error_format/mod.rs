@@ -255,6 +255,23 @@ mod tests {
     }
 
     #[test]
+    fn eigen_svd_order_mismatch() {
+        let raw = "AssertionError: eigvals(C) ≈ svdvals(X) .^ 2";
+        let hints = hints();
+        let out = format_raw(raw, hints);
+        assert!(out.contains("E100"), "got:\n{}", out);
+        assert!(out.contains("opposite orders"), "got:\n{}", out);
+    }
+
+    #[test]
+    fn plain_assertion_keeps_generic_hint() {
+        let raw = "AssertionError: x > 0";
+        let hints = hints();
+        let out = format_raw(raw, hints);
+        assert!(out.contains("E020"), "got:\n{}", out);
+    }
+
+    #[test]
     fn objects_not_callable() {
         let raw = "MethodError: objects of type Float64 are not callable";
         let hints = hints();

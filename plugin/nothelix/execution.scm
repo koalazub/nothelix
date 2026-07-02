@@ -1,9 +1,4 @@
-;;; execution.scm - Cell execution orchestration
-;;;
-;;; Orchestrates the full execution cycle: starting async kernel execution,
-;;; polling for results, and delegating output insertion to output-insert.scm.
-;;; Cell boundary detection, cursor restoration, and image management live
-;;; in their own focused modules.
+;;; execution.scm — Cell execution orchestration
 
 (require "common.scm")
 (require "debug.scm")
@@ -20,7 +15,6 @@
 (require (prefix-in helix.static. "helix/static.scm"))
 (require (prefix-in helix. "helix/commands.scm"))
 
-;; FFI imports for execution orchestration
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           kernel-execute-cell-start
@@ -35,7 +29,6 @@
          execute-all-cells
          execute-cells-above
          cancel-cell
-         ;; Re-export from sub-modules so existing consumers don't break
          render-cached-images
          sync-images-to-markers!
          sync-images-if-markers-changed!
@@ -70,20 +63,45 @@
     [else
      (update-cell-output result-json jl-path cell-index kernel-dir)]))
 
+;; Shared preflight: saved .jl notebook, cursor saved, kernel keyed by path.
+(define (with-saved-notebook command-name on-ready)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (define current-line (current-line-number))
+
+  (when (not path)
+    (set-status! (string-append command-name ": no file path"))
+    (error "No file path"))
+  (when (string-suffix? path ".ipynb")
+    (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
+    (error "Not a converted file"))
+  (when (not (string-suffix? path ".jl"))
+    (set-status! (string-append command-name ": only .jl notebook files are supported"))
+    (error "Not a .jl file"))
+
+  (save-cursor-for-restore! doc-id)
+  (helix.write)
+  (enqueue-thread-local-callback-with-delay 100
+    (lambda () (on-ready doc-id path current-line))))
+
 ;;@doc
 ;; Execute the code cell under the cursor (async, non-blocking).
 (define (execute-cell)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
+  (with-saved-notebook ":execute-cell" execute-cell-under-cursor))
+
+(define (execute-cell-under-cursor doc-id path current-line)
   (define rope (editor->text doc-id))
-  (define current-line (current-line-number))
   (define total-lines (text.rope-len-lines rope))
   (define (get-line idx) (doc-get-line rope total-lines idx))
 
-  ;; Save cursor BEFORE any buffer mutation for later restoration.
-  (save-cursor-for-restore! doc-id)
-
   (define cell-start (find-cell-start-line get-line current-line))
+
+  (when (not (string-starts-with? (string-trim (get-line cell-start)) "@cell"))
+    (set-status! "Not a code cell — @markdown/@raw/@typst cells are not executed")
+    (helix.redraw)
+    (error "not a code cell"))
+
   (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
   (define cell-lines (extract-cell-code get-line cell-start cell-code-end))
   (define code (string-join cell-lines "\n"))
@@ -93,14 +111,6 @@
     (helix.redraw)
     (error "Cell is empty"))
 
-  (define path (editor-document->path doc-id))
-  (define lang (cond
-                 [(string-contains? path ".ipynb") "julia"]
-                 [(string-contains? path ".jl") "julia"]
-                 [(string-contains? path ".py") "python"]
-                 [else "julia"]))
-
-  ;; Delete existing output section (+ surrounding blank-line padding).
   (define output-start (find-output-start get-line total-lines cell-code-end))
   (when output-start
     (define output-end (find-output-end-line get-line total-lines (+ output-start 1)))
@@ -108,15 +118,12 @@
     (define extended-end (expand-delete-end-forward get-line total-lines output-end))
     (delete-line-range extended-start extended-end))
 
-  ;; Position cursor at last real code line; use goto_line_end_newline
-  ;; (not goto_line_end) to avoid slicing the last grapheme.
   (define insert-at-line
     (find-last-non-blank-line-before get-line cell-start cell-code-end))
   (helix.goto (number->string (+ insert-at-line 1)))
   (helix.static.goto_line_end_newline)
 
-  (define notebook-path (editor-document->path doc-id))
-  (kernel-get-for-notebook notebook-path lang
+  (kernel-get-for-notebook path "julia"
     (lambda (kernel-state)
       (define kernel-dir (hash-get kernel-state 'kernel-dir))
       (define cell-info-json (get-cell-at-line path current-line))
@@ -125,7 +132,6 @@
                               (string->number cell-index-str)
                               0))
 
-      ;; Insert output header only; spinner stays in status line.
       (spinner-reset)
       (define spinner-frame (spinner-next-frame))
       (helix.static.insert_string "\n\n# ─── Output ───\n")
@@ -145,7 +151,7 @@
          (define err (let ([e (json-get start-result "error")]) (if (> (string-length e) 0) e "Unknown error")))
          (when (or (string-contains? err "does not exist")
                    (string-contains? err "PID file missing"))
-           (set! *kernels* (hash-remove *kernels* notebook-path)))
+           (set! *kernels* (hash-remove *kernels* path)))
          (helix.static.insert_string (string-append "# ERROR: " err "\n"))
          (helix.static.insert_string "# ─────────────\n")
          (set-status! (string-append "✗ " err))
@@ -168,28 +174,15 @@
            (set! *executing-kernel-dir* #f)))]))
 
 ;;@doc
-;; Execute all cells in the notebook from top to bottom.
-;; Works on .jl converted files only.
+;; Execute all cells in the notebook top-to-bottom (.jl converted files only).
 (define (execute-all-cells)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define path (editor-document->path doc-id))
-  (define current-line (current-line-number))
+  (with-saved-notebook ":execute-all-cells"
+    (lambda (doc-id path current-line)
+      (execute-cells-up-to doc-id path current-line 999999))))
 
-  (when (not path)
-    (set-status! "Error: No file path")
-    (error "No file path"))
-
-  (save-cursor-for-restore! doc-id)
-
-  (when (string-suffix? path ".ipynb")
-    (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
-    (error "Not a converted file"))
-  (when (not (string-suffix? path ".jl"))
-    (set-status! "Error: Only .jl files supported")
-    (error "Not a .jl file"))
-
-  (define cells-json (list-jl-code-cells path 999999))
+;; Run every code cell with index ≤ `limit-idx`, in file order.
+(define (execute-cells-up-to doc-id path current-line limit-idx)
+  (define cells-json (list-jl-code-cells path limit-idx))
   (define cells-err (json-get cells-json "error"))
   (when (> (string-length cells-err) 0)
     (define safe-err (sanitise-error-message cells-err))
@@ -201,16 +194,14 @@
   (define cell-count (length cell-indices))
 
   (when (equal? cell-count 0)
-    (set-status! "No code cells found")
+    (set-status! "No code cells to execute")
     (error "No code cells"))
 
-  (define notebook-path path)
-  (define lang "julia")
-  (kernel-get-for-notebook notebook-path lang
+  (kernel-get-for-notebook path "julia"
     (lambda (kernel-state)
       (define kernel-dir (hash-get kernel-state 'kernel-dir))
       (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
-      (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))))
+      (execute-cell-list doc-id path kernel-dir path cell-indices cell-indices cell-count current-line))))
 
 ;;@doc
 ;; Execute a list of cells sequentially with async polling.
@@ -258,7 +249,6 @@
 
         (define cell-code-end (find-cell-code-end get-line updated-total-lines (+ cell-marker-line 1)))
 
-        ;; Delete existing output + surrounding blank padding.
         (define output-start (find-output-start get-line updated-total-lines cell-code-end))
         (when output-start
           (define output-end (find-output-end-line get-line updated-total-lines (+ output-start 1)))
@@ -266,8 +256,6 @@
           (define extended-end (expand-delete-end-forward get-line updated-total-lines output-end))
           (delete-line-range extended-start extended-end))
 
-        ;; Position at last real code line; goto_line_end_newline avoids
-        ;; slicing the last grapheme.
         (define insert-at-line
           (find-last-non-blank-line-before get-line cell-marker-line cell-code-end))
         (move-to-line-start-no-center! updated-rope insert-at-line)
@@ -301,7 +289,6 @@
   (define post-rope (editor->text doc-id))
   (define post-lines (text.rope-len-lines post-rope))
 
-  ;; Scan forward from cell-code-end to find the output header.
   (let scan ([idx cell-code-end] [lim (+ cell-code-end 20)])
     (cond
       [(or (>= idx lim) (>= idx post-lines)) #false]
@@ -330,11 +317,6 @@
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
      (update-cell-output result-json jl-path cell-idx kernel-dir)
-     ;; Snap the cursor back to the user's anchor after this cell's output is
-     ;; inserted, so the view doesn't visibly chase each cell's output down the
-     ;; buffer during a `:xca` run. restore-cursor-for! is non-centering and
-     ;; cell-relative, so it returns to the same spot regardless of the lines
-     ;; the inserts shifted.
      (restore-cursor-for! doc-id)
      (enqueue-thread-local-callback-with-delay 10
        (lambda () (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]))
@@ -348,54 +330,15 @@
               (map string->number (string-split str ",")))))
 
 ;;@doc
-;; Execute all cells from the top up to and including the current cell.
-;; ONLY works on converted files (not raw .ipynb).
+;; Execute all cells from the top up to and including the current cell (.jl converted files only).
 (define (execute-cells-above)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define path (editor-document->path doc-id))
-  (define current-line (current-line-number))
-
-  (when (not path)
-    (set-status! "Error: No file path")
-    (error "No file path"))
-
-  ;; Save file first so Rust can read the latest content.
-  (helix.write)
-
-  (enqueue-thread-local-callback-with-delay 100
-    (lambda ()
-      (when (string-suffix? path ".ipynb")
-        (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
-        (error "Not a converted file"))
-
+  (with-saved-notebook ":execute-cells-above"
+    (lambda (doc-id path current-line)
       (define cell-info-json (get-cell-at-line path current-line))
       (define err (json-get cell-info-json "error"))
       (when (> (string-length err) 0)
         (set-status! "Error: Not in a notebook file")
         (error "Not in a notebook file"))
 
-      (define notebook-path (json-get cell-info-json "source_path"))
       (define current-cell-idx (string->number (json-get cell-info-json "cell_index")))
-      (define lang "julia")
-
-      (define cells-json (list-jl-code-cells path current-cell-idx))
-      (define cells-err (json-get cells-json "error"))
-      (when (> (string-length cells-err) 0)
-        (define safe-err (sanitise-error-message cells-err))
-        (set-status! (string-append "✗ " safe-err))
-        (error safe-err))
-
-      (define indices-str (json-get cells-json "indices"))
-      (define cell-indices (parse-indices-string indices-str))
-      (define cell-count (length cell-indices))
-
-      (when (equal? cell-count 0)
-        (set-status! "No code cells to execute")
-        (error "No code cells"))
-
-      (kernel-get-for-notebook notebook-path lang
-        (lambda (kernel-state)
-          (define kernel-dir (hash-get kernel-state 'kernel-dir))
-          (set-status! (string-append "Executing cells: " indices-str))
-          (execute-cell-list doc-id notebook-path kernel-dir path cell-indices cell-indices cell-count current-line))))))
+      (execute-cells-up-to doc-id path current-line current-cell-idx))))
