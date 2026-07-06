@@ -1,5 +1,3 @@
-using NothelixMacros
-
 @markdown 0
 # # nothelix demo
 #

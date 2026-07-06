@@ -321,12 +321,42 @@ fn locate_on_path(name: &str) -> Option<PathBuf> {
 /// `Display` impl.
 pub fn nothelix_health_check_tsv() -> String {
     let (steel_home, nothelix_share, hx_nothelix) = resolve_paths();
-    let issues = run_health_check(&steel_home, &nothelix_share, &hx_nothelix);
+    let mut issues = run_health_check(&steel_home, &nothelix_share, &hx_nothelix);
+    check_julia(&mut issues);
+    check_terminal(&mut issues);
     issues
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// Runtime prerequisites, checked only at the FFI boundary (not in
+// `run_health_check`, which stays deterministic for unit tests).
+fn check_julia(issues: &mut Vec<HealthIssue>) {
+    if which::which("julia").is_err() {
+        issues.push(HealthIssue::new(
+            "julia-missing",
+            "julia not found on PATH — cells cannot run",
+            "install Julia (https://julialang.org/install), then restart Helix",
+        ));
+    }
+}
+
+fn check_terminal(issues: &mut Vec<HealthIssue>) {
+    if std::env::var_os("TMUX").is_some() {
+        issues.push(HealthIssue::new(
+            "terminal-multiplexer",
+            "running inside tmux — inline plots, math, and tables may not render",
+            "run Helix directly in a Kitty-protocol terminal, not inside tmux",
+        ));
+    } else if std::env::var_os("ZELLIJ").is_some() {
+        issues.push(HealthIssue::new(
+            "terminal-multiplexer",
+            "running inside Zellij — inline plots, math, and tables may not render",
+            "run Helix directly in a Kitty-protocol terminal, not inside Zellij",
+        ));
+    }
 }
 
 #[cfg(test)]

@@ -120,8 +120,8 @@ mod tests {
     #[test]
     fn convert_sync_header() {
         let result = notebook_convert_sync(fixture_path("simple.ipynb"));
-        assert!(result.starts_with("using NothelixMacros"));
-        assert!(result.contains("# ═══ Nothelix Notebook:"));
+        assert!(result.starts_with("# ═══ Nothelix Notebook:"));
+        assert!(!result.contains("NothelixMacros"));
         assert!(result.contains("# Cells: 4"));
     }
 
@@ -315,7 +315,10 @@ mod tests {
             !body.contains("NothelixMacros"),
             "NothelixMacros load lines must be stripped from the cell body, got:\n{body}"
         );
-        assert!(body.contains("import Pkg"), "real code dropped, got:\n{body}");
+        assert!(
+            body.contains("import Pkg"),
+            "real code dropped, got:\n{body}"
+        );
         assert!(body.contains("x = 1"), "real code dropped, got:\n{body}");
     }
 

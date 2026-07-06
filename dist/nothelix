@@ -43,7 +43,9 @@ nothelix — Jupyter-style notebooks inside Helix
 
 Usage:
   nothelix                      Open the bundled demo notebook
+  nothelix new [<file>]         Create a new notebook and open it
   nothelix <file> [<file>...]   Open files with hx-nothelix
+  nothelix setup-lsp            Add the kernel's Julia dep (JSON3) to your env
   nothelix upgrade              Re-run the installer to upgrade in place
   nothelix uninstall            Remove nothelix (see: nothelix uninstall --help)
   nothelix doctor [--smoke]     Run environment checks
@@ -212,6 +214,49 @@ EOF
         fi
         export NOTHELIX_BIN NOTHELIX_SHARE STEEL_HOME
         nothelix_uninstall "$@"
+        ;;
+    new)
+        shift
+        file="${1:-notebook.jl}"
+        case "$file" in
+            *.jl) ;;
+            *) file="$file.jl" ;;
+        esac
+        if [ -e "$file" ]; then
+            echo "nothelix: $file already exists" >&2
+            exit 1
+        fi
+        cat > "$file" <<'NB'
+@markdown 0
+# # New notebook
+#
+# <space>nr  run cell  |  <space>nn  new cell  |  <space>nj  jump
+# ]l / [l    next/prev cell  |  dd on a marker line deletes a cell
+#
+# :execute-all-cells   run everything
+# :sync-to-ipynb       save as .ipynb
+#
+# Add packages: ! julia --project=. -e 'using Pkg; Pkg.add("Plots")'
+
+@cell 1 :julia
+
+NB
+        dir=$(dirname "$file")
+        if [ ! -e "$dir/Project.toml" ]; then
+            printf '[deps]\nLinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"\n' > "$dir/Project.toml"
+        fi
+        echo "nothelix: created $file"
+        _run_or_print "$HX_NOTHELIX" "$file"
+        ;;
+    setup-lsp)
+        if ! command -v julia >/dev/null 2>&1; then
+            echo "nothelix: julia not on PATH — install Julia, then re-run: nothelix setup-lsp" >&2
+            exit 1
+        fi
+        echo "Ensuring the kernel's default-env dependency (JSON3)..."
+        julia --startup-file=no --history-file=no --quiet --project=@v#.# -e \
+            'using Pkg; haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
+        echo "nothelix: kernel environment ready"
         ;;
     *)
         _run_or_print "$HX_NOTHELIX" "$@"

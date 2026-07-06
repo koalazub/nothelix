@@ -266,17 +266,14 @@ run_static_doctor_checks() {
 }
 
 doctor_check_julia_project() {
-    local project="Project.toml"
-    if [ ! -f "$project" ]; then
-        _doctor_warn "no Project.toml in $(pwd) — the Julia LSP can't resolve packages without it
-    run: julia --project=. -e 'using Pkg; Pkg.add([\"LinearAlgebra\", \"Plots\"])'
-    or:  :new-notebook (generates one automatically)"
+    if ! command -v julia >/dev/null 2>&1; then
+        _doctor_warn "julia not on PATH — cannot verify the kernel environment"
         return
     fi
-    if ! grep -q "CellMarkers" "$project" 2>/dev/null; then
-        _doctor_warn "Project.toml missing CellMarkers — @cell/@markdown will show LSP warnings
-    run: julia --project=. -e 'using Pkg; Pkg.add(url=\"https://github.com/koalazub/CellMarkers.jl\")'"
-        return
+    if julia --startup-file=no --history-file=no -e 'using JSON3' >/dev/null 2>&1; then
+        _doctor_pass "JSON3 resolvable — the kernel can start"
+    else
+        _doctor_warn "JSON3 not in your default Julia env — the kernel will fail to start
+    run: nothelix setup-lsp   (adds JSON3 to your default env)"
     fi
-    _doctor_pass "Project.toml has CellMarkers ($(pwd)/Project.toml)"
 }

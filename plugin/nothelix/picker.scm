@@ -1,27 +1,9 @@
-;;; picker.scm - Interactive cell picker component
-;;;
-;;; Provides a popup UI that lists all cells in the current notebook.
-;;; Navigate with j/k, press Enter or a digit to jump to that cell.
-;;;
-;;; Items in the list read as `N. code (julia)` or `N. markdown`,
-;;; where N is the actual cell index parsed out of the `@cell N …`
-;;; or `@markdown N` marker (not the picker's 1-based row number —
-;;; those two diverge once you've renumbered or deleted cells mid-
-;;; file). Styling is pulled from the current Helix theme via
-;;; `theme-scope` so the picker matches whatever colourscheme the
-;;; user has configured in `config.toml`.
+;;; picker.scm — interactive cell picker popup
 
 (require "common.scm")
 (require "string-utils.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
-;; `require-builtin helix/components` pulls in the raw Rust-side
-;; names (area, buffer/clear, block/render, frame-set-string!,
-;; new-component!, push-component!, theme-scope, …). Those names
-;; take the Context as their first argument — calls to them have
-;; to pass `*helix.cx*` explicitly. We do NOT also require the
-;; `helix/components.scm` cog here because its wrapper for
-;; `theme-scope` has the same name and would collide in resolution.
 (require-builtin helix/components)
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
@@ -30,18 +12,10 @@
 
 (struct CellPickerState (cells selected digits) #:mutable)
 
-;; ─── Marker parsing ───────────────────────────────────────────────────────────
+;; Marker parsing
 
 ;;@doc
-;; Parse a `@cell N :lang` or `@markdown N` header line into a
-;; `(cons label cell-index)` pair where label is the pretty text
-;; shown in the picker ("code (julia)" / "markdown") and cell-index
-;; is the integer parsed from the marker. Falls back to (0, kind)
-;; when the header is malformed so the picker still renders
-;; something rather than crashing.
-;; Extract label from `# comment` portion of a marker line.
-;; `@cell 2 :julia # sampling operator` → "sampling operator"
-;; Uses # so labels are invisible to Julia's parser and StaticLint.
+;; Extract the label from the `# comment` portion of a marker line.
 (define (extract-comment-label str)
   (define parts (string-split str "#"))
   (if (< (length parts) 2)
@@ -98,8 +72,7 @@
     [else (list "unknown" 0 "")]))
 
 ;;@doc
-;; Scan the document for all @cell, @markdown, @raw, and @typst markers.
-;; Returns a list of (line-number kind-label cell-index header-text) tuples.
+;; Scan the document for all @cell/@markdown/@raw/@typst markers.
 (define (get-all-cells)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -126,8 +99,7 @@
   (find-cells 0 '()))
 
 ;;@doc
-;; Get a preview of the cell content starting at `line-num`.
-;; Returns up to `max-lines` lines of code (stops at next marker or output).
+;; Get up to `max-lines` lines of cell content starting after `line-num`.
 (define (get-cell-preview line-num max-lines)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -147,18 +119,6 @@
               (reverse lines)
               (loop (+ idx 1) (+ collected 1) (cons line lines)))))))
 
-;; Pull styles from the active Helix theme. Four scopes used:
-;;
-;;   ui.popup         — background of the floating popup
-;;   ui.text          — normal foreground for list items and preview
-;;   ui.menu          — menu row fill (fallback when ui.popup is empty)
-;;   ui.menu.selected — highlighted (currently-focused) list row
-;;
-;; `theme-scope` is the raw built-in from `require-builtin
-;; helix/components`, which takes the Context as its first arg.
-;; Each call returns a `Style` with whatever the user's
-;; colourscheme has defined for that scope and falls back
-;; gracefully on themes that don't define it.
 (define (picker-theme-styles)
   (list
     (theme-scope *helix.cx* "ui.popup")
@@ -186,11 +146,6 @@
     (buffer/clear buf list-area)
     (block/render buf list-area (make-block popup-style popup-style "all" "plain"))
 
-    ;; Title updates to show which cell index the user is about to
-    ;; jump to. Reduces cognitive load: the number lives in one place
-    ;; (the title) rather than cluttering every row. While the user is
-    ;; typing a multi-digit jump (e.g. "17"), the partial buffer with
-    ;; a trailing underscore shows what they've typed so far.
     (define selected-cell-idx
       (if (and (>= selected 0) (< selected (length cells)))
           (list-ref (list-ref cells selected) 2)
@@ -202,9 +157,6 @@
           (string-append "Jump to Cell: " (number->string selected-cell-idx))))
     (frame-set-string! buf (+ x 2) y title text-style)
 
-    ;; Each row shows the label (if present), or falls back to the
-    ;; kind ("code (julia)" / "markdown"). No numbered prefix — the
-    ;; cell index is in the title above.
     (let loop ([i 0])
       (when (< i (length cells))
         (let* ([cell (list-ref cells i)]
@@ -236,9 +188,6 @@
               (frame-set-string! buf (+ x list-width 4) (+ y i 1) truncated text-style)
               (loop (+ i 1)))))))))
 
-;; Find the list position of the first cell whose @cell N index equals
-;; `idx`, or #f if none. Used to preview-select as the user types a
-;; multi-digit jump target.
 (define (find-row-for-cell-index cells idx)
   (let loop ([i 0])
     (cond
@@ -264,25 +213,17 @@
        (set-CellPickerState-digits! state "")
        event-result/close]
 
-      ;; j/k navigate. Any navigation clears the digit buffer so the
-      ;; user's next digit press starts a fresh jump target rather
-      ;; than appending to a stale prefix.
-      [(eqv? char #\j)
+      [(or (eqv? char #\j) (key-event-down? event))
        (set-CellPickerState-digits! state "")
        (when (< selected (- (length cells) 1))
          (set-CellPickerState-selected! state (+ selected 1)))
        event-result/consume]
-      [(eqv? char #\k)
+      [(or (eqv? char #\k) (key-event-up? event))
        (set-CellPickerState-digits! state "")
        (when (> selected 0)
          (set-CellPickerState-selected! state (- selected 1)))
        event-result/consume]
 
-      ;; Digit press: append to buffer, preview-select the cell whose
-      ;; index matches the buffer (if any). Does NOT jump immediately
-      ;; — user confirms with Enter. This lets cells >9 be reached by
-      ;; typing multiple digits (e.g. "17" for cell 17); previously
-      ;; single-digit-only handling capped jumps at cell 9.
       [digit-value
        (let* ([new-buf (string-append digits (list->string (list char)))]
               [num (string->number new-buf)]
@@ -292,9 +233,6 @@
            (set-CellPickerState-selected! state match-row))
          event-result/consume)]
 
-      ;; Enter commits. If the digit buffer is non-empty, jump to the
-      ;; cell whose index matches the buffer; otherwise jump to the
-      ;; currently-highlighted row (j/k selection).
       [(key-event-enter? event)
        (cond
          [(> (string-length digits) 0)
@@ -305,8 +243,6 @@
        (set-CellPickerState-digits! state "")
        event-result/close]
 
-      ;; Any other key resets the digit buffer so a stray keypress
-      ;; doesn't leave a half-typed target lying around.
       [else
        (set-CellPickerState-digits! state "")
        event-result/consume])))
@@ -319,10 +255,7 @@
     (hash "handle_event" handle-cell-picker-event)))
 
 ;;@doc
-;; Pick the cell to highlight when the picker opens. Walks the cells
-;; list once; picks the last cell whose marker line is <= cursor line
-;; (i.e. the cell you're currently "inside"). Falls back to 0 when the
-;; cursor is above every marker or the buffer has no cells.
+;; Pick the cell to highlight when the picker opens (the one the cursor is inside).
 (define (initial-selection cells)
   (cond
     [(null? cells) 0]

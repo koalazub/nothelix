@@ -91,12 +91,11 @@ pub fn source_to_string(source: &Value) -> String {
 
 /// True for a line that only loads `NothelixMacros` (`using`/`import`).
 ///
-/// The converter injects `using NothelixMacros` so the Julia LSP resolves the
-/// `@cell`/`@markdown` macros, and users sometimes paste it (or `import`) into a
-/// cell body. The package lives only in nothelix's LSP env, never the kernel's
-/// default env, so forwarding the line to the kernel produces a spurious
-/// "Package NothelixMacros not found in current path". The kernel defines those
-/// macros itself, so the line is pure noise at runtime and is dropped.
+/// Older converted notebooks carried a `using NothelixMacros` preamble, and
+/// users sometimes paste it into a cell body. That package no longer exists —
+/// the kernel defines `@cell`/`@markdown` itself and JETLS masks the markers —
+/// so the line is dropped rather than forwarded to the kernel, where it would
+/// fail with "Package NothelixMacros not found in current path".
 fn is_nothelix_macros_load(line: &str) -> bool {
     let code = line.split('#').next().unwrap_or("").trim();
     for kw in ["using ", "import "] {
@@ -233,10 +232,10 @@ pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
     // lines at the top of the file that need to execute before any cell.
     //
     // `using NothelixMacros` is special-cased out: the converter injects
-    // it so Julia's LanguageServer resolves @cell/@markdown macros
+    // it so Julia's JETLS resolves @cell/@markdown macros
     // without false "Missing reference" squiggles, but it's not user
     // code. Letting it become a preamble cell pollutes .ipynb round-
-    // trips — the package only exists in nothelix's bootstrap env, so
+    // trips — the package only exists in nothelix's default Julia env, so
     // running that cell in stock Julia fails with "Package
     // NothelixMacros not found in current path".
     let first_marker_line = cells.first().map(|c| c.start_line).unwrap_or(lines.len());
