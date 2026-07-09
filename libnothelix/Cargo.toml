@@ -10,10 +10,12 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "nothelix-meta"
 path = "src/bin/nothelix-meta.rs"
+required-features = ["native"]
 
 [[bin]]
 name = "nothelix-animation-smoke"
 path = "src/bin/animation_smoke.rs"
+required-features = ["native"]
 
 [dependencies]
 mitex = "0.2.4"
@@ -21,37 +23,45 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 base64 = "0.22"
-rmp-serde = "1"
-which = "6.0"
-tempfile = "3.10"
 phf = { version = "0.11", features = ["macros"] }
-nix = { version = "0.29", features = ["signal", "process"] }
 
-typst = "0.15"
-typst-layout = "0.15"
-typst-svg = "0.15"
-typst-pdf = "0.15"
-typst-kit = { version = "0.15", features = ["embedded-fonts"] }
-resvg = "0.47"
-tiny-skia = "0.12"
-# Parallel batch math rendering (already in the lock via typst's own use).
-rayon = "1"
+thiserror = "1"
+comrak = { version = "0.53.0", default-features = false }
 
-# Image format handling
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+typst = { version = "0.15", optional = true }
+typst-layout = { version = "0.15", optional = true }
+typst-svg = { version = "0.15", optional = true }
+rmp-serde = { version = "1", optional = true }
+which = { version = "6.0", optional = true }
+tempfile = { version = "3.10", optional = true }
+nix = { version = "0.29", features = ["signal", "process"], optional = true }
+typst-pdf = { version = "0.15", optional = true }
+typst-kit = { version = "0.15", features = ["embedded-fonts"], optional = true }
+resvg = { version = "0.47", optional = true }
+tiny-skia = { version = "0.12", optional = true }
+rayon = { version = "1", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"], optional = true }
+inventory = { version = "0.3", optional = true }
 
 # Steel FFI bindings — pinned to the exact rev the helix fork pins so the
 # dylib stays ABI-compatible with the host VM (loader accepts dylib steel
 # <= host steel).
-steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "b67efd5c262962226424148bb87abefaf4109c5a", features = ["dylibs", "sync"] }
-abi_stable = "0.11"
+steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "b67efd5c262962226424148bb87abefaf4109c5a", features = ["dylibs", "sync"], optional = true }
+abi_stable = { version = "0.11", optional = true }
 
-inventory = "0.3"
-thiserror = "1"
-comrak = { version = "0.53.0", default-features = false }
+wasm-bindgen = { version = "=0.2.118", optional = true }
 
 [features]
-default = ["gif", "apng", "webp"]
+default = ["native"]
+render = ["dep:typst", "dep:typst-layout", "dep:typst-svg", "dep:typst-kit"]
+native = [
+  "render",
+  "dep:steel-core", "dep:abi_stable", "dep:nix", "dep:which", "dep:tempfile",
+  "dep:rmp-serde", "dep:inventory", "dep:rayon", "dep:typst-pdf",
+  "dep:resvg", "dep:tiny-skia", "dep:image",
+  "gif", "apng", "webp",
+]
+wasm = ["dep:wasm-bindgen"]
 gif = []
 apng = []
 webp = []

@@ -1,0 +1,45 @@
+.nx-play__status {
+  font-family: var(--nx-mono); font-size: .72rem; color: var(--nx-ink-soft);
+  padding: .6rem 1rem; border-bottom: 1.5px dashed var(--nx-line);
+}
+.nx-play__body { padding: .9rem 1rem 1.1rem; }
+.nx-play__field {
+  width: 100%; font-family: var(--nx-mono); font-size: .82rem; line-height: 1.6;
+  color: var(--nx-ink); background: var(--nx-term-bg);
+  border: 1.5px solid var(--nx-line); border-radius: 10px 8px 11px 7px / 7px 11px 8px 10px;
+  padding: .6rem .8rem; resize: vertical; box-sizing: border-box;
+}
+.nx-play__field:focus-visible { outline: 2px solid var(--nx-line-strong); outline-offset: -1px; }
+.nx-play__arrow { font-family: var(--nx-hand); font-size: .95rem; color: var(--nx-faint); margin: .6rem .1rem .35rem; }
+
+.nx-render {
+  font-family: var(--nx-mono); font-size: 1rem; line-height: 1.7;
+  background: var(--nx-lift); border: 1.5px solid var(--nx-line);
+  border-radius: 10px 8px 11px 7px / 7px 11px 8px 10px; padding: .7rem .9rem;
+  white-space: pre-wrap; word-break: break-word; color: var(--nx-ink); min-height: 2.6rem;
+}
+
+.nx-math {
+  background: var(--nx-lift); border: 1.5px solid var(--nx-line);
+  border-radius: 10px 8px 11px 7px / 7px 11px 8px 10px; padding: 1rem .9rem;
+  min-height: 3rem; overflow-x: auto; color: var(--nx-ink);
+  display: flex; align-items: center; justify-content: center;
+}
+.nx-math .katex { font-size: 1.35em; }
+
+.nx-cmp__list { display: flex; flex-direction: column; gap: 2px; }
+.nx-cmp__row {
+  display: flex; align-items: center; gap: .7rem; padding: .28rem .6rem;
+  background: var(--nx-term-bg); border: 1.5px solid var(--nx-line);
+  border-radius: 7px 5px 8px 4px;
+}
+.nx-cmp__glyph { font-family: var(--nx-mono); font-size: 1.15rem; color: var(--nx-rust); min-width: 1.4rem; text-align: center; }
+.nx-cmp__name { font-family: var(--nx-mono); font-size: .8rem; color: var(--nx-ink-soft); }
+.nx-cmp__empty { font-family: var(--nx-hand); font-size: .92rem; color: var(--nx-faint); padding: .4rem .2rem; }
+
+.nx-typ {
+  font-family: var(--nx-mono); font-size: .8rem; line-height: 1.65; color: var(--nx-ink);
+  background: var(--nx-term-bg); border: 1.5px solid var(--nx-line);
+  border-radius: 10px 8px 11px 7px / 7px 11px 8px 10px; padding: .6rem .8rem;
+  white-space: pre-wrap; overflow-x: auto; margin: 0; min-height: 2.6rem;
+}

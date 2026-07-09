@@ -48,7 +48,14 @@ fn enrichers() -> &'static [Box<dyn Enricher + Send + Sync>] {
     static ENRICHERS: OnceLock<Vec<Box<dyn Enricher + Send + Sync>>> = OnceLock::new();
     ENRICHERS
         .get_or_init(|| -> Vec<Box<dyn Enricher + Send + Sync>> {
-            vec![Box::new(StaticCellScanEnricher)]
+            #[cfg(feature = "native")]
+            {
+                vec![Box::new(StaticCellScanEnricher)]
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                Vec::new()
+            }
         })
         .as_slice()
 }
@@ -79,8 +86,10 @@ pub fn format_error(ctx: &FormatContext<'_>) -> String {
 /// Populates `cell_context` for `UndefVarError` by scanning the notebook
 /// `.jl` source for an assignment to the missing variable. Only fires
 /// when the kernel supplied no context of its own.
+#[cfg(feature = "native")]
 struct StaticCellScanEnricher;
 
+#[cfg(feature = "native")]
 impl Enricher for StaticCellScanEnricher {
     fn enrich(&self, err: &mut StructuredError, ctx: &FormatContext<'_>) {
         if err.error_type != "UndefVarError" || !err.cell_context.is_empty() {
@@ -126,6 +135,7 @@ impl Enricher for StaticCellScanEnricher {
     }
 }
 
+#[cfg(feature = "native")]
 fn extract_undef_var(msg: &str) -> String {
     // Prefer a backticked identifier.
     if let Some(start) = msg.find('`')

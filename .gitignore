@@ -6,6 +6,7 @@ target/
 *.so
 *.dylib
 *.wasm
+!docs/assets/eng/wasm/*.wasm
 .DS_Store
 
 # Nix build output symlink

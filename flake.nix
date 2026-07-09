@@ -64,6 +64,7 @@
             "rustfmt"
             "rust-analyzer"
           ];
+          targets = [ "wasm32-unknown-unknown" ];
         };
 
         fenixStable = fenix.packages.${system}.stable.toolchain;
@@ -248,7 +249,6 @@
             # Binaries
             cp ${hx-nothelix}/bin/hx-nothelix $staging/bin/
             cp $src/dist/nothelix $staging/bin/nothelix
-            cp $src/lsp/julia-lsp $staging/bin/julia-lsp
             chmod +x $staging/bin/*
 
             # Dylib + meta
@@ -270,9 +270,6 @@
 
             # Examples
             cp $src/examples/demo.jl $staging/share/nothelix/examples/
-
-            # LSP
-            cp $src/lsp/Project.toml $src/lsp/Manifest.toml $staging/share/nothelix/lsp/
 
             # Kernel scripts
             cp $src/kernel/*.jl $staging/share/nothelix/kernel-scripts/
@@ -320,6 +317,8 @@
             pkgs.nil
             pkgs.nushell
             pkgs.just
+            pkgs.wasm-bindgen-cli
+            pkgs.binaryen
           ];
 
           shellHook = ''

@@ -6,9 +6,9 @@
 #   ~/.steel/cogs/nothelix.scm              — plugin entry symlink
 #   ~/.steel/cogs/nothelix/                 — plugin module directory symlink
 #
-# `just setup-lsp` is the one-time Julia LSP bootstrap (wrapper + env):
-#
-#   ~/.local/bin/julia-lsp                  — Julia LSP wrapper script
+# `just setup-lsp` dev-installs the bundled NothelixMacros package and the
+# kernel's JSON3 dependency into Julia's default shared environment (@v#.#),
+# which JETLS and the kernel both resolve `using` against.
 #
 # Why ~/.steel/cogs? Steel's module resolver searches it automatically, so
 # `(require "nothelix.scm")` in init.scm finds the plugin without any config
@@ -96,44 +96,41 @@ install profile="release":
         [ -e "$config_helix/nothelix" ]     && echo "           rm -rf $config_helix/nothelix"
     fi
 
-# Julia bootstrap: LSP wrapper + LSP env + kernel runtime dep (re-run after a Julia version change)
+# Julia bootstrap: dev NothelixMacros + JSON3 into the default env (re-run after a Julia version change)
 setup-lsp:
     #!/usr/bin/env sh
     set -eu
-    mkdir -p "{{ local_bin }}"
-    cp "{{ nothelix_root }}/lsp/julia-lsp" "{{ local_bin }}/julia-lsp"
-    chmod +x "{{ local_bin }}/julia-lsp"
-    echo "Installed: {{ local_bin }}/julia-lsp"
-
     if command -v julia >/dev/null 2>&1; then
-        echo "Setting up Julia LSP environment (patched SymbolServer for 1.14)..."
-        # Mirror lsp.rs::ensure_lsp_environment exactly: the runtime env lives
-        # in the data dir, NOT the repo. Warming it here avoids a ~2 min wait
-        # on the user's first .jl open (where lsp.rs would otherwise build it).
-        runtime="${XDG_DATA_HOME:-$HOME/.local/share}/nothelix/lsp"
-        mkdir -p "$runtime/depot"
-        printf '[deps]\nLanguageServer = "2b0e0bc5-e4fd-59b4-8912-456d1b03d8d7"\n' > "$runtime/Project.toml"
-        cp "{{ nothelix_root }}/lsp/symbolserver-1.14.patch" "$runtime/symbolserver-1.14.patch"
-        cp "{{ nothelix_root }}/lsp/bootstrap.jl" "$runtime/bootstrap.jl"
-        JULIA_DEPOT_PATH="$runtime/depot" \
-            julia --startup-file=no --quiet --project="$runtime" \
-            "$runtime/bootstrap.jl" "$runtime" "$runtime/symbolserver-1.14.patch" "$runtime/NothelixMacros"
-        # The kernel and JETLS both resolve `using` against the user's default
-        # env. JSON3 is the kernel's runtime dep; NothelixMacros provides the
-        # @cell/@markdown markers JETLS must resolve to analyse a notebook. A
-        # Julia version bump gives a fresh empty env, so ensure both here.
-        echo "Ensuring default-env deps (JSON3, NothelixMacros)..."
-        julia --startup-file=no --quiet -e 'using Pkg
-            deps = Pkg.project().dependencies
-            haskey(deps, "JSON3") || Pkg.add("JSON3")
-            haskey(deps, "NothelixMacros") || Pkg.develop(path="{{ nothelix_root }}/lsp/NothelixMacros")'
+        # JSON3 is the kernel's runtime dependency, resolved against the user's
+        # default env. A Julia version bump gives a fresh empty env, so ensure
+        # it here. (@cell/@markdown markers no longer need a package — JETLS
+        # masks them, so there is nothing else to install.)
+        echo "Ensuring default-env deps (JSON3)..."
+        julia --startup-file=no --history-file=no --quiet --project=@v#.# -e 'using Pkg
+            haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
     else
-        echo "julia not on PATH — skipping Julia env warm-up (set up on first .jl open)"
+        echo "julia not on PATH — skipping Julia env setup (re-run setup-lsp after installing Julia)"
     fi
 
 # build without installing
 build profile="release":
     {{ if profile == "debug" { "cargo build -p libnothelix" } else { "cargo build --release -p libnothelix" } }}
+
+# build the docs-site WebAssembly bundle into docs/assets/eng/wasm
+build-wasm:
+    #!/usr/bin/env sh
+    set -eu
+    out="{{ nothelix_root }}/docs/assets/eng/wasm"
+    cargo build -p libnothelix --no-default-features --features wasm \
+        --target wasm32-unknown-unknown --release
+    mkdir -p "$out"
+    wasm-bindgen "{{ nothelix_root }}/target/wasm32-unknown-unknown/release/nothelix.wasm" \
+        --out-dir "$out" --out-name nothelix --target web --no-typescript
+    wasm-opt -Oz --enable-reference-types --enable-multivalue --enable-sign-ext \
+        --enable-mutable-globals --enable-nontrapping-float-to-int --enable-bulk-memory \
+        "$out/nothelix_bg.wasm" -o "$out/nothelix_bg.wasm.opt"
+    mv "$out/nothelix_bg.wasm.opt" "$out/nothelix_bg.wasm"
+    echo "wasm: $(wc -c < "$out/nothelix_bg.wasm") bytes"
 
 # run tests
 test:
@@ -155,13 +152,12 @@ check:
     echo "── plugin load ──"
     "{{ nothelix_root }}/scripts/check-plugin.sh"
 
-# remove the installed dylib, plugin symlinks, and julia-lsp
+# remove the installed dylib and plugin symlinks
 uninstall:
     rm -f "{{ steel_native }}/libnothelix.dylib"
     rm -f "{{ steel_native }}/libnothelix.so"
     rm -f "{{ steel_cogs }}/nothelix.scm"
     rm -f "{{ steel_cogs }}/nothelix"
-    rm -f "{{ local_bin }}/julia-lsp"
     @echo "Uninstalled nothelix"
 
 # list available recipes

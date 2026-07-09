@@ -9,30 +9,52 @@
 // aren't consumed internally, but the owned type is load-bearing for the
 // FFI dispatcher.
 #![allow(clippy::needless_pass_by_value)]
+#![cfg_attr(not(feature = "native"), allow(dead_code))]
 
-pub mod animation;
-mod chart;
 pub mod error_format;
-mod graphics;
-mod health;
-mod json_utils;
-mod kernel;
-mod kitty_placeholder;
 mod math_corpus;
-mod math_format;
 pub use math_corpus::CORPUS;
-mod math_image;
-pub use math_image::render_math_to_svg;
 mod markdown_overlays;
-mod notebook;
-mod table_image;
-mod trust;
 mod typst_export;
 mod unicode;
 
+#[cfg(feature = "render")]
+mod math_format;
+#[cfg(feature = "render")]
+mod math_image;
+#[cfg(feature = "render")]
+mod table_image;
+#[cfg(feature = "render")]
+pub use math_image::render_math_to_svg;
+
+#[cfg(feature = "native")]
+pub mod animation;
+#[cfg(feature = "native")]
+mod chart;
+#[cfg(feature = "native")]
+mod graphics;
+#[cfg(feature = "native")]
+mod health;
+#[cfg(feature = "native")]
+mod json_utils;
+#[cfg(feature = "native")]
+mod kernel;
+#[cfg(feature = "native")]
+mod kitty_placeholder;
+#[cfg(feature = "native")]
+mod notebook;
+#[cfg(feature = "native")]
+mod trust;
+
+#[cfg(all(feature = "wasm", not(feature = "native")))]
+mod wasm;
+
+#[cfg(feature = "native")]
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+#[cfg(feature = "native")]
 use steel::steel_vm::ffi::{FFIModule, RegisterFFIFn};
 
+#[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
 /// FFI surface version for the libnothelix ↔ plugin handshake.
@@ -58,6 +80,7 @@ pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
 }
 
+#[cfg(feature = "native")]
 fn build_module() -> FFIModule {
     let mut m = FFIModule::new("nothelix");
 
@@ -273,6 +296,7 @@ fn build_module() -> FFIModule {
 
 // ─── Error formatting ─────────────────────────────────────────────────────────
 
+#[cfg(feature = "native")]
 fn format_julia_error(error_json: String, raw_error: String) -> String {
     error_format::format_error(&error_format::FormatContext {
         error_json: &error_json,
@@ -285,6 +309,7 @@ fn format_julia_error(error_json: String, raw_error: String) -> String {
 /// `UndefVarError` messages can be enriched by the static-scan enricher
 /// — "variable `t` is defined in @cell N (later in the notebook), move
 /// it up" instead of the generic "check spelling" hint.
+#[cfg(feature = "native")]
 fn format_julia_error_with_notebook(
     error_json: String,
     raw_error: String,
@@ -304,10 +329,12 @@ fn format_julia_error_with_notebook(
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
 
 // `isize` because that's the integer type Steel's FFI marshals.
+#[cfg(feature = "native")]
 fn nothelix_ffi_version() -> isize {
     NOTHELIX_FFI_VERSION as isize
 }
 
+#[cfg(feature = "native")]
 fn write_string_to_file(path: String, content: String) -> String {
     match std::fs::write(&path, &content) {
         Ok(()) => String::new(),
@@ -315,6 +342,7 @@ fn write_string_to_file(path: String, content: String) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 fn path_exists(path: String) -> String {
     if std::path::Path::new(&path).exists() {
         "yes".into()
@@ -323,6 +351,7 @@ fn path_exists(path: String) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 fn read_file_tail(path: String, n: isize) -> String {
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
@@ -334,6 +363,7 @@ fn read_file_tail(path: String, n: isize) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 fn resolve_symlink_dir(path: String) -> String {
     let expanded = if let Some(rest) = path.strip_prefix('~') {
         if let Ok(home) = std::env::var("HOME") {
@@ -357,16 +387,19 @@ fn resolve_symlink_dir(path: String) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 fn sleep_ms(ms: isize) {
     std::thread::sleep(std::time::Duration::from_millis(ms as u64));
 }
 
 /// Read an environment variable. Returns the empty string if the
 /// variable is unset, so Scheme can treat "" as falsy/missing.
+#[cfg(feature = "native")]
 fn getenv(name: String) -> String {
     std::env::var(&name).unwrap_or_default()
 }
 
+#[cfg(feature = "native")]
 fn save_image_to_cache(jl_path: String, cell_index: isize, b64_data: String) -> String {
     use std::path::Path;
 
@@ -396,6 +429,7 @@ fn save_image_to_cache(jl_path: String, cell_index: isize, b64_data: String) -> 
     format!(".nothelix/images/{filename}")
 }
 
+#[cfg(feature = "native")]
 fn load_image_from_cache(jl_path: String, rel_path: String) -> String {
     use std::path::Path;
 

@@ -11,10 +11,12 @@ use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
-use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
-use typst_pdf::{PdfOptions, pdf};
 use typst_svg::{SvgOptions, svg};
+
+use typst_kit::fonts::FontStore;
+#[cfg(feature = "native")]
+use typst_pdf::{PdfOptions, pdf};
 
 use crate::typst_export::latex_to_typst_math;
 
@@ -51,6 +53,7 @@ pub(crate) const BATCH_SEP: char = '\u{1e}';
 /// Compile a `BATCH_SEP`-joined batch in parallel via `render_one`, returning
 /// the JSON results joined the same way, in order. Shared by the synchronous
 /// `render_math_batch` (used in tests) and the async `spawn_batch`.
+#[cfg(feature = "native")]
 fn run_batch(
     blocks: String,
     font_size_pt: isize,
@@ -70,7 +73,7 @@ fn run_batch(
 
 /// Render `BATCH_SEP`-joined LaTeX blocks in parallel; returns their JSON
 /// results joined the same way, in order.
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 fn render_math_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
     run_batch(blocks, font_size_pt, text_color, render_math_to_svg)
 }
@@ -80,11 +83,13 @@ fn render_math_batch(blocks: String, font_size_pt: isize, text_color: String) ->
 /// superseded by a newer render (generation guard) or times out simply stops
 /// polling, so without a sweep the `Done` payload (the full base64 SVG batch)
 /// would leak for the life of the process.
+#[cfg(feature = "native")]
 enum RenderJob {
     Pending(std::time::Instant),
     Done(std::time::Instant, String),
 }
 
+#[cfg(feature = "native")]
 impl RenderJob {
     fn started(&self) -> std::time::Instant {
         match self {
@@ -93,6 +98,7 @@ impl RenderJob {
     }
 }
 
+#[cfg(feature = "native")]
 fn render_jobs() -> &'static Mutex<HashMap<u64, RenderJob>> {
     static JOBS: OnceLock<Mutex<HashMap<u64, RenderJob>>> = OnceLock::new();
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -101,8 +107,10 @@ fn render_jobs() -> &'static Mutex<HashMap<u64, RenderJob>> {
 /// How long a job may sit unclaimed before the next `spawn_batch` evicts it.
 /// Comfortably longer than the plugin's poll ceiling (~24s) so a live poll
 /// never races the sweep, but bounded so abandoned jobs can't accumulate.
+#[cfg(feature = "native")]
 const RENDER_JOB_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
+#[cfg(feature = "native")]
 static RENDER_JOB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Kick off a batch Typst compile on a plain Rust thread and return a job id
@@ -114,6 +122,7 @@ static RENDER_JOB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// calling the synchronous batch inside Steel's `spawn-native-thread`, where the
 /// cloned VM stuck in this FFI makes the main-thread garbage collector busy-spin
 /// until the compile finishes.
+#[cfg(feature = "native")]
 pub(crate) fn spawn_batch(
     blocks: String,
     font_size_pt: isize,
@@ -136,6 +145,7 @@ pub(crate) fn spawn_batch(
     job_id.to_string()
 }
 
+#[cfg(feature = "native")]
 pub fn start_render_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
     spawn_batch(blocks, font_size_pt, text_color, render_math_to_svg)
 }
@@ -144,6 +154,7 @@ pub fn start_render_batch(blocks: String, font_size_pt: isize, text_color: Strin
 /// compile is still running, `"ERROR:<reason>"` on a bad/expired id, or the
 /// `BATCH_SEP`-joined JSON results (consuming the job) once complete. JSON
 /// results always start with `{`, so they can never collide with the sentinels.
+#[cfg(feature = "native")]
 pub fn poll_render_batch(job_id: String) -> String {
     let Ok(id) = job_id.trim().parse::<u64>() else {
         return "ERROR:bad-job-id".to_string();
@@ -232,6 +243,7 @@ pub(crate) fn compile_typst_to_svg(doc_source: String) -> Result<(String, u32, u
     Ok((b64, width, height))
 }
 
+#[cfg(feature = "native")]
 pub fn render_typst_to_pdf(typst_source: String, out_path: String) -> String {
     match compile_typst_to_pdf(&typst_source) {
         Ok(bytes) => match std::fs::write(&out_path, &bytes) {
@@ -242,6 +254,7 @@ pub fn render_typst_to_pdf(typst_source: String, out_path: String) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn compile_typst_to_pdf(typst_source: &str) -> Result<Vec<u8>, String> {
     let world = build_world(Source::detached(typst_source.to_string()));
 
