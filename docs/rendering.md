@@ -5,103 +5,114 @@ nav_order: 4
 
 # Rendering
 
-The point of nothelix is that the visual results of your work — plots, equations,
-tables — appear where you are looking, in the buffer, rather than in a separate
-window. This page covers what renders, how, and what your terminal needs to make
-it happen.
+| Content | Renders as | When |
+|---|---|---|
+| Plots | Inline image below the cell | On cell run |
+| Inline math `$…$` | Unicode overlay | On open, or `:conceal-math` |
+| Display math `$$…$$` | Typeset image | On open and save, or `:render-math-at-cursor` |
+| Pipe tables | Typeset image | On save, or `:render-all-tables` |
+
+Everything renders in the buffer. Below: what each does, the commands that drive
+it, and what your terminal needs.
 
 ## Plots
 
-When a cell produces a figure, it renders inline below the cell. Plots travel
-from Julia as PNG images through the standard display system, and the terminal
-draws them through its graphics protocol. The kernel never thinks about terminals;
-it writes pixels, and nothelix handles the wire format. See
-[Architecture](architecture.md#the-kernel-protocol) for the full path.
+A cell that produces a figure renders it inline, below the cell.
 
-A few commands help you work with figures:
+| Command | Key | What it does |
+|---|---|---|
+| `:view-chart` | | Open the last-executed plot in the interactive chart viewer |
+| `:plot-grow` | `<space>n=` | Grow the plot block under the cursor and re-render |
+| `:plot-shrink` | `<space>n-` | Shrink the plot block under the cursor and re-render |
+| `:insert-image` | | Drop a `# @image <path>` marker and blank canvas at the cursor |
 
-- `:view-chart` opens the last-executed plot in an interactive chart viewer.
-- `:plot-grow` (`<space>n=`) and `:plot-shrink` (`<space>n-`) resize the plot
-  block under the cursor and re-render it at the new size.
-- `:insert-image` drops a `# @image <path>` marker and a blank canvas at the
-  cursor, so you can place an existing image file in a notebook.
+Plots travel from Julia as PNG through the display system; the terminal draws them
+over its graphics protocol. See [Architecture](architecture.md#the-kernel-protocol)
+for the full path.
 
-## Mathematics
+## Inline math becomes Unicode
 
-Nothelix renders mathematics in two complementary ways, depending on whether it
-is inline with your prose or set off on its own.
+Inside `$ … $`, LaTeX is concealed as Unicode as you read: `\alpha` becomes α,
+`\leq` becomes ≤, superscripts and subscripts shift to their Unicode forms.
 
-### Inline math becomes Unicode
+| Command | What it does |
+|---|---|
+| `:conceal-math` | Apply LaTeX-to-Unicode concealment to the buffer |
+| `:clear-conceal` | Remove the concealment overlays |
+| `:julia-tab-complete` | Expand a `\<name>` shortcut at the cursor (`Tab`, insert mode, `.jl`) |
 
-Inside `$ … $`, LaTeX is replaced with Unicode as you read it. `\alpha` becomes
-α, `\leq` becomes ≤, superscripts and subscripts shift to their Unicode forms,
-and matrix and cases environments get their bracket fences. Because the result is
-plain text — one glyph per source construct — inline math flows with your writing
-and shows up anywhere, including under a multiplexer.
+- The raw LaTeX stays in the file and reappears on the cursor's line while you edit.
+- The result is plain text, so it flows with prose and works under a multiplexer.
+- Applied automatically on open, unless a project sets `conceal-on-open = false` in
+  `.nothelix.conf`.
 
-This is concealment: the raw LaTeX is still in the file, and it reappears on the
-cursor's line while you edit, so you are never editing blind. `:conceal-math` and
-`:clear-conceal` turn it on and off for a buffer; it is applied automatically when
-you open a notebook.
+Try it live on the [Playground](playground.md).
 
-While writing, press `Tab` (in insert mode, in a `.jl` file) to expand a Julia
-LaTeX shortcut at the cursor — type `\alpha`, press `Tab`, get α — the same
-mechanism Julia's REPL uses.
+## Display math becomes a typeset image
 
-### Display math becomes a typeset image
-
-A display block set off with `$$ … $$` renders as a properly typeset image in the
-buffer. The LaTeX is converted to Typst, compiled to a vector image, rasterised,
-and drawn inline. The result looks like real mathematics, not an ASCII
-approximation.
+A `$$ … $$` block renders as a typeset image: LaTeX to Typst, compiled to vector,
+rasterised, drawn inline.
 
 | Command | What it does |
 |---|---|
 | `:render-math-at-cursor` | Render the display block under the cursor |
 | `:render-all-display-math` | Render every display block in the buffer |
-| `:clear-math-images` | Remove the rendered images and show the source again |
-| `:format-math-buffer` | Expand single-line `\begin{…}` environments into multi-line `$$` blocks |
-| `:math-render-buffer` | Stack big-operator limits (`\int`, `\sum`, `\prod`) above and below the glyph |
+| `:clear-math-images` | Remove the images and show the source again |
+| `:format-math-buffer` | Expand single-line `\begin{…}` into multi-line `$$` blocks |
+| `:math-render-buffer` | Stack big-operator limits (`\int`, `\sum`, `\prod`) above/below the glyph |
 | `:math-render-clear` | Remove the stacked-limit annotations |
 
-Display math is rendered automatically when you open a notebook and refreshed when
-you save. The conversion uses the [MiTeX](credits.md) project's LaTeX support inside
-Typst; the [architecture](architecture.md#mathematics-rendering) page and the design
-note in `docs/dev/math-rendering-strategy.md` explain the layout strategy, which
-has a few real subtleties around reserving vertical space for the image.
+Display math renders on open and refreshes on save. The conversion uses
+[MiTeX](credits.md); see [Architecture](architecture.md#mathematics-rendering) for
+the layout strategy. Try it live on the [Playground](playground.md).
 
 ## Tables
 
-A Markdown pipe table written as comments renders as a typeset image too, through
-the same Typst path as display math. `:render-all-tables` renders every table in
-the buffer; they refresh on save alongside the math. As with plots and equations,
-the source text stays in the file and comes back when you need to edit it.
+A Markdown pipe table written as comments renders as a typeset image, through the
+same Typst path as display math.
+
+| Command | What it does |
+|---|---|
+| `:render-all-tables` | Render every Markdown pipe table in the buffer |
+
+Tables refresh on save alongside math. The source text stays in the file and
+returns when you edit.
 
 ## Graphics protocols
 
-Nothelix detects your terminal's graphics capability and uses the best available
-path. Run `:graphics-check` to see what it found, and `:graphics-protocol` for the
-short answer.
+Run `:graphics-check` for a diagnostic, or `:graphics-protocol` for the short answer.
 
 | Protocol | Used for | Notes |
 |---|---|---|
-| Kitty graphics protocol | Plots, display math, tables | The best path; full inline images. Kitty is the reference implementation, and other terminals that implement the protocol qualify. |
-| iTerm2 inline images | Plots | Supported where the Kitty protocol is not present. |
-| Text fallback | — | When no image protocol is available, image-based content falls back to placeholders. Inline Unicode math still works, since it is plain text. |
+| Kitty graphics protocol | Plots, display math, tables | Best path; full inline images. Any terminal implementing the protocol qualifies |
+| iTerm2 inline images | Plots | Used where the Kitty protocol is absent |
+| Text fallback | — | No image protocol: image content shows placeholders. Unicode math still works |
 
-Sixel is not implemented. There is no per-terminal quality score here on purpose;
-what matters is whether your terminal speaks an image protocol, which
-`:graphics-check` tells you directly.
+Sixel is not implemented.
 
-### The multiplexer caveat
+### Caveats
 
-Terminal multiplexers — tmux and Zellij — intercept escape sequences and strip
-the ones the Kitty protocol relies on. Under them, anything image-based stops
-appearing: plots, typeset display math, and rendered tables. Inline Unicode math
-and concealment keep working, because they are plain text. Run Helix directly in a
-Kitty-protocol terminal, or use a multiplexer that forwards the protocol
-untouched.
+- **Multiplexers.** tmux and Zellij strip the escape sequences the Kitty protocol
+  relies on. Under them, all image content (plots, display math, tables) stops
+  appearing; Unicode math and concealment keep working. Run Helix directly in a
+  Kitty-protocol terminal.
+- **The fork.** Inline rendering depends on the Helix fork. On stock Helix, images
+  and stacked-math limits fall back to placeholders. See
+  [Architecture](architecture.md#why-a-fork).
 
-Inline rendering also depends on the Helix fork; on stock Helix, images and
-stacked-math limits fall back to placeholders. See
-[Architecture](architecture.md#why-a-fork) for why.
+## Export
+
+Turn a `.jl` notebook into a shareable document. Each export runs off the main
+thread, so a large notebook does not freeze Helix.
+
+| Command | Output | Good for |
+|---|---|---|
+| `:export-markdown` | `.md` | A README, wiki, or static-site generator that understands Markdown + LaTeX |
+| `:export-typst` | `.typ` | A Typst source file to typeset, edit, or drop into a larger document |
+| `:export-pdf` | `.pdf` | A finished, self-contained PDF, no LaTeX distribution needed |
+
+Typst and PDF export use the same LaTeX-to-Typst machinery ([MiTeX](credits.md)) as
+display math, so an equation that displays inline is the equation that lands in the
+PDF. Pipe tables become native Typst `#table()` blocks; headings, inline math, and
+non-ASCII text carry across verbatim. Watch it run on the
+[Playground](playground.md).

@@ -5,26 +5,6 @@ nav_order: 3
 
 # Notebooks
 
-A notebook in nothelix is a plain Julia file with explicit cell markers. This is
-the central design decision, and most of the workflow follows from it.
-
-## Why text, not JSON
-
-A `.ipynb` file is JSON with cells, metadata, and base64-encoded outputs all
-serialised together. The files are large, slow to parse, and hostile to version
-control. Opening a big one through the editor's plugin layer can stall the UI for
-seconds while the whole structure is parsed on the main thread.
-
-Nothelix sidesteps the format entirely, following Marimo's lead: a notebook is a
-decorated source file, with cell boundaries marked in the code itself. The cost
-shifts from "parse everything, always" to "parse once, then edit text." You get a
-file you can read, diff, and edit with ordinary modal motions, and the editor
-stops burning cycles re-parsing a bloated structure on every keystroke.
-
-## The cell format
-
-A converted notebook looks like this.
-
 ```julia
 @cell 0 :julia
 using Plots
@@ -40,70 +20,86 @@ y = x.^2
 plot(x, y)
 ```
 
-`@cell` marks a code cell; `@markdown` marks a prose cell whose body is written as
-comments. The number after each marker is the cell index. Because the markers are
-defined as no-op macros at the top of the file, a converted notebook is still a
-valid Julia program you can run with `julia notebook.jl` outside Helix entirely.
+Notebooks are plain `.jl` files with `@cell` markers: diffable, editable, runnable. See [Architecture](architecture.md) for why.
+
+- `@cell` marks a code cell.
+- `@markdown` marks a prose cell, written as comments.
+- The number is the cell index.
+- The markers are no-op macros, so the file still runs with `julia notebook.jl`.
 
 ## Opening an existing notebook
 
-A raw `.ipynb` is JSON and not directly editable, so convert it first.
+An `.ipynb` is JSON, so convert it first.
 
 ```
 hx examples/simple.ipynb
 ```
 
-Run `:convert-notebook`. Nothelix writes a `.jl` companion file and opens it in
-place. To push your edits back into the original `.ipynb` — for Jupyter, or for
-collaborators who expect that format — run `:sync-to-ipynb`. The sync reads the
-markers, extracts the updated source, and rewrites the JSON without disturbing the
-parts you did not touch.
+| Command | What it does |
+|---|---|
+| `:convert-notebook` | Write a `.jl` companion and open it in place |
+| `:sync-to-ipynb` | Push `.jl` edits back into the source `.ipynb` |
+
+`:sync-to-ipynb` rewrites only the cell source, leaving the rest of the JSON untouched.
 
 ## Starting from scratch
-
-You do not need an `.ipynb` to begin. The fastest path from nothing is one
-command.
 
 ```
 :new-notebook maths.jl
 ```
 
-That creates `maths.jl` from a one-cell template and opens it. From there, the
-notebook grows as you type.
+Creates `maths.jl` from a one-cell template and opens it. Grow it with autofill:
 
-- **Type `@cell` and press space.** A small popup asks whether you want a code
-  cell or a markdown cell. Pick one, and the plugin stamps the next cell index,
-  the file's language, and parks the cursor where you start typing. You never type
-  a number or `:julia` by hand.
-- **Type `@md` (or `@mark`, or `@markdown`) and press space.** Same idea, no
-  popup — markdown is unambiguous, so it expands directly.
-- **Press `<space>nn`** on an existing notebook to open that picker without typing
-  anything. Handy when you are at the bottom of a cell and want another one.
+| You type | You get |
+|---|---|
+| `@cell<space>` | Picker for code or markdown, then the marker stamped with the next index |
+| `@md<space>` (or `@mark`, `@markdown`) | A markdown cell, no picker |
+| `@<anything><space>` | The same picker, forgiving of typos like `@code` or `@c` |
+| `<space>nn` | Opens the picker with nothing typed |
 
-Any `@<word>` followed by a space on an otherwise-blank line opens the picker, so
-guesses and typos like `@code` or `@c` still give you something rather than
-nothing. You never have to remember the exact marker syntax.
+You never type a cell index or `:julia` by hand.
 
 ## Running cells
 
-| Command | What it runs |
+| Command | Key | What it runs |
+|---|---|---|
+| `:execute-cell` | `<space>nr` | The code cell under the cursor |
+| `:execute-all-cells` | | Every code cell, top to bottom |
+| `:execute-cells-above` | | Every cell from the top down to the cursor |
+| `:cancel-cell` | | Interrupts a running execution |
+
+- The first run is slow while Julia precompiles imports.
+- Later runs reuse the warm kernel; state persists between cells like a REPL.
+- Output appears inline below each cell as execution finishes.
+
+See [Rendering](rendering.md) for how figures and math reach the buffer.
+
+## Kernel persistence
+
+One kernel runs per notebook, keyed to the file path, not the buffer.
+
+- Close and reopen the file, or restart Helix: nothelix reattaches to the running kernel with all state intact.
+- State is lost only on `:kernel-shutdown`, `:kernel-shutdown-all`, or quitting Helix.
+
+## Per-project settings
+
+Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a notebook underneath.
+
+| Key | Effect | Default |
+|---|---|---|
+| `conceal-on-open` | Auto-conceal on open | `true` |
+| `math-font-pt`, `math-color` | Size and colour math images | |
+| `table-font-pt` | Size table images | |
+| `render-width` | Pin image width | |
+| `julia-bin`, `julia-project` | Pin the interpreter or environment for cells | PATH `julia` |
+
+`julia-bin` and `julia-project` execute code, so they take effect only after you trust the directory.
+
+| Command | What it does |
 |---|---|
-| `:execute-cell` (`<space>nr`) | The code cell under the cursor |
-| `:execute-all-cells` | Every code cell, top to bottom |
-| `:execute-cells-above` | Every code cell from the top down to the current one |
-| `:cancel-cell` | Interrupts a running execution |
-
-The first run is slow while Julia precompiles whatever you imported. Later runs
-reuse the warm kernel, and state persists between cells exactly as it would in a
-REPL — you do not re-import libraries or re-declare data on every run. As
-execution finishes, output appears inline below each cell. A computation prints
-its result; a plot renders in the terminal. See [Rendering](rendering.md) for how
-figures and math get into the buffer, and [Architecture](architecture.md#the-kernel-protocol)
-for how the kernel keeps state.
-
-One kernel runs per open document, living until you call `:kernel-shutdown`
-(`:kernel-shutdown-all` stops every running kernel). Quitting Helix stops them
-for you.
+| `:nothelix-trust-project` | Trust the directory; enables its pinned Julia |
+| `:nothelix-untrust-project` | Revoke trust |
+| `:nothelix-project-trust-status` | Show current trust state |
 
 ## Moving around
 
@@ -116,12 +112,8 @@ for you.
 | `:select-cell-code` | `<space>ni` | Select only the code |
 | `:select-output` | `<space>no` | Select the output block |
 
-## Tidy indices, automatically
+## Cell indices
 
-When you save, nothelix runs a quiet renumber pass that compacts cell indices to a
-contiguous `0, 1, 2, …`. Holes left by deleting or rearranging cells get cleaned
-up without you thinking about it. To trigger it yourself, `:renumber-cells` does
-the same on demand.
+On save, nothelix compacts cell indices to a contiguous `0, 1, 2, …`, cleaning holes from deleted or reordered cells. Run `:renumber-cells` to trigger it on demand.
 
-The full command and keybinding reference lives on the
-[commands](commands.md) page.
+The full command and keybinding reference lives on the [commands](commands.md) page.
