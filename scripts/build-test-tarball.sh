@@ -28,7 +28,6 @@ else
     cp "$HOME/projects/helix/target/release/hx" "$STAGING/bin/hx-nothelix"
 fi
 cp dist/nothelix "$STAGING/bin/nothelix"
-cp lsp/julia-lsp "$STAGING/bin/julia-lsp"
 chmod +x "$STAGING"/bin/*
 
 if [ -f "$HOME/.steel/native/libnothelix.dylib" ]; then
@@ -56,8 +55,6 @@ cp plugin/nothelix.scm "$STAGING/share/nothelix/plugin/"
 cp -R plugin/nothelix "$STAGING/share/nothelix/plugin/"
 
 cp examples/demo.jl "$STAGING/share/nothelix/examples/"
-
-cp lsp/Project.toml lsp/Manifest.toml "$STAGING/share/nothelix/lsp/"
 
 cp kernel/*.jl "$STAGING/share/nothelix/kernel-scripts/"
 

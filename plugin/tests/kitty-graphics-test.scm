@@ -1,6 +1,4 @@
-;;; Kitty Graphics Protocol Test
-;;; Tests terminal graphics rendering using the Kitty protocol.
-;;; Run with :scm (require "plugins/tests/kitty-graphics-test.scm")
+;;; kitty-graphics-test.scm — manual: render a red square via the Kitty protocol. Run: :scm (require "plugins/tests/kitty-graphics-test.scm")
 
 (require "nothelix/graphics.scm")
 (require "nothelix/string-utils.scm")
@@ -8,8 +6,6 @@
 (provide run-kitty-graphics-test
          test-kitty-red-square)
 
-;;; A minimal valid PNG (10x10 red square) encoded as base64.
-;;; This avoids external dependencies for testing.
 (define *test-png-red-10x10*
   "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADklEQVQY02P4z8DwHwUBABJIAfcWLqnCAAAAAElFTkSuQmCC")
 

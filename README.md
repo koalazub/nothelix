@@ -42,13 +42,18 @@ covers the full requirements, the `nothelix` CLI, and building from source.
 notebook is a decorated source file rather than JSON, and the whole workflow that
 follows: converting and syncing `.ipynb` files, scaffolding cells by typing
 `@cell` and pressing space, executing against a persistent Julia kernel, and the
-quiet renumber pass that keeps cell indices tidy.
+quiet renumber pass that keeps cell indices tidy. The kernel runs in the
+notebook's own directory, so relative paths to data files and includes resolve
+the way they would if you ran the script by hand.
 
 **[Rendering.](https://koalazub.github.io/nothelix/rendering)** How results get
 into the buffer. Inline `$ … $` math becomes Unicode as you read it; display
 `$$ … $$` blocks and Markdown tables render as properly typeset images; plots
-arrive inline through the terminal's graphics protocol. Includes the graphics
-matrix and the honest caveat about multiplexers stripping Kitty sequences.
+arrive inline through the terminal's graphics protocol. A plot's canvas is yours
+to resize in place — `:plot-grow` and `:plot-shrink`, bound to `=` and `-`, expand
+or contract the image block under the cursor and re-render without leaving the
+buffer. Includes the graphics matrix and the honest caveat about multiplexers
+stripping Kitty sequences.
 
 **[Export.](https://koalazub.github.io/nothelix/export)** Turning a notebook into
 something to hand over — Markdown, Typst, or a typeset PDF — and why the
@@ -57,8 +62,11 @@ LaTeX-to-Typst machinery drives both the in-buffer rendering and the export.
 
 **[Language server.](https://koalazub.github.io/nothelix/lsp)** Nothelix offers the
 LSP interface, not a built-in server: Helix already speaks the protocol, so you
-connect the Julia language server you prefer. The page covers both JETLS and
-LanguageServer.jl, and the two packages either needs to make sense of a notebook.
+connect the Julia language server you prefer — the page covers both JETLS and
+LanguageServer.jl. To make either one comfortable in a notebook, nothelix ships a
+small `NothelixMacros` stub so the `@cell` and `@markdown` markers resolve as real
+symbols instead of drawing "missing reference" noise on every cell header, and a
+statusline indicator reports which server is currently driving the buffer.
 
 **[Commands and keys.](https://koalazub.github.io/nothelix/commands)** The
 authoritative reference — every `:command`, every keybinding, and the autofill

@@ -1,11 +1,4 @@
 ;;; table-image.scm - Render markdown pipe tables as inline Typst images.
-;;;
-;;; A markdown table can't be aligned as inline overlay text — the fork's
-;;; overlay layer renders one grapheme per source char, so padding columns
-;;; is impossible and a multi-char box row degrades to tofu. Instead a table
-;;; is typeset by Typst into a transparent, theme-coloured image and placed
-;;; inline exactly like display math, reusing math-image.scm's placement
-;;; (kitty placeholder + RawContent), sizing, and theme-colour helpers.
 
 (require "string-utils.scm")
 (require "debug.scm")
@@ -15,26 +8,43 @@
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
 (require "helix/ext.scm")
+(require (prefix-in helix.static. "helix/static.scm"))
 
 (#%require-dylib "libnothelix"
-                 (only-in nothelix render-table-to-svg))
+                 (only-in nothelix
+                          render-table-to-svg
+                          start-render-table-batch
+                          poll-render-batch))
 
-(provide render-all-tables)
+(provide render-all-tables
+         set-table-image-font-pt!)
 
-;; Kitty placeholder ids must stay < 2^24; tables own the 4M band (paths
-;; use 1M, math 8M — see math-image.scm's *math-image-id-base* note).
+;; Tables own the 4M band (see math-image.scm bands note).
 (define *table-image-id-base* 4000000)
+(define *table-image-id-limit* (+ *table-image-id-base* 4000000))
+(define *table-render-mask-width* (box 240))
 
-;; Typst font size for table glyphs. Slightly smaller than display math so
-;; a wide table fits without dominating the buffer.
+(define (try-clear-table-image-band!)
+  (with-handler
+    (lambda (_) #false)
+    (eval `(helix.static.clear-raw-content-in-range!
+             ,*table-image-id-base* ,*table-image-id-limit*))))
+
+;; Bumped per render; a stale poll skips placement if a newer render started.
+(define *table-render-generation* (box 0))
+(define *table-poll-interval-ms* 60)
+(define *table-poll-max-attempts* 400)
+(define *table-batch-sep* (make-string 1 (integer->char 30)))
+
+(define (bump-table-render-generation!)
+  (set-box! *table-render-generation* (+ 1 (unbox *table-render-generation*)))
+  (unbox *table-render-generation*))
+
 (define *table-image-font-pt* (box 13))
+;; Display-config setter — project-config.scm applies this from .nothelix.scm.
+(define (set-table-image-font-pt! n) (set-box! *table-image-font-pt* n))
 
-;;; ---------------------------------------------------------------------------
-;;; Block detection
-;;; ---------------------------------------------------------------------------
-
-;; The `# `-stripped body of a comment line, or #false if line `idx` is not
-;; a `# ` comment line.
+;; Block detection
 (define (comment-body rope total idx)
   (and (>= idx 0) (< idx total)
        (let* ([s (text.rope->string (text.rope->line rope idx))]
@@ -44,16 +54,13 @@
          (and (string-starts-with? t "# ")
               (substring t 2 (string-length t))))))
 
-;; #true when `pred` holds for every element of `lst` (Steel has no andmap
-;; in this module's scope).
 (define (list-all? pred lst)
   (cond
     [(null? lst) #true]
     [(pred (car lst)) (list-all? pred (cdr lst))]
     [else #false]))
 
-;; #true when a table body line is the `|:--|--:|` rule: every cell is
-;; dashes/colons and at least one dash.
+;; #true when body is the |:--|--:| separator rule.
 (define (separator-body? body)
   (and (string-contains? body "|")
        (let ([cells (filter (lambda (c) (> (string-length (string-trim c)) 0))
@@ -68,10 +75,7 @@
                                     (string->list t)))))
                 cells)))))
 
-;; Every (anchor-line . block-text) for the buffer's markdown tables. A
-;; table is a run of consecutive `# | ... |` comment lines that includes a
-;; `|---|` separator row; block-text is the run joined with newlines, each
-;; line `# `-stripped (the shape render-table-to-svg parses).
+;; (anchor span block-text) for each markdown pipe table in the buffer.
 (define (collect-table-jobs rope total)
   (let loop ([idx 0] [acc '()])
     (if (>= idx total)
@@ -83,16 +87,19 @@
                   (if (and nb (string-contains? nb "|"))
                       (scan (+ end 1) (cons nb lines) (or saw-sep (separator-body? nb)))
                       (if (and saw-sep (> (length lines) 1))
-                          (loop end (cons (cons idx (string-join (reverse lines) "\n")) acc))
+                          (loop end (cons (list idx (length lines)
+                                                (string-join (reverse lines) "\n"))
+                                          acc))
                           (loop end acc)))))
               (loop (+ idx 1) acc))))))
 
-;;; ---------------------------------------------------------------------------
-;;; Rendering + placement
-;;; ---------------------------------------------------------------------------
+(define (table-job-anchor job) (car job))
+(define (table-job-span job) (cadr job))
+(define (table-job-text job) (caddr job))
 
-;; djb2, same algorithm as math-image.scm — a stable id keeps re-renders
-;; replacing in place rather than stacking duplicate RawContent entries.
+;; Rendering + placement
+
+;; djb2; same algorithm as math-image.scm.
 (define (table-hash s)
   (let loop ([i 0] [h 5381])
     (if (>= i (string-length s))
@@ -106,46 +113,83 @@
      (modulo (+ (table-hash (number->string anchor)) (table-hash block))
              4000000)))
 
-;; In test mode reuse math-image's mock JSON so detection + placement run
-;; without invoking Typst (which would garble captured test output).
 (define (call-render-table block font-pt color)
   (if (math-image-test-mode?)
       (math-image-mock-result)
       (render-table-to-svg block font-pt color)))
 
+(define (table-ceil-div a b) (if (<= b 0) a (quotient (+ a (max 0 (- b 1))) b)))
+
+(define (table-line-visible-length rope li total)
+  (if (< li total)
+      (let ([s (text.rope->string (text.rope->line rope li))])
+        (if (string-suffix? s "\n") (- (string-length s) 1) (string-length s)))
+      0))
+
+;; Screen rows a table run occupies once long cells soft-wrap at wrap-width, so
+;; the image's coverage matches the wrapped source extent instead of the raw
+;; document-line count (which leaves later rows leaking as `# | …` source).
+(define (table-visual-span rope anchor doc-span wrap-width)
+  (let ([total (text.rope-len-lines rope)])
+    (let loop ([i 0] [acc 0])
+      (if (>= i doc-span)
+          (max 1 acc)
+          (loop (+ i 1)
+                (+ acc (max 1 (table-ceil-div
+                                (table-line-visible-length rope (+ anchor i) total)
+                                wrap-width))))))))
+
 (define (place-table-job rope job result-json)
-  (define anchor (car job))
-  (place-svg-image-at-line! result-json
-                            (table-image-id anchor (cdr job))
-                            rope anchor "table-image"))
+  (place-svg-image-at-line!
+    result-json
+    (table-image-id (table-job-anchor job) (table-job-text job))
+    rope
+    (table-job-anchor job)
+    (table-visual-span rope (table-job-anchor job) (table-job-span job)
+                       (unbox *table-render-mask-width*))
+    "table-image"
+    #false
+    (unbox *table-render-mask-width*)))
 
 (define (table-count-phrase n)
   (string-append (number->string n) " table" (if (= n 1) "" "s")))
 
-;; Compile every table off the main thread (Typst is the heavy cost), then
-;; register the images back on the main thread so the editor stays live.
+;; Compile on a plain Rust thread (invisible to Steel GC, so no freeze); poll on main.
 (define (render-all-tables-async jobs doc-id)
   (define color (effective-math-text-color))
   (define font-pt (unbox *table-image-font-pt*))
+  (define blob (string-join (map table-job-text jobs) *table-batch-sep*))
+  (define my-gen (bump-table-render-generation!))
+  (set-box! *table-render-mask-width* (math-image-mask-width))
   (set-status! (string-append "table-image: rendering " (table-count-phrase (length jobs)) "…"))
-  (spawn-native-thread
-    (lambda ()
-      (define rendered
-        (map (lambda (job) (cons job (render-table-to-svg (cdr job) font-pt color))) jobs))
-      (hx.with-context
-        (lambda ()
-          (define rope (editor->text doc-id))
-          (let place ([rs rendered] [placed 0])
-            (if (null? rs)
-                (set-status! (string-append "table-image: rendered " (table-count-phrase placed)))
-                (place (cdr rs)
-                       (if (place-table-job rope (car (car rs)) (cdr (car rs)))
-                           (+ placed 1)
-                           placed)))))))))
+  (define job-id (start-render-table-batch blob font-pt color))
+  (poll-table-batch! job-id jobs doc-id my-gen 0))
+
+(define (poll-table-batch! job-id jobs doc-id my-gen attempts)
+  (when (= my-gen (unbox *table-render-generation*))
+    (define reply (poll-render-batch job-id))
+    (cond
+      [(string=? reply "PENDING")
+       (if (< attempts *table-poll-max-attempts*)
+           (enqueue-thread-local-callback-with-delay *table-poll-interval-ms*
+             (lambda () (poll-table-batch! job-id jobs doc-id my-gen (+ attempts 1))))
+           (set-status! "table-image: render timed out"))]
+      [(string-starts-with? reply "ERROR:")
+       (set-status! (string-append "table-image: " reply))]
+      [else
+       (define results (string-split reply *table-batch-sep*))
+       (define rope (editor->text doc-id))
+       (try-clear-table-image-band!)
+       (let place ([js jobs] [rs results] [placed 0])
+         (if (or (null? js) (null? rs))
+             (set-status! (string-append "table-image: rendered " (table-count-phrase placed)))
+             (place (cdr js) (cdr rs)
+                    (if (place-table-job rope (car js) (car rs))
+                        (+ placed 1)
+                        placed))))])))
 
 ;;@doc
-;; Scan the current buffer for every markdown pipe table and render each as
-;; a transparent Typst image inline. No-ops on non-conceal file types.
+;; Render every markdown pipe table in the buffer as an inline Typst image.
 (define (render-all-tables)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -154,12 +198,18 @@
     (define rope (editor->text doc-id))
     (define total (text.rope-len-lines rope))
     (define jobs (collect-table-jobs rope total))
-    (when (not (null? jobs))
-      (if (math-image-test-mode?)
-          (for-each
-            (lambda (job)
-              (place-table-job rope job
-                               (call-render-table (cdr job) (unbox *table-image-font-pt*)
-                                                  (effective-math-text-color))))
-            jobs)
-          (render-all-tables-async jobs doc-id)))))
+    (cond
+      [(null? jobs)
+       (bump-table-render-generation!)
+       (try-clear-table-image-band!)]
+      [(math-image-test-mode?)
+       (bump-table-render-generation!)
+       (try-clear-table-image-band!)
+       (for-each
+         (lambda (job)
+           (place-table-job rope job
+                            (call-render-table (table-job-text job) (unbox *table-image-font-pt*)
+                                               (effective-math-text-color))))
+         jobs)]
+      [else
+       (render-all-tables-async jobs doc-id)])))

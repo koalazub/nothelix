@@ -26,7 +26,6 @@ nothelix_uninstall() {
     local targets=(
         "$NOTHELIX_BIN/hx-nothelix"
         "$NOTHELIX_BIN/nothelix"
-        "$NOTHELIX_BIN/julia-lsp"
         "$STEEL_HOME/native/libnothelix.dylib"
         "$STEEL_HOME/native/libnothelix.so"
         "$STEEL_HOME/native/libnothelix.meta"

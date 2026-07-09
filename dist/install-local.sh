@@ -75,8 +75,7 @@ echo "nothelix install-local"
 # Binaries
 place_file "$TARBALL_DIR/bin/hx-nothelix" "$BIN_DIR/hx-nothelix"
 place_file "$TARBALL_DIR/bin/nothelix" "$BIN_DIR/nothelix"
-place_file "$TARBALL_DIR/bin/julia-lsp" "$BIN_DIR/julia-lsp"
-chmod +x "$BIN_DIR/hx-nothelix" "$BIN_DIR/nothelix" "$BIN_DIR/julia-lsp"
+chmod +x "$BIN_DIR/hx-nothelix" "$BIN_DIR/nothelix"
 
 # Dylib (detect .dylib vs .so)
 if [ -f "$TARBALL_DIR/lib/libnothelix.dylib" ]; then

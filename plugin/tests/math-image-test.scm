@@ -1,5 +1,4 @@
-;;; math-image-test.scm - Tests for the math-image JSON parser, block
-;;; detection helpers, and sizing logic.
+;;; math-image-test.scm — tests for the math-image JSON parser, block detection, and sizing.
 
 (require "test-framework.scm")
 (require "../nothelix/string-utils.scm")
@@ -7,9 +6,6 @@
 
 (provide run-math-image-tests)
 
-;; Helpers for building rope-like line lists. These tests bypass the Helix
-;; text API by passing in a list of strings and a small shim that mimics
-;; `text.rope->line`.
 (define (make-rope lines)
   (list->vector lines))
 
@@ -60,7 +56,6 @@
   (reset-test-counters!)
   (print-test-suite-header "Math image tests")
 
-  ;; JSON parser
   (assert-equal
     (list "PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjUwIj48L3N2Zz4=" 150 50 "")
     (parse-math-image-result
@@ -73,7 +68,14 @@
       "{\"b64\":\"\",\"width\":0,\"height\":0,\"error\":\"typst compile failed\"}")
     "parse-math-image-result handles empty b64 and error")
 
-  ;; Single-line block body
+  (let* ([big-b64 (make-string 50000 #\A)]
+         [json (string-append "{\"b64\":\"" big-b64
+                              "\",\"width\":1280,\"height\":640,\"error\":\"\"}")])
+    (assert-equal
+      (list big-b64 1280 640 "")
+      (parse-math-image-result json)
+      "parse-math-image-result handles a tens-of-KB base64 payload"))
+
   (assert-equal
     "x = 1"
     (single-line-block-body "$$ x = 1 $$")
@@ -89,7 +91,6 @@
     (single-line-block-body "# not math")
     "single-line-block-body rejects plain comment")
 
-  ;; Multi-line block detection
   (assert-equal
     (cons 1 (list "x = 1" "y = 2"))
     (test-find-block
@@ -110,14 +111,11 @@
       1)
     "find-display-math-block rejects unclosed block")
 
-  ;; Sizing: at default target rows 5 and aspect 2.0, a 160x80 image has
-  ;; rows = 5 and cols = max(10, floor(0.5 + 5 * 160/80 * 2.0)) = 20.
   (assert-equal
     (cons 5 20)
     (math-image-size 160 80 5 2.0)
     "math-image-size maps 160x80 to 5 rows x 20 cols")
 
-  ;; Image id stability
   (assert-equal
     (math-block-image-id 'doc-a 5 "x = 1")
     (math-block-image-id 'doc-a 5 "x = 1")

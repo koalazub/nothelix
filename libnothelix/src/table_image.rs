@@ -38,6 +38,16 @@ struct ParsedTable {
 /// Render a run of markdown table source lines (already stripped of any
 /// `# ` comment prefix) into a transparent table image. Returns the same
 /// JSON shape as `render_math_to_svg` (`b64`/`width`/`height`/`error`).
+/// Async sibling of `render_table_to_svg`: compile a `BATCH_SEP`-joined batch
+/// of tables on a plain Rust thread, returning a job id immediately. Poll for
+/// the results with `poll-render-batch` (shared with the math batch). Keeping
+/// the heavy compile off every Steel VM thread is what prevents the editor
+/// freezing — see `math_image::spawn_batch`.
+#[cfg(feature = "native")]
+pub fn start_render_table_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
+    crate::math_image::spawn_batch(blocks, font_size_pt, text_color, render_table_to_svg)
+}
+
 pub fn render_table_to_svg(block: String, font_size_pt: isize, text_color: String) -> String {
     let pt = font_size_pt.clamp(8, 96) as f64;
     let color = sanitize_hex_color(&text_color);
@@ -330,7 +340,10 @@ mod tests {
     fn renders_table_to_svg() {
         let json = render_table_to_svg(SAMPLE.to_string(), 14, "e8e8e8".to_string());
         assert!(json.contains("\"error\":\"\""), "typst error: {json}");
-        assert!(json.contains("\"b64\":\"PHN2Zy"), "expected svg payload: {json}");
+        assert!(
+            json.contains("\"b64\":\"PHN2Zy"),
+            "expected svg payload: {json}"
+        );
         assert!(!json.contains("\"width\":0"), "zero width: {json}");
     }
 

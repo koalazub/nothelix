@@ -1,8 +1,4 @@
-;;; common.scm - Shared helpers used across multiple nothelix modules
-;;;
-;;; Provides document accessors and cell marker predicates that are needed
-;;; by navigation, execution, and selection modules. Centralised here to
-;;; avoid duplication.
+;;; common.scm — Shared document accessors and cell-marker predicates
 
 (require "string-utils.scm")
 (require "helix/editor.scm")
@@ -14,11 +10,12 @@
          cell-marker?
          cell-marker-line?
          *plot-rows*
+         *plot-max-rows*
          *plot-cols*)
 
-;; Terminal cell grid for inline plots. Increase for bigger images.
-;; Override in init.scm: (set! *plot-rows* 24) (set! *plot-cols* 60)
+;; Terminal cell grid for inline plots. Override in init.scm via set!.
 (define *plot-rows* 12)
+(define *plot-max-rows* 60)
 (define *plot-cols* 40)
 
 ;;@doc
@@ -31,27 +28,15 @@
   (text.rope-char->line rope pos))
 
 ;;@doc
-;; Get the text content of a line by index.
-;; Returns an empty string if the index is out of bounds.
-;; (-> rope? integer? integer? string?)
+;; Get the text content of a line by index, or "" if out of bounds.
 (define (doc-get-line rope total-lines line-idx)
   (if (< line-idx total-lines)
       (text.rope->string (text.rope->line rope line-idx))
       ""))
 
 ;;@doc
-;; Return #true if `line-text` starts with a cell, markdown, raw, or
-;; typst marker.
-;; Also matches bare `@cell` / `@markdown` / `@raw` / `@typst` lines
-;; (no trailing space, no arguments), which users sometimes type
-;; before the autofill hook gets a chance to expand them — treating
-;; these as markers means cell extraction still terminates at the
-;; right line instead of dumping bare `@cell` into the Julia kernel
-;; and blowing up on a `MethodError: no method matching var"@cell"`.
-;; (-> string? boolean?)
+;; Return #true if line-text is (or starts with) an @cell / @markdown / @raw / @typst marker.
 (define (cell-marker? line-text)
-  ;; Rope-derived lines keep their trailing "\n", so bare markers must
-  ;; match both forms — same handling as cell-marker-line? below.
   (or (string=? line-text "@cell")
       (string=? line-text "@cell\n")
       (string=? line-text "@markdown")
@@ -66,16 +51,7 @@
       (string-starts-with? line-text "@typst ")))
 
 ;;@doc
-;; Return #true if the line at `line-idx` in the rope is a cell marker.
-;; Checks the prefix directly on the rope slice to avoid allocating a String
-;; per iteration — rope-starts-with? does the check without materialising the
-;; line contents.
-;;
-;; Handles the bare-marker case the same way `cell-marker?` does: a
-;; line whose entire content is `@cell` or `@markdown` (with nothing
-;; following) still counts as a marker, so extraction loops treat
-;; it as a boundary.
-;; (-> rope? integer? integer? boolean?)
+;; Return #true if the line at line-idx in the rope is a cell marker.
 (define (cell-marker-line? rope total-lines line-idx)
   (if (< line-idx total-lines)
       (let ([line (text.rope->line rope line-idx)])

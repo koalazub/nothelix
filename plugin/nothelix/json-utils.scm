@@ -1,16 +1,4 @@
-;;; json-utils.scm - Minimal JSON parsing helpers shared across modules
-;;;
-;;; conceal.scm parses a JSON array of `{"offset": N, "replacement": "X"}`
-;;; records produced by the Rust FFI. chart-viewer.scm parses a JSON array
-;;; of string literals produced by the chart renderer. Both need the same
-;;; low-level primitives: walk past whitespace, find a character,
-;;; decode a \-escaped string body, and count its on-the-wire length.
-;;; Those primitives live here so neither module ships its own copy.
-;;;
-;;; These helpers are deliberately small and allocation-free (they work on
-;;; the source string directly with position indices). None of them handle
-;;; the full JSON grammar — the inputs come from `serde_json::to_string`
-;;; in libnothelix, which produces predictable ASCII-only output.
+;;; json-utils.scm — Minimal JSON parsing helpers shared across modules
 
 (provide json-skip-whitespace
          json-find-char
@@ -20,9 +8,7 @@
          json-string-raw-length)
 
 ;;@doc
-;; Advance `start` past ASCII whitespace (space and tab).
-;; Returns the first non-whitespace position, or `(string-length str)` if
-;; the rest of the string is whitespace.
+;; Advance past ASCII whitespace; return the first non-whitespace position.
 (define (json-skip-whitespace str start)
   (let loop ([i start])
     (cond
@@ -43,8 +29,7 @@
       [else (loop (+ i 1))])))
 
 ;;@doc
-;; Return the first position `>= start` where a non-digit (and non-minus)
-;; character appears. Used to read the end of a JSON integer literal.
+;; Return the first position >= start where a non-digit (non-minus) char appears.
 (define (json-find-non-digit str start)
   (let loop ([i start])
     (cond
@@ -56,9 +41,7 @@
       [else i])))
 
 ;;@doc
-;; Given a position `start` that points JUST past an opening `"`, return
-;; the position of the closing `"`, skipping over `\-escaped characters.
-;; Returns `#false` if no closing quote is found.
+;; From a position just past an opening quote, return the closing quote position, or #false.
 (define (json-find-string-end str start)
   (let loop ([i start])
     (cond
@@ -68,10 +51,7 @@
       [else (loop (+ i 1))])))
 
 ;;@doc
-;; Given a position `start` that points JUST past an opening `"`, decode
-;; the string body up to the closing quote and return it.
-;; `\x` escapes drop the backslash and keep the following character,
-;; which is sufficient for the ASCII payloads we produce in Rust.
+;; From a position just past an opening quote, decode the string body up to the closing quote.
 (define (json-extract-string str start)
   (let loop ([i start] [chars '()])
     (cond
@@ -84,10 +64,7 @@
       [else (loop (+ i 1) (cons (string-ref str i) chars))])))
 
 ;;@doc
-;; Count the raw (on-the-wire) length of a JSON string from position
-;; `start` up to (but not including) the closing quote. Used when the
-;; caller needs to know how far to advance in the source text after
-;; extracting the decoded content.
+;; Count the raw on-the-wire length of a JSON string body up to the closing quote.
 (define (json-string-raw-length str start)
   (let loop ([i start] [len 0])
     (cond

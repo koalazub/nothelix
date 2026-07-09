@@ -22,8 +22,6 @@ setup() {
     chmod +x "$TARBALL_SRC/bin/hx-nothelix"
     cp "$BATS_TEST_DIRNAME/../../dist/nothelix" "$TARBALL_SRC/bin/nothelix"
     chmod +x "$TARBALL_SRC/bin/nothelix"
-    echo "#!/bin/bash" > "$TARBALL_SRC/bin/julia-lsp"
-    chmod +x "$TARBALL_SRC/bin/julia-lsp"
 
     echo "fake" > "$TARBALL_SRC/lib/libnothelix.dylib"
     echo "BUILD_ID=ci-test-00000000" > "$TARBALL_SRC/lib/libnothelix.meta"

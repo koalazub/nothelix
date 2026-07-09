@@ -1,11 +1,4 @@
-;;; string-utils.scm - String manipulation and JSON parsing utilities
-;;;
-;;; The simple predicates/trimmers delegate to Steel's native `steel/strings`
-;;; builtins — those live in the global prelude (the plugin already calls
-;;; `make-string`/`substring` bare), so they're available at module load
-;;; time independent of the libnothelix FFI dylib. The JSON scanners below
-;;; stay hand-rolled; for heavy JSON work the Rust FFI functions `json-get`,
-;;; `json-get-bool`, and `json-get-first-image` should be preferred.
+;;; string-utils.scm — String manipulation and JSON parsing utilities
 
 (provide string-trim
          string-starts-with?
@@ -57,16 +50,10 @@
             result
             (loop (cdr rest) (string-append result sep (car rest)))))))
 
-;; Split string by delimiter
 (define (string-split str delim)
   (if (or (not str) (equal? str ""))
       '()
-      (let loop ([s str] [result '()])
-        (let ([pos (string-find s delim 0)])
-          (if (not pos)
-              (reverse (cons s result))
-              (loop (substring s (+ pos (string-length delim)) (string-length s))
-                    (cons (substring s 0 pos) result)))))))
+      (split-many str delim)))
 
 (define (char->number c)
   (cond
@@ -82,12 +69,8 @@
     [(eqv? c #\9) 9]
     [else #f]))
 
-;; NOTE: `string->number` is intentionally NOT defined here. Steel's
-;; native `string->number` handles negatives, floats, rationals and
-;; radices; a hand-rolled integer-only shadow used to live here and
-;; silently broke negative/float parsing (e.g. chart-viewer coordinates)
-;; for every module that requires this file. `char->number` below stays
-;; — picker.scm uses it for single-digit cell jumps.
+;; Don't shadow Steel's native string->number: an integer-only shadow
+;; breaks negative/float parsing. char->number stays (picker.scm uses it).
 
 (define (string-replace-all str old new)
   (define old-len (string-length old))
@@ -101,20 +84,16 @@
             (loop (replace-at-pos s pos) (+ pos (string-length new)))
             (loop s (+ pos 1))))))
 
-;; Find the end of a JSON string, properly handling escape sequences
-;; Returns the index of the closing quote, or #f if not found
 (define (find-json-string-end str start)
   (let loop ([pos start])
     (cond
       [(>= pos (string-length str)) #f]
       [(eqv? (string-ref str pos) #\\)
-       ;; Escape sequence - skip the next character
        (loop (+ pos 2))]
       [(eqv? (string-ref str pos) #\")
-       pos]  ; Found unescaped closing quote
+       pos]
       [else (loop (+ pos 1))])))
 
-;; Decode JSON escape sequences in a string
 (define (json-decode-string str)
   (let loop ([chars (string->list str)] [acc '()])
     (cond
@@ -128,7 +107,7 @@
            [(eqv? next #\r) #\return]
            [(eqv? next #\\) #\\]
            [(eqv? next #\") #\"]
-           [else next]))  ; Unknown escape, keep as-is
+           [else next]))
        (loop (cddr chars) (cons decoded acc))]
       [else (loop (cdr chars) (cons (car chars) acc))])))
 
@@ -142,7 +121,6 @@
              [trimmed (string-trim-left rest)])
         (cond
           [(string-starts-with? trimmed "\"")
-           ;; Find end quote properly (skip escaped quotes)
            (define end-quote (find-json-string-end trimmed 1))
            (if end-quote
                (json-decode-string (substring trimmed 1 end-quote))
@@ -156,34 +134,22 @@
                               (string-length trimmed)))
            (string-trim (substring trimmed 0 end-pos))]))))
 
-;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Error Message Utilities
-;;; ─────────────────────────────────────────────────────────────────────────────
+;; Error message utilities
 
-;; Truncate a string to a maximum length, adding "..." if truncated
 (define (truncate-string str max-len)
   (if (or (not (string? str)) (<= (string-length str) max-len))
       str
       (string-append (substring str 0 (- max-len 3)) "...")))
 
-;; Sanitise an error message for safe display in the status bar
-;; - Removes/replaces control characters and escape sequences
-;; - Removes newlines (replaces with space)
-;; - Truncates to reasonable length
-;; - Extracts key error info from JSON if present
 (define (sanitise-error-message msg)
   (if (not (string? msg))
       "Unknown error"
-      (let* (;; Try to extract just the error message from JSON
-             [error-text (or (json-get-string msg "error") msg)]
-             ;; Replace newlines and escape sequences with spaces
+      (let* ([error-text (or (json-get-string msg "error") msg)]
              [clean1 (string-replace-all error-text "\\n" " ")]
              [clean2 (string-replace-all clean1 "\n" " ")]
              [clean3 (string-replace-all clean2 "\\r" "")]
              [clean4 (string-replace-all clean3 "\r" "")]
              [clean5 (string-replace-all clean4 "\\t" " ")]
              [clean6 (string-replace-all clean5 "\t" " ")]
-             ;; Remove excessive whitespace
              [trimmed (string-trim clean6)])
-        ;; Truncate to status bar friendly length
         (truncate-string trimmed 120))))

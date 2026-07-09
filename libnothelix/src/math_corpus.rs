@@ -186,7 +186,7 @@ pub const CORPUS: &[(&str, &str)] = &[
     ),
     (
         "math_font_variants",
-        "\\mathsf{A} + \\mathtt{b} + \\mathscr{L} + \\bm{v}",
+        "\\mathsf{A} + \\mathtt{b} + \\mathcal{L} + \\bm{v}",
     ),
     (
         "arrow_relations",

@@ -1,8 +1,4 @@
-;;; markdown-render.scm - In-buffer markdown rendering for @markdown cells.
-;;;
-;;; Hides markdown markers and styles their content via theme scopes, riding
-;;; the conceal cache + cursor-reveal. Marker hiding flows through
-;;; set-overlays!; styling through the fork's set-style-overlays!.
+;;; markdown-render.scm — In-buffer markdown rendering for @markdown cells
 
 (require "conceal.scm")
 (require "common.scm")
@@ -18,7 +14,7 @@
 
 (define *md-cache* (box #false))
 
-;; Deferred so the plugin still loads on an older hx without the binding.
+;; Deferred so the plugin loads on an older hx lacking set-style-overlays!.
 (define (try-set-style-overlays! spans)
   (with-handler
     (lambda (_) #false)

@@ -1,14 +1,4 @@
-;;; backslash.scm - Julia backslash-to-unicode symbol completion
-;;;
-;;; Type `\alpha` then press Tab to insert α, `\in` → ∈, `\pi` → π, etc.
-;;; The symbol table is the same one used by the Julia REPL and Pluto.jl
-;;; (extracted from Julia stdlib/REPL/src/latex_symbols.jl, ~2544 entries).
-;;;
-;;; Binding: Tab in insert mode for .jl files calls `julia-tab-complete`.
-;;; If the text immediately before the cursor ends with `\<name>` and `<name>`
-;;; is a known Julia symbol, the entire `\<name>` span is replaced with the
-;;; corresponding Unicode character.  Otherwise Tab falls through to normal
-;;; indentation.
+;;; backslash.scm — Julia backslash-to-unicode symbol completion
 
 (require "helix/editor.scm")
 (require "helix/misc.scm")
@@ -26,11 +16,10 @@
          unicode-lookup
          unicode-completions-for-prefix)
 
-;; ─── Text helpers ─────────────────────────────────────────────────────────────
+;; Text helpers
 
 ;;@doc
-;; Return the text from the start of the current line up to (not including)
-;; the cursor position, as a plain string.
+;; Return the text from line start up to the cursor as a string.
 (define (line-text-before-cursor)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -41,28 +30,17 @@
   (text.rope->string (text.rope->slice rope line-start pos)))
 
 ;;@doc
-;; Scan backwards through STR looking for the last backslash followed by a
-;; valid Julia symbol name.  Returns the name (without the backslash) if found
-;; at the very end of STR, or #false otherwise.
-;;
-;; Valid name characters: letters, digits, ^, _, -, /
-;; (Covers regular names like "alpha", superscripts like "^2", subscripts
-;; like "_beta", and fraction shorthands like "1/2".)
+;; Return the Julia symbol name after the last backslash at the end of str, or #false.
 (define (extract-backslash-word str)
   (define len (string-length str))
   (let loop ([i (- len 1)])
     (cond
-      ;; Ran off the left end without finding a backslash — no match.
       [(< i 0) #false]
-
-      ;; Found the backslash — everything to its right is the candidate name.
       [(char=? (string-ref str i) #\\)
        (define word (substring str (+ i 1) len))
        (if (= (string-length word) 0)
            #false
            word)]
-
-       ;; Keep scanning left if this is a valid symbol-name character.
        [(let ([c (string-ref str i)])
           (or (and (char>=? c #\a) (char<=? c #\z))
               (and (char>=? c #\A) (char<=? c #\Z))
@@ -72,35 +50,20 @@
               (char=? c #\-)
               (char=? c #\/)))
         (loop (- i 1))]
-
-      ;; Any other character (space, paren, operator…) — stop, no match.
       [else #false])))
 
-;; ─── Completion command ───────────────────────────────────────────────────────
+;; Completion command
 
 ;;@doc
-;; Bound to Tab in insert mode for .jl files.
-;;
-;; Checks whether the text immediately before the cursor ends with `\<name>`.
-;; If `<name>` is a known Julia LaTeX symbol, replaces `\<name>` with the
-;; corresponding Unicode character and stays in insert mode.
-;; Falls through to normal tab insertion when there is no match.
+;; Bound to Tab in insert mode for .jl files: expand \<name> to its unicode char, else insert a tab.
 (define (julia-tab-complete)
   (define before (line-text-before-cursor))
   (define word (extract-backslash-word before))
   (if (not word)
-      ;; Nothing that looks like \name before the cursor.
       (helix.static.insert_tab)
       (let ([unicode (unicode-lookup word)])
         (if (= (string-length unicode) 0)
-            ;; Name not in the symbol table.
             (helix.static.insert_tab)
-            ;; Replace \<name> with the unicode character.
-            ;;
-            ;; `before` runs from column 0 to the cursor.  The backslash is at
-            ;; column  (- before-len word-len 1)  and the cursor is at column
-            ;; before-len.  We move the cursor back to the backslash column,
-            ;; then extend the selection forward to the cursor, then replace.
             (let* ([before-len (string-length before)]
                    [word-len   (string-length word)]
                    [bs-col     (- before-len word-len 1)]
@@ -108,16 +71,4 @@
               (helix.goto-column bs-col)
               (helix.goto-column cur-col #true)
               (helix.static.replace-selection-with unicode)
-              ;; The replacement removed `word-len` chars and added some
-              ;; from `unicode` at the same position — every char offset
-              ;; after this point has shifted, so the conceal cache is
-              ;; stale. Without a reconceal, cached overlays on
-              ;; downstream lines end up targeting the wrong characters
-              ;; (previous symptoms: `# \(c\)` rendered with the
-              ;; backslashes hidden at byte positions that no longer
-              ;; held backslashes, producing weirdly wrapped lines
-              ;; like `# (c\n) Before…` until the cursor visited that
-              ;; cell and forced a fresh compute). Schedule a debounced
-              ;; reconceal so the cache catches up immediately after
-              ;; the expansion.
               (schedule-reconceal 50))))))

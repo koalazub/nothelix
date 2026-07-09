@@ -1,14 +1,8 @@
 ;;; math-image.scm - Render LaTeX display math as inline SVG images.
-;;;
-;;; Uses Typst to typeset the math and the Kitty Unicode placeholder
-;;; protocol to embed the resulting image inside the Helix buffer. SVG
-;;; export keeps math resolution-independent; the Kitty payload path
-;;; rasterizes at display time so scaling is not tied to a guessed PPI.
 
 (require "common.scm")
 (require "debug.scm")
 (require "string-utils.scm")
-(require "json-utils.scm")
 (require "image-cache.scm")
 (require "conceal.scm")
 (require "helix/editor.scm")
@@ -22,8 +16,11 @@
                  (only-in nothelix
                           getenv
                           render-math-to-svg
-                          render-math-batch
+                          start-render-batch
+                          poll-render-batch
                           math-image-grid
+                          math-block-latex-batch
+                          reserve-math-lines
                           kitty-placeholder-payload
                           kitty-placeholder-rows))
 
@@ -47,81 +44,39 @@
          line-in-ranges?
          math-image-size
          math-block-image-id
-         place-svg-image-at-line!)
+         place-svg-image-at-line!
+         math-image-mask-width
+         set-math-image-font-pt!
+         set-math-image-color!
+         set-math-image-width-override!)
 
-;;; ---------------------------------------------------------------------------
-;;; Configuration
-;;; ---------------------------------------------------------------------------
-
-;; Upper bound on the height of a rendered display-math image in terminal
-;; rows. The actual row count scales with the equation's true height (see
-;; the `math-image-grid` FFI / libnothelix math_image::math_image_grid);
-;; this just caps a very tall equation so it can't eat the whole screen.
-;; A `$$` block is the author emphasising a formula, so the cap is
-;; generous — a multi-line derivation gets room to render large.
+;; Configuration
 (define *math-image-target-rows* (box 18))
-
-;; Typst font size in points passed to the Rust renderer. This sets the
-;; intrinsic SVG size; on-screen size is governed by the placeholder grid.
 (define *math-image-font-pt* (box 14))
-
-;; Fallback hex colour (no #) for the rendered equation glyphs, used when
-;; theme detection is off or the active theme's ui.text isn't a plain RGB
-;; colour. Light grey reads on dark themes; set a dark hex for light ones.
 (define *math-image-text-color* (box "e8e8e8"))
-
-;; When #true, colour the glyphs with the active theme's `ui.text` (the
-;; exact colour Helix draws normal text in) so the equation matches the
-;; editor — light glyphs on a dark theme, dark on a light theme — without
-;; any manual tuning. Falls back to *math-image-text-color* on failure.
 (define *math-image-auto-color* (box #true))
-
-;; Assumed terminal cell aspect ratio (cell-height / cell-width). Used
-;; to map the SVG's intrinsic aspect ratio to terminal columns.
 (define *math-image-cell-aspect* (box 2.0))
-
-;; Points of equation height that map to one terminal row. Smaller values
-;; render math larger (more rows per equation) — and since `cols` tracks
-;; `rows`, lowering this is a uniform zoom that keeps the aspect ratio.
-;; `$$` display math is meant to stand out, so this is tuned so a single
-;; line renders ~3 rows tall (front-and-centre emphasis) rather than the
-;; cramped ~2 a literal font-size mapping would give.
 (define *math-image-pt-per-row* (box 7.0))
-
-;; When #true, a display-math image is horizontally centered in the
-;; focused view so an emphasized formula sits front-and-centre rather
-;; than cramped against the left margin — matching how LaTeX, Pluto and
-;; Jupyter present display math. Set #false to keep it left-aligned.
 (define *math-image-center* (box #true))
+(define *math-image-side-margin* (box 4))
+;; #false = derive render width from the view; a positive number pins it
+;; (set from a project's .nothelix.scm via set-math-image-width-override!).
+(define *math-image-width-override* (box #false))
 
-;;; ---------------------------------------------------------------------------
-;;; State
-;;; ---------------------------------------------------------------------------
-
-;; Map from doc-id to a hash of rendered math-block ids. Each block is
-;; keyed by its anchor line index so re-renders replace in place rather
-;; than stacking duplicates.
+;; State
 (define *math-image-registry* (hash))
 
-;; Kitty placeholder image ids must stay < 2^24 — the fork carries the id
-;; in a 24-bit foreground colour (document.rs id_24 = raw.id & 0xFFFFFF),
-;; so any id above 16,777,215 references a never-transmitted image and the
-;; cells render blank. Disjoint bands under that ceiling: plots 1000+,
-;; paths 1M, tables 4M, math 8M.
+;; Ids must stay < 2^24; bands: plots 1000+, paths 1M, tables 4M, math 8M.
 (define *math-image-id-base* 8000000)
+(define *math-image-id-limit* (+ *math-image-id-base* 8000000))
 
-;;; ---------------------------------------------------------------------------
-;;; Test mode
-;;; ---------------------------------------------------------------------------
+(define (try-clear-math-image-band!)
+  (with-handler
+    (lambda (_) #false)
+    (eval `(helix.static.clear-raw-content-in-range!
+             ,*math-image-id-base* ,*math-image-id-limit*))))
 
-;; When #true, image rendering is mocked: Typst is not invoked and no
-;; Kitty/RawContent payload is emitted. This lets the test suite exercise
-;; the full detection/sizing pipeline without garbling the terminal with
-;; binary image data.
-;;
-;; Test mode is auto-enabled when the NOTHELIX_TEST environment variable
-;; is set at plugin load time, and can be toggled at runtime with
-;; `set-math-image-test-mode!` (used by `:run-all-tests`).
+;; Test mode
 (define *math-image-test-mode* (box (not (string=? "" (getenv "NOTHELIX_TEST")))))
 
 (define (math-image-test-mode?)
@@ -133,51 +88,28 @@
 (define (set-math-image-test-mode! val)
   (set-box! *math-image-test-mode* val))
 
-;; Mock JSON emitted by render-math-to-svg in test mode. Uses a 160x80
-;; rectangle so the sizing math is still exercised.
+;; Mock SVG JSON (160x80 rect) for test mode.
 (define *math-image-test-result*
   "{\"b64\":\"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCAxNjAgODAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIGZpbGw9IndoaXRlIi8+PC9zdmc+\",\"width\":160,\"height\":80,\"error\":\"\"}")
 
-;;; ---------------------------------------------------------------------------
-;;; JSON result parsing
-;;; ---------------------------------------------------------------------------
+;; JSON result parsing
 
-;; Parse the JSON object emitted by render-math-to-svg:
-;;   {"b64":"...","width":W,"height":H,"error":""}
-;; Returns a list (b64 width height error) or #false on parse failure.
 (define (parse-math-image-result json)
   (with-handler
     (lambda (_) #false)
-    (let* ([b64-start (json-find-char json #\" 0)]
-           [_ (unless b64-start (error "no b64 key"))]
-           [b64-quote (+ b64-start 6)]
-           [b64-end (json-find-string-end json (+ b64-quote 1))]
-           [b64 (json-extract-string json (+ b64-quote 1))]
-           [width-start (json-find-char json #\: (+ b64-end 1))]
-           [width-end (json-find-non-digit json (+ width-start 1))]
-           [width (string->number (substring json (+ width-start 1) width-end))]
-           [height-start (json-find-char json #\: width-end)]
-           [height-end (json-find-non-digit json (+ height-start 1))]
-           [height (string->number (substring json (+ height-start 1) height-end))]
-           [err-start (json-find-char json #\" height-end)]
-           [err-quote (+ err-start 8)]
-           [err-end (json-find-string-end json (+ err-quote 1))]
-           [err (json-extract-string json (+ err-quote 1))])
-      (list b64 width height err))))
+    (let* ([after-key (cadr (split-once json "\"b64\":\""))]
+           [b64+rest  (split-once after-key "\",\"width\":")]
+           [b64       (car b64+rest)]
+           [w+rest    (split-once (cadr b64+rest) ",\"height\":")]
+           [width     (string->number (car w+rest))]
+           [h+rest    (split-once (cadr w+rest) ",\"error\":\"")]
+           [height    (string->number (car h+rest))]
+           [err       (car (split-once (cadr h+rest) "\"}"))])
+      (and b64 width height (list b64 width height err)))))
 
-;;; ---------------------------------------------------------------------------
-;;; Sizing
-;;; ---------------------------------------------------------------------------
+;; Sizing
 
-;; Compute terminal (rows . cols) for a display-math image. The
-;; deterministic computation — rows scale with the equation's true
-;; height, cols chosen so the on-screen aspect ratio matches the SVG —
-;; lives in tested Rust (libnothelix math_image::math_image_grid, exposed
-;; as `math-image-grid`). This is a thin wrapper that passes the
-;; runtime-tunable config through and parses the `"rows,cols"` reply.
-;; cell-aspect / pt-per-row cross the dylib FFI as strings (the Steel
-;; dylib boundary has no float-argument marshaller); the Rust side parses
-;; them back to f64.
+;; Wraps Rust math-image-grid; floats cross the dylib FFI as strings.
 (define (math-image-size width height max-rows aspect)
   (define reply (math-image-grid width height max-rows
                                  (number->string aspect)
@@ -185,13 +117,8 @@
   (define parts (string-split reply ","))
   (if (= (length parts) 2)
       (cons (string->number (car parts)) (string->number (cadr parts)))
-      ;; Defensive: a malformed reply falls back to a minimum readable grid
-      ;; rather than crashing the render path.
       (cons 2 10)))
 
-;; Columns to shift a `cols`-wide image so it sits centered in the
-;; focused view. Zero when centering is off, the view area is
-;; unavailable, or the image is already as wide as the view.
 (define (math-image-center-offset cols)
   (if (unbox *math-image-center*)
       (let ([area (editor-focused-buffer-area)])
@@ -200,44 +127,54 @@
             0))
       0))
 
-;; Left-pad every placeholder row by `offset` blank cells. The fork
-;; draws each row starting at the anchor's column (the line's left edge
-;; for a `# $$` block), so leading spaces shift the whole image right
-;; without moving the buffer anchor — that's what centers it.
-(define (math-image-indent-rows placeholder-rows offset)
-  (if (<= offset 0)
-      placeholder-rows
-      (let ([pad (make-string offset #\space)])
-        (string-join
-          (map (lambda (row) (string-append pad row))
-               (string-split placeholder-rows "\n"))
-          "\n"))))
+(define (math-image-mask-width)
+  (let ([override (unbox *math-image-width-override*)])
+    (if (and override (> override 0))
+        override
+        (let ([area (editor-focused-buffer-area)])
+          (if area (max 1 (area-width area)) 240)))))
 
-;;; ---------------------------------------------------------------------------
-;;; Block detection
-;;; ---------------------------------------------------------------------------
+;; Display-config setters — project-config.scm applies these from .nothelix.scm.
+(define (set-math-image-font-pt! n) (set-box! *math-image-font-pt* n))
+(define (set-math-image-color! hex)
+  ;; honour an explicit colour by turning off theme auto-derivation.
+  (set-box! *math-image-text-color* hex)
+  (set-box! *math-image-auto-color* #false))
+(define (set-math-image-width-override! n) (set-box! *math-image-width-override* n))
 
-;; Extract the inner content of a single-line `# $$ ... $$` comment,
-;; or #false if the line is not a single-line display math block.
+(define (n-copies n x)
+  (if (<= n 0) '() (cons x (n-copies (- n 1) x))))
+
+;; Must be real spaces; an empty string paints nothing and the source bleeds through.
+(define (math-image-blank-row width)
+  (make-string (max 1 width) #\space))
+
+(define (math-image-extend-row row len width)
+  (if (>= len width)
+      row
+      (string-append row (make-string (- width len) #\space))))
+
+;; Block detection
 (define (single-line-block-body body)
   (and (string-starts-with? body "$$")
        (string-suffix? body "$$")
        (> (string-length body) 4)
        (string-trim (substring body 2 (- (string-length body) 2)))))
 
-;; List of (open-line . close-line) for every display-math block in the
-;; buffer — multi-line `# $$ ... # $$` and single-line `# $$ x $$`
-;; (close = open). The other renderers (inline conceal, stacked rows)
-;; consult this to leave these lines to the image renderer.
+;; Body after a Julia "# " marker, or #false. A bare "#" is an empty body.
+(define (md-comment-body line)
+  (let ([t (if (string-suffix? line "\n")
+               (substring line 0 (- (string-length line) 1))
+               line)])
+    (cond
+      [(string=? t "#") ""]
+      [(string-starts-with? t "# ") (substring t 2 (string-length t))]
+      [else #false])))
+
 (define (display-math-block-ranges rope total-lines)
   (define (line-body idx)
     (and (>= idx 0) (< idx total-lines)
-         (let* ([s (text.rope->string (text.rope->line rope idx))]
-                [t (if (string-suffix? s "\n")
-                       (substring s 0 (- (string-length s) 1))
-                       s)])
-           (and (string-starts-with? t "# ")
-                (substring t 2 (string-length t))))))
+         (md-comment-body (text.rope->string (text.rope->line rope idx)))))
   (define (find-close idx)
     (let scan ([j (+ idx 1)])
       (cond
@@ -266,59 +203,42 @@
     [(let ([r (car ranges)]) (and (>= line (car r)) (<= line (cdr r)))) #true]
     [else (line-in-ranges? line (cdr ranges))]))
 
-;; Find the display math block surrounding `line-idx`. Returns a pair
-;; (anchor-line . content-lines) or #false.  Only scans Julia comment
-;; lines (# ...) because .jl notebooks carry markdown cells as comments.
+;; (anchor close . content-lines) for the block around line-idx, or #false.
 (define (find-display-math-block rope total-lines line-idx)
-  (define (line-content idx)
+  (define (body idx)
     (and (>= idx 0) (< idx total-lines)
-         (let ([s (text.rope->string (text.rope->line rope idx))])
-           (if (string-suffix? s "\n")
-               (substring s 0 (- (string-length s) 1))
-               s))))
-  (define (comment-body s)
-    (and (string-starts-with? s "# ")
-         (substring s 2 (string-length s))))
+         (md-comment-body (text.rope->string (text.rope->line rope idx)))))
 
-  ;; Walk up to find the nearest "# $$" opener.
   (let search-up ([idx line-idx])
     (cond
       [(< idx 0) #false]
       [else
-       (define raw (line-content idx))
-       (define body (comment-body raw))
+       (define b (body idx))
        (cond
-         [(equal? body "$$")
-          (collect-block rope total-lines idx line-content comment-body)]
-         [(single-line-block-body body)
+         [(equal? b "$$")
+          (collect-block rope total-lines idx body)]
+         [(single-line-block-body b)
           => (lambda (inner)
-               (cons idx (list inner)))]
-         [body (search-up (- idx 1))]
+               (cons idx (cons idx (list inner))))]
+         [b (search-up (- idx 1))]
          [else #false])])))
 
-(define (collect-block rope total-lines opener-line line-content comment-body)
+(define (collect-block rope total-lines opener-line body)
   (define content-lines '())
   (let search-down ([idx (+ opener-line 1)])
     (cond
       [(>= idx total-lines) #false]
       [else
-       (define raw (line-content idx))
-       (define body (comment-body raw))
+       (define b (body idx))
        (cond
-         [(equal? body "$$")
-          (cons opener-line (reverse content-lines))]
-         [body
-          (set! content-lines (cons body content-lines))
+         [(equal? b "$$")
+          (cons opener-line (cons idx (reverse content-lines)))]
+         [b
+          (set! content-lines (cons b content-lines))
           (search-down (+ idx 1))]
          [else #false])])))
 
-;;; ---------------------------------------------------------------------------
-;;; FFI wrappers (mockable in test mode)
-;;; ---------------------------------------------------------------------------
-
-;; Wrapper around render-math-to-svg. In test mode returns a deterministic
-;; mock result so the sizing path is exercised without invoking Typst.
-;; Format a 0-255 channel as two lowercase hex digits.
+;; FFI wrappers (mockable in test mode)
 (define *hex-digits* "0123456789abcdef")
 (define (byte->hex2 n)
   (let ([v (max 0 (min 255 n))])
@@ -326,8 +246,6 @@
       (make-string 1 (string-ref *hex-digits* (quotient v 16)))
       (make-string 1 (string-ref *hex-digits* (modulo v 16))))))
 
-;; "rrggbb" for a Color, or #false unless it's a plain RGB colour
-;; (Color-red/green/blue yield #false for named/indexed colours).
 (define (color->hex color)
   (let ([r (and color (Color-red color))]
         [g (and color (Color-green color))]
@@ -357,9 +275,6 @@
                (* 114 (hex2->byte (substring hex 4 6))))
             1000))
 
-;; ui.text when it's a plain RGB colour; otherwise a glyph colour chosen to
-;; contrast with ui.background's luminance, so a light theme renders dark
-;; glyphs instead of the near-white default that washes out on cream.
 (define (effective-math-text-color)
   (cond
     [(not (unbox *math-image-auto-color*)) (unbox *math-image-text-color*)]
@@ -376,9 +291,6 @@
       *math-image-test-result*
       (render-math-to-svg latex font-pt (effective-math-text-color))))
 
-;; Wrapper around the fork's RawContent registration. In test mode we
-;; skip the actual terminal payload entirely, which prevents binary Kitty
-;; graphics data from polluting captured test output.
 (define (call-add-raw-content-with-placeholders! payload rows cols placeholder-rows char-idx)
   (if (math-image-test-mode?)
       (begin
@@ -391,11 +303,9 @@
         (helix.static.add-raw-content-with-placeholders! payload rows cols placeholder-rows char-idx)
         #true)))
 
-;;; ---------------------------------------------------------------------------
-;;; Rendering a single block
-;;; ---------------------------------------------------------------------------
+;; Rendering a single block
 
-;; djb2 hash used for the block id.  Same algorithm as image-cache.scm.
+;; djb2; same algorithm as image-cache.scm / table-image.scm.
 (define (math-block-hash s)
   (let loop ([i 0] [h 5381])
     (if (>= i (string-length s))
@@ -404,14 +314,14 @@
               (modulo (+ (* h 33) (char->integer (string-ref s i)))
                       2147483647)))))
 
-;; Stable image id for a math block at `anchor-line` in `doc-id`.
 (define (math-block-image-id doc-id anchor-line latex)
   (+ *math-image-id-base*
      (modulo (+ (math-block-hash (number->string anchor-line))
                 (math-block-hash latex))
              8000000)))
 
-(define (place-svg-image-at-line! result-json image-id rope anchor-line label)
+;; Place a rendered SVG over exactly the block's source span (block-line-count = close-open+1).
+(define (place-svg-image-at-line! result-json image-id rope anchor-line block-line-count label center? mask-width-override)
   (define result (parse-math-image-result result-json))
   (cond
     [(not result)
@@ -425,10 +335,26 @@
      (define width (list-ref result 1))
      (define height (list-ref result 2))
      (define size (math-image-size width height (unbox *math-image-target-rows*) (unbox *math-image-cell-aspect*)))
-     (define rows (car size))
-     (define cols (cdr size))
+     (define natural-rows (car size))
+     (define base-cols (cdr size))
+     (define span (max 1 block-line-count))
+     (define span-rows (max 1 (min natural-rows span)))
+     ;; Scale cols with the clamped rows to preserve aspect ratio.
+     (define span-cols
+       (if (< span-rows natural-rows)
+           (max 1 (quotient (+ (* base-cols span-rows) (quotient natural-rows 2))
+                            natural-rows))
+           base-cols))
+     (define mask-width (if mask-width-override mask-width-override (math-image-mask-width)))
+     (define avail-cols (max 1 (- mask-width (unbox *math-image-side-margin*))))
+     (define over-wide? (> span-cols avail-cols))
+     (define cols (if over-wide? avail-cols span-cols))
+     (define image-rows
+       (if over-wide?
+           (max 1 (quotient (+ (* span-rows avail-cols) (quotient span-cols 2)) span-cols))
+           span-rows))
      (define payload (kitty-placeholder-payload b64 image-id))
-     (define placeholder-rows (kitty-placeholder-rows image-id cols rows))
+     (define placeholder-rows (kitty-placeholder-rows image-id cols image-rows))
 
      (cond
        [(string-starts-with? payload "ERROR:")
@@ -439,31 +365,49 @@
         #false]
        [else
          (define char-idx (text.rope-line->char rope anchor-line))
-         (define offset (math-image-center-offset cols))
-         (define centered-rows (math-image-indent-rows placeholder-rows offset))
-         (call-add-raw-content-with-placeholders! payload rows cols centered-rows char-idx)
+         (define offset (if center? (math-image-center-offset cols) 0))
+         (define image-row-width (+ offset cols))
+         (define image-lines
+           (map (lambda (row)
+                  (math-image-extend-row
+                    (string-append (make-string offset #\space) row)
+                    image-row-width
+                    mask-width))
+                (string-split placeholder-rows "\n")))
+         (define pad-count (max 0 (- span image-rows)))
+         (define pad-lines (n-copies pad-count (math-image-blank-row mask-width)))
+         (define all-rows (string-join (append image-lines pad-lines) "\n"))
+         (call-add-raw-content-with-placeholders! payload span cols all-rows char-idx)
          (debug-log
            (string-append label ": registered id=" (number->string image-id)
                           " anchor=" (number->string anchor-line)
-                          " rows=" (number->string rows)
+                          " span=" (number->string span)
+                          " image-rows=" (number->string image-rows)
                           " cols=" (number->string cols)
                           " offset=" (number->string offset)))
          #true])]))
 
-;; Render a display math block and register it as RawContent. Returns
-;; #true on success, #false on failure.
-(define (render-display-math-block rope total-lines anchor-line content-lines)
+(define (render-display-math-block rope total-lines anchor-line close-line content-lines)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define latex (string-join content-lines "\n"))
   (define image-id (math-block-image-id doc-id anchor-line latex))
+  (define block-line-count (+ 1 (- close-line anchor-line)))
   (define result-json (call-render-math-to-svg latex (unbox *math-image-font-pt*)))
-  (place-svg-image-at-line! result-json image-id rope anchor-line "math-image"))
+  (place-svg-image-at-line! result-json image-id rope anchor-line block-line-count "math-image" #true #false))
 
 ;; Record-separator delimiter framing the batch FFI (matches Rust BATCH_SEP).
 (define *math-batch-sep* (make-string 1 (integer->char 30)))
 
-;; MAIN THREAD: every (anchor-line . latex) for the buffer's display math.
+;; Bumped per render; a stale in-flight poll skips placement if it no longer matches.
+(define *math-render-generation* (box 0))
+(define *math-poll-interval-ms* 60)
+(define *math-poll-max-attempts* 400)
+
+(define (bump-math-render-generation!)
+  (set-box! *math-render-generation* (+ 1 (unbox *math-render-generation*)))
+  (unbox *math-render-generation*))
+
 (define (collect-math-jobs rope total-lines)
   (let loop ([ranges (display-math-block-ranges rope total-lines)] [acc '()])
     (if (null? ranges)
@@ -471,47 +415,94 @@
         (let ([block (find-display-math-block rope total-lines (car (car ranges)))])
           (loop (cdr ranges)
                 (if block
-                    (cons (cons (car block) (string-join (cdr block) "\n")) acc)
+                    (cons (list (car block) (cadr block) (string-join (cddr block) "\n")) acc)
                     acc))))))
 
-;; MAIN THREAD: place one already-rendered block.
+(define (job-anchor job) (car job))
+(define (job-close job) (cadr job))
+(define (job-latex job) (caddr job))
+
 (define (place-math-job rope doc-id job result-json)
-  (define anchor (car job))
-  (define image-id (math-block-image-id doc-id anchor (cdr job)))
-  (place-svg-image-at-line! result-json image-id rope anchor "math-image"))
+  (define anchor (job-anchor job))
+  (define image-id (math-block-image-id doc-id anchor (job-latex job)))
+  (define block-line-count (+ 1 (- (job-close job) anchor)))
+  (place-svg-image-at-line! result-json image-id rope anchor block-line-count "math-image" #true #false))
 
 (define (block-count-phrase n)
   (string-append (number->string n) " block" (if (= n 1) "" "s")))
 
-;; Compile every block on a background thread (Typst runs in parallel via
-;; render-math-batch), then register the images back on the main thread, so
-;; the editor stays live while a notebook's equations rasterise.
-(define (render-display-math-async jobs doc-id)
+(define (result->natural-rows result-json)
+  (define result (parse-math-image-result result-json))
+  (if (and result (= (string-length (list-ref result 3)) 0))
+      (car (math-image-size (list-ref result 1) (list-ref result 2)
+                            (unbox *math-image-target-rows*)
+                            (unbox *math-image-cell-aspect*)))
+      0))
+
+(define (build-reservation-spec results)
+  (string-join (map (lambda (r) (number->string (result->natural-rows r))) results) ","))
+
+(define (reserve-buffer-math-lines! doc-id reserved)
+  (define rope (editor->text doc-id))
+  (define doc-len (text.rope-len-chars rope))
+  (define r (helix.static.range 0 doc-len))
+  (define sel (helix.static.range->selection r))
+  (helix.static.set-current-selection-object! sel)
+  (helix.static.replace-selection-with reserved)
+  (helix.static.collapse_selection)
+  (helix.static.commit-changes-to-history)
+  (schedule-reconceal 50))
+
+(define (render-display-math-async blob current-text doc-id)
   (define color (effective-math-text-color))
   (define font-pt (unbox *math-image-font-pt*))
-  (define blob (string-join (map cdr jobs) *math-batch-sep*))
-  (set-status! (string-append "math-image: rendering " (block-count-phrase (length jobs)) "…"))
-  (spawn-native-thread
-    (lambda ()
-      (define results (string-split (render-math-batch blob font-pt color) *math-batch-sep*))
-      (hx.with-context
-        (lambda ()
-          (define rope (editor->text doc-id))
-          (let place ([js jobs] [rs results] [placed 0])
-            (if (or (null? js) (null? rs))
-                (set-status! (string-append "math-image: rendered " (block-count-phrase placed)))
-                (place (cdr js) (cdr rs)
-                       (if (place-math-job rope doc-id (car js) (car rs))
-                           (+ placed 1)
-                           placed)))))))))
+  (define block-count (length (string-split blob *math-batch-sep*)))
+  (define my-gen (bump-math-render-generation!))
+  (set-status! (string-append "math-image: rendering " (block-count-phrase block-count) "…"))
+  (define job-id (start-render-batch blob font-pt color))
+  (poll-math-batch! job-id current-text doc-id block-count my-gen 0))
 
-;;; ---------------------------------------------------------------------------
-;;; Public commands
-;;; ---------------------------------------------------------------------------
+(define (place-results-over-blocks rope doc-id results)
+  (define total (text.rope-len-lines rope))
+  (define jobs (collect-math-jobs rope total))
+  (try-clear-math-image-band!)
+  (let place ([js jobs] [rs results] [placed 0])
+    (if (or (null? js) (null? rs))
+        (set-status! (string-append "math-image: rendered " (block-count-phrase placed)))
+        (place (cdr js) (cdr rs)
+               (if (place-math-job rope doc-id (car js) (car rs))
+                   (+ placed 1)
+                   placed)))))
+
+(define (poll-math-batch! job-id current-text doc-id block-count my-gen attempts)
+  (when (= my-gen (unbox *math-render-generation*))
+    (define reply (poll-render-batch job-id))
+    (cond
+      [(string=? reply "PENDING")
+       (if (< attempts *math-poll-max-attempts*)
+           (enqueue-thread-local-callback-with-delay *math-poll-interval-ms*
+             (lambda () (poll-math-batch! job-id current-text doc-id block-count my-gen (+ attempts 1))))
+           (set-status! "math-image: render timed out"))]
+      [(string-starts-with? reply "ERROR:")
+       (set-status! (string-append "math-image: " reply))]
+      [else
+       (define results (string-split reply *math-batch-sep*))
+       (define live-text (text.rope->string (editor->text doc-id)))
+       (cond
+         [(not (equal? live-text current-text))
+          (set-status! "math-image: buffer changed during render — re-run")]
+         [(not (= (length results) block-count))
+          (set-status! "math-image: render count mismatch")]
+         [else
+          (define reserved (reserve-math-lines current-text (build-reservation-spec results)))
+          (when (not (equal? reserved current-text))
+            (reserve-buffer-math-lines! doc-id reserved))
+          (place-results-over-blocks (editor->text doc-id) doc-id results)])])))
+
+;; Public commands
 
 ;;@doc
-;; Render the display math block under the cursor as a Typst-typeset
-;; SVG image.
+;; Render the display math block under the cursor as a Typst SVG image.
 (define (render-math-at-cursor)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -524,45 +515,53 @@
      (set-status! "math-image: cursor is not inside a # $$ ... # $$ display math block")]
     [else
      (define anchor-line (car block))
-     (define content-lines (cdr block))
-     (if (render-display-math-block rope total-lines anchor-line content-lines)
+     (define close-line (cadr block))
+     (define content-lines (cddr block))
+     (if (render-display-math-block rope total-lines anchor-line close-line content-lines)
          (set-status! "math-image: rendered display math")
          (set-status! "math-image: render failed (see log)"))]))
 
+(define (render-display-math-test-mode rope doc-id)
+  (define jobs (collect-math-jobs rope (text.rope-len-lines rope)))
+  (bump-math-render-generation!)
+  (try-clear-math-image-band!)
+  (cond
+    [(null? jobs)
+     (set-status! "math-image: no display math to render")]
+    [else
+     (for-each
+       (lambda (job)
+         (place-math-job rope doc-id job
+                         (call-render-math-to-svg (job-latex job) (unbox *math-image-font-pt*))))
+       jobs)
+     (set-status! (string-append "math-image: rendered " (block-count-phrase (length jobs))))]))
+
 ;;@doc
-;; Scan the current buffer for every `# $$ ... # $$` display math block
-;; and render each one as an image. Only runs on files that may contain
-;; LaTeX math (md/tex/jl/typ etc.) to avoid pointless scans of huge
-;; source files.
+;; Render every `# $$ ... # $$` display math block in the buffer as an image.
 (define (render-all-display-math)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
+  (define rope (editor->text doc-id))
   (cond
     [(not (file-has-conceal-extension? path))
      (set-status! "math-image: not a math-enabled file type")]
+    [(math-image-test-mode?)
+     (render-display-math-test-mode rope doc-id)]
     [else
-     (define rope (editor->text doc-id))
-     (define total-lines (text.rope-len-lines rope))
-     (define jobs (collect-math-jobs rope total-lines))
+     (define current-text (text.rope->string rope))
+     (define blob (math-block-latex-batch current-text))
      (cond
-       [(null? jobs)
+       [(= (string-length blob) 0)
+        (bump-math-render-generation!)
+        (try-clear-math-image-band!)
         (set-status! "math-image: no display math to render")]
-       ;; Test mode renders synchronously so suites stay deterministic; the
-       ;; mock FFI returns instantly and never touches a real thread.
-       [(math-image-test-mode?)
-        (for-each
-          (lambda (job)
-            (place-math-job rope doc-id job
-                            (call-render-math-to-svg (cdr job) (unbox *math-image-font-pt*))))
-          jobs)
-        (set-status! (string-append "math-image: rendered " (block-count-phrase (length jobs))))]
        [else
-        (render-display-math-async jobs doc-id)])]))
+        (render-display-math-async blob current-text doc-id)])]))
 
 ;;@doc
-;; Remove all math-image RawContent entries from the current view.
-;; Best-effort: requires the fork's clear-raw-content! binding.
+;; Remove math-image RawContent from the view, leaving plot and table images intact.
 (define (clear-math-images)
-  (maybe-clear-raw-content!)
+  (bump-math-render-generation!)
+  (try-clear-math-image-band!)
   (set-status! "math-image: cleared"))

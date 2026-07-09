@@ -1,19 +1,4 @@
-;;; conceal-state.scm - Versioned conceal overlay state
-;;;
-;;; The conceal overlay cache stores char offsets that are only valid for a
-;;; specific document snapshot. Any mutation (typing, execute-cell inserting
-;;; output, sync-to-ipynb reloading) shifts those offsets and the cached
-;;; overlays become lies. Applying stale overlays replaces random characters
-;;; in the buffer — this is the "numerically" → "numeially" bug.
-;;;
-;;; This module owns the conceal cache and enforces a single rule:
-;;;   overlays are only ever applied when their recorded document fingerprint
-;;;   matches the current document's fingerprint.
-;;;
-;;; The fingerprint is (doc-id, char-count). Char count changes on every
-;;; insertion or deletion, which is the only way math regions can move.
-;;; Within-line replacement doesn't move math region boundaries, so char
-;;; count is a sufficient proxy for "did the overlays stay valid?".
+;;; conceal-state.scm - Versioned conceal overlay cache; overlays apply only when the (doc-id, char-count) fingerprint still matches.
 
 (require "helix/editor.scm")
 (require "helix/misc.scm")
@@ -28,16 +13,13 @@
          conceal-fingerprint-matches?
          conceal-cache-empty?)
 
-;; Internal cache record. We use a mutable hash rather than a struct so the
-;; module stays small and we don't pay for a new struct definition per update.
 (define *conceal-cache*
   (hash 'overlays '()
         'doc-id #false
         'doc-len 0))
 
 ;;@doc
-;; Record a freshly-computed overlay list as the current cache, tagged with
-;; the current document's fingerprint.
+;; Record overlays as the current cache, tagged with the doc fingerprint.
 (define (conceal-cache-update! doc-id overlays)
   (define rope (editor->text doc-id))
   (define fp-len (if rope (text.rope-len-chars rope) 0))

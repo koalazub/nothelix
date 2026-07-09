@@ -1,7 +1,6 @@
 #!/usr/bin/env steel
 
-;; Diagnostic Tests for Nothelix
-;; Run with: :scm (require "plugins/tests/diagnostic-tests.scm")
+;;; diagnostic-tests.scm — manual: probe FFI/Steel bindings, kernel dir, JSON parsing, threads, and graphics. Run: :scm (require "plugins/tests/diagnostic-tests.scm")
 
 (require "plugins/nothelix.scm")
 
@@ -9,7 +8,6 @@
 (displayln "=== NOTHELIX DIAGNOSTIC TESTS ===")
 (displayln "")
 
-;; Test 1: Check Rust FFI functions are available
 (displayln "Test 1: Checking Rust FFI bindings...")
 (define test-count 0)
 (define pass-count 0)
@@ -22,7 +20,6 @@
         (displayln (string-append "  ✓ " name)))
       (displayln (string-append "  ✗ " name))))
 
-;; Test Rust functions exist
 (test "detect-graphics-protocol exists" (procedure? detect-graphics-protocol))
 (test "kernel-execute-start exists" (procedure? kernel-execute-start))
 (test "kernel-execution-status exists" (procedure? kernel-execution-status))
@@ -32,7 +29,6 @@
 
 (displayln "")
 
-;; Test 2: Check Steel builtins we rely on
 (displayln "Test 2: Checking Steel builtins...")
 (test "spawn-native-thread exists" (procedure? spawn-native-thread))
 (test "hx.with-context exists"
@@ -45,7 +41,6 @@
 
 (displayln "")
 
-;; Test 3: Protocol detection
 (displayln "Test 3: Testing protocol detection...")
 (define protocol (detect-graphics-protocol))
 (displayln (string-append "  Detected protocol: " protocol))
@@ -57,7 +52,6 @@
 
 (displayln "")
 
-;; Test 4: Kernel directory check
 (displayln "Test 4: Checking kernel directory...")
 (define kernel-dir "/tmp/helix-kernel-1")
 (define (file-exists? path)
@@ -74,7 +68,6 @@
 
 (displayln "")
 
-;; Test 5: Kernel execution status
 (displayln "Test 5: Testing kernel execution status...")
 (define status-json (kernel-execution-status kernel-dir))
 (displayln (string-append "  Status JSON: " status-json))
@@ -87,7 +80,6 @@
 
 (displayln "")
 
-;; Test 6: Read kernel output
 (displayln "Test 6: Testing kernel output reading...")
 (define output-json (read-kernel-output kernel-dir))
 (displayln (string-append "  Output JSON (first 200 chars): "
@@ -101,7 +93,6 @@
 
 (displayln "")
 
-;; Test 7: JSON parsing
 (displayln "Test 7: Testing JSON parsing...")
 (define test-json "{\"status\":\"done\",\"text\":\"hello\",\"has_image\":false}")
 (define parsed-status (json-get-string test-json "status"))
@@ -113,7 +104,6 @@
 
 (displayln "")
 
-;; Test 8: Background thread support
 (displayln "Test 8: Testing background thread support...")
 (define thread-test-passed #f)
 (with-handler
@@ -123,14 +113,12 @@
     (lambda ()
       (helix.run-shell-command "sleep 0.1")
       (set! thread-test-passed #t)))
-  ;; Wait a bit
   (helix.run-shell-command "sleep 0.2")
   #t)
 (test "Background thread executed" thread-test-passed)
 
 (displayln "")
 
-;; Test 9: Context callback support
 (displayln "Test 9: Testing hx.with-context...")
 (define context-test-passed #f)
 (with-handler
@@ -144,18 +132,15 @@
 
 (displayln "")
 
-;; Test 10: Async execution simulation
 (displayln "Test 10: Testing async execution flow...")
 (define async-status-check #f)
 (with-handler
   (lambda (e)
     (displayln (string-append "  ERROR in async test: " (error-object-message e))))
-  ;; Simulate what execute-cell does
   (define start-result (kernel-execute-start kernel-dir "println(\"test\")"))
   (displayln (string-append "  Start result: " start-result))
   (test "Execute start succeeded" (not (string-starts-with? start-result "ERROR:")))
 
-  ;; Poll for status
   (helix.run-shell-command "sleep 0.5")
   (define poll-status-json (kernel-execution-status kernel-dir))
   (displayln (string-append "  Poll status JSON: " poll-status-json))
@@ -172,30 +157,24 @@
     (displayln (string-append "✗ " (number->string (- test-count pass-count)) " TESTS FAILED")))
 (displayln "")
 
-;; Test 11: Graphics rendering pipeline
 (displayln "Test 11: Testing graphics rendering pipeline...")
 
-;; Minimal 1x1 red PNG as base64 (from Rust tests)
 (define test-png-b64 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNg+M8AAAQAAQE=")
 
-;; Test protocol detection for current terminal
 (define detected-protocol (detect-graphics-protocol))
 (displayln (string-append "  Detected protocol: " detected-protocol))
 (test "Protocol detected" (not (equal? detected-protocol "none")))
 
-;; Test escape sequence generation
 (define escape-seq (render-b64-for-protocol test-png-b64 detected-protocol 999))
 (displayln (string-append "  Escape sequence length: " (number->string (string-length escape-seq))))
 
 (test "Escape sequence not error" (not (string-starts-with? escape-seq "ERROR:")))
 
-;; Check escape sequence format based on protocol
 (cond
   [(equal? detected-protocol "kitty")
    (displayln "  Checking Kitty protocol format...")
    (test "Starts with ESC_G" (string-starts-with? escape-seq "\x1b_G"))
    (displayln (string-append "    First 80 chars: " (substring escape-seq 0 (min 80 (string-length escape-seq)))))
-   ;; Note: Can't easily check end due to escape chars in Steel
    ]
   [(equal? detected-protocol "iterm2")
    (displayln "  Checking iTerm2 protocol format...")
@@ -206,5 +185,4 @@
 
 (displayln "")
 
-;; Return test results
 (list pass-count test-count)

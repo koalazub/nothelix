@@ -1,10 +1,4 @@
-;;; string-utils-test.scm - Tests for the native-backed string helpers.
-;;;
-;;; string-trim / string-starts-with? / string-suffix? now delegate to
-;;; Steel's native `steel/strings` builtins (trim / starts-with? /
-;;; ends-with?). These assertions pin the edge cases the old hand-rolled
-;;; loops guarded — non-string input, and a prefix/suffix longer than the
-;;; subject string — so a regression surfaces in `:run-all-nothelix-tests`.
+;;; string-utils-test.scm — tests for the native-backed string helpers, pinning their edge cases.
 
 (require "test-framework.scm")
 (require "../nothelix/string-utils.scm")
@@ -33,4 +27,30 @@
   (assert-true (string-contains? "abcdef" "cde") "contains? positive")
   (assert-false (string-contains? "abcdef" "xyz") "contains? negative")
 
+  (assert-equal '() (string-split "" ",") "split empty -> '()")
+  (assert-equal '() (string-split #false ",") "split non-string -> '()")
+  (assert-equal (list "abc") (string-split "abc" ",") "split no-match -> one piece")
+  (assert-equal (list "a" "b" "c") (string-split "a,b,c" ",") "split basic")
+  (assert-equal (list "a" "" "b") (string-split "a,,b" ",") "split keeps empty field")
+  (assert-equal (list "a" "") (string-split "a," ",") "split trailing delim")
+  (assert-equal (list "" "a") (string-split ",a" ",") "split leading delim")
+  (assert-equal (list "a" "b" "") (string-split "a\nb\n" "\n") "split on newline")
+
+  (let* ([rs (make-string 1 (integer->char 30))]
+         [seg (make-string 120 #\x)]
+         [reply (build-rs-batch 200 seg rs)]
+         [parts (string-split reply rs)])
+    (assert-equal 200 (length parts) "split RS-batch -> all pieces")
+    (assert-equal seg (car parts) "split RS-batch first piece intact")
+    (assert-equal seg (list-ref parts 199) "split RS-batch last piece intact"))
+
   (print-test-suite-footer "string-utils"))
+
+(define (build-rs-batch n seg sep)
+  (define (pieces k acc) (if (<= k 0) acc (pieces (- k 1) (cons seg acc))))
+  (apply string-append
+         (let loop ([ps (pieces n '())] [out '()] [first #true])
+           (cond
+             [(null? ps) (reverse out)]
+             [first (loop (cdr ps) (cons (car ps) out) #false)]
+             [else (loop (cdr ps) (cons (car ps) (cons sep out)) #false)]))))

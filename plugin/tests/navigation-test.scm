@@ -1,7 +1,6 @@
 #!/usr/bin/env steel
 
-;; Cell Navigation Test
-;; Run with: :scm (require "plugins/tests/navigation-test.scm")
+;;; navigation-test.scm — manual: scan the open buffer for @cell/@markdown markers and exercise next/previous-cell. Run: :scm (require "plugins/tests/navigation-test.scm")
 
 (require "plugins/nothelix.scm")
 

@@ -1,11 +1,4 @@
-;;; math-render.scm - Stack big-operator limits and fraction bodies onto
-;;; virtual rows above/below the source line, via the fork's
-;;; set-math-lines-{above,below}! FFI.
-;;;
-;;; The LaTeX parsing that used to live in this file moved to the Rust
-;;; `parse-math-spans` FFI, which returns a JSON list of structural
-;;; spans. This module now iterates that list and stages padded virtual
-;;; lines — it does no string walking of its own.
+;;; math-render.scm - Stack big-operator limits and fraction bodies onto virtual rows above/below the source line.
 
 (require "common.scm")
 (require "string-utils.scm")
@@ -25,11 +18,6 @@
 (provide math-render-buffer
          math-render-clear)
 
-;; Probe + graceful-degrade wrappers over the fork FFI. When the user is
-;; on an older `hx` binary without the Phase-2 math-lines bindings, we
-;; must NOT flip `*math-render-active*` (it would tell the concealer to
-;; hide inline `\frac` without anything replacing it). `probe` tests
-;; once per call, returning #t if the FFI is reachable.
 (define (try-set-math-lines-above! line-idx lines)
   (with-handler
     (lambda (_) #false)
@@ -51,30 +39,18 @@
     (eval '(helix.static.clear-all-math-lines!))
     #true))
 
-;; Right-pad (or build from scratch) a string of length `n` using
-;; spaces. Used to place the stacked limit strings under the concealed
-;; operator column.
 (define (spaces n)
   (if (<= n 0) "" (make-string n #\space)))
 
-;; Parse one line of the TSV emitted by `parse-math-spans`. Returns a
-;; list of field strings, or '() on a blank line.
-;;
-;; Format per row:
-;;   big_op\tCMD\tSTART\tEND\tCOL\tSUB\tSUP
-;;   frac\tCMD\tSTART\tEND\tCOL\tNUM\tDEN
-;;
-;; Rust side escapes `\\` / `\t` / `\n` inside the last two fields; we
-;; unescape after the split so arbitrary sub/sup contents survive.
+;; Parse one TSV row from parse-math-spans into field strings, or '() on a blank line.
+;; Format: KIND\tCMD\tSTART\tEND\tCOL\t{SUB|NUM}\t{SUP|DEN}
 (define (parse-math-span-row row)
   (if (= (string-length row) 0)
       '()
       (map unescape-field (string-split row "\t"))))
 
 (define (unescape-field s)
-  ;; Minimal string-based unescape. `string-replace-all` from string-utils
-  ;; operates on substrings — the order matters (backslash last) since
-  ;; we don't want to un-escape a `\\t` into a literal tab.
+  ;; Order matters: backslash last, so a "\\t" doesn't become a literal tab.
   (let* ([step1 (string-replace-all s "\\n" "\n")]
          [step2 (string-replace-all step1 "\\t" "\t")])
     (string-replace-all step2 "\\\\" "\\")))
@@ -103,10 +79,7 @@
        [else '()])]))
 
 ;;@doc
-;; Scan every comment line in the buffer, parse it with the Rust
-;; `parse-math-spans` FFI, and stage the resulting above/below strings
-;; via the fork's math-line FFI. Guarded: if the fork FFI isn't
-;; available we surface a status note and leave the concealer alone.
+;; Stage big-operator/fraction above/below rows for every comment line in the buffer.
 (define (math-render-buffer)
   (cond
     [(not (math-render-ffi-available?))
@@ -130,8 +103,6 @@
         (if (string-suffix? line "\n")
             (substring line 0 (- (string-length line) 1))
             line))
-      ;; Only scan comment lines, and never inside a `# $$` display block —
-      ;; those belong to the image renderer.
       (when (and (string-starts-with? trimmed "# ")
                  (not (line-in-ranges? line-idx display-ranges)))
         (define content (substring trimmed 2 (string-length trimmed)))
@@ -150,8 +121,6 @@
         (stage-merged line-idx entries))
       (loop (+ line-idx 1)))))
 
-;; Merge all per-line contributions into one pair of above/below lists
-;; and hand them to the FFI in one call each.
 (define (stage-merged line-idx entries)
   (define above-lines '())
   (define below-lines '())
@@ -168,19 +137,12 @@
     (try-set-math-lines-below! line-idx (reverse below-lines))))
 
 ;;@doc
-;; Drop every math annotation on the current document — used when the
-;; user wants to revert to raw inline rendering.
+;; Drop every math annotation on the current document.
 (define (math-render-clear)
   (try-clear-all-math-lines!)
   (set-box! *math-render-active* #false))
 
-;; Install the refresh hook so `conceal-math!` (debounced at 400ms via
-;; schedule-reconceal) restages annotations against the current buffer.
-;; Without this, adding or removing a line leaves math annotations
-;; pinned at stale absolute line indices, and the buffer visibly
-;; drifted as virtual rows appeared at wrong positions. Idempotent:
-;; conceal.scm starts with a no-op; this swap replaces it with the
-;; real restager.
+;; Install the refresh hook so the conceal cycle restages annotations.
 (set-box! *math-render-refresh-hook*
           (lambda ()
             (when (math-render-ffi-available?)

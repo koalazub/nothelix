@@ -329,8 +329,14 @@ mod tests {
                     && o["replacement"].as_str().unwrap().is_empty()
             })
         };
-        assert!(hidden(open_brace), "opening `{{` should be hidden:\n{arr:#?}");
-        assert!(hidden(close_brace), "closing `}}` should be hidden:\n{arr:#?}");
+        assert!(
+            hidden(open_brace),
+            "opening `{{` should be hidden:\n{arr:#?}"
+        );
+        assert!(
+            hidden(close_brace),
+            "closing `}}` should be hidden:\n{arr:#?}"
+        );
         let replacements: Vec<&str> = arr
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
@@ -355,13 +361,22 @@ mod tests {
                     && o["replacement"].as_str().unwrap().is_empty()
             })
         };
-        assert!(hidden(open_brace), "opening `{{` should be hidden:\n{arr:#?}");
-        assert!(hidden(close_brace), "closing `}}` should be hidden:\n{arr:#?}");
+        assert!(
+            hidden(open_brace),
+            "opening `{{` should be hidden:\n{arr:#?}"
+        );
+        assert!(
+            hidden(close_brace),
+            "closing `}}` should be hidden:\n{arr:#?}"
+        );
         let replacements: Vec<&str> = arr
             .iter()
             .map(|o| o["replacement"].as_str().unwrap())
             .collect();
-        assert!(replacements.contains(&"ℝ"), "expected ℝ, got {replacements:?}");
+        assert!(
+            replacements.contains(&"ℝ"),
+            "expected ℝ, got {replacements:?}"
+        );
     }
 
     #[test]

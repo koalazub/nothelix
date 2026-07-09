@@ -1,12 +1,4 @@
-;;; conceal.scm - LaTeX math symbol concealment for Helix
-;;;
-;;; Renders LaTeX commands as their Unicode equivalents without modifying
-;;; the buffer. Uses Helix's overlay system to replace displayed characters.
-;;;
-;;; For example: `$\kappa(A)$` displays as `κ(A)` while the buffer
-;;; text remains unchanged.
-;;;
-;;; Works on any file with inline LaTeX math regions ($...$).
+;;; conceal.scm - Render inline LaTeX math as Unicode via Helix overlays, without modifying the buffer.
 
 (require "helix/editor.scm")
 (require-builtin helix/core/text as text.)
@@ -33,31 +25,20 @@
          *markdown-marker-hook*
          *markdown-style-hook*)
 
-;; Installed by markdown-render.scm so markdown rendering rides the conceal
-;; cache + cursor-reveal without a circular require. Inert by default.
+;; Installed by markdown-render.scm; inert by default.
 (define *markdown-marker-hook* (box (lambda () '())))
 (define *markdown-style-hook* (box (lambda (line-start line-end) #f)))
 
-;; Flag flipped by the math-render plugin when it stages virtual above/
-;; below rows for big operators and `\frac`. When on, the scanner hides
-;; the inline form of those groups so both representations don't
-;; collide. Lives here (not in math-render.scm) so the concealer can
-;; read it at each scan without a circular require.
+;; Set by math-render; when on, the scanner hides the inline form it stacks as virtual rows.
 (define *math-render-active* (box #false))
 
-;; Callback the math-render plugin installs so the conceal cycle can
-;; restage its virtual rows against the live buffer without a cyclic
-;; require. Default no-op so this module still works standalone.
-;; See math-render.scm — it sets this to `math-render-buffer-impl`
-;; after defining it.
+;; Installed by math-render so the conceal cycle can restage its virtual rows. No-op by default.
 (define *math-render-refresh-hook* (box (lambda () #f)))
 
-;;; ─── Public API ──────────────────────────────────────────────────────────────
+;; Public API
 
 ;;;@doc
 ;;; Compute conceal overlay pairs for the current document.
-;;; For .jl files, only scans comment lines (# ...) to avoid false $ matches.
-;;; For other files (.md, .tex, etc.), scans the full document.
 (define (compute-conceal-overlays)
   (append (compute-math-conceal-overlays)
           ((unbox *markdown-marker-hook*))))
@@ -70,18 +51,13 @@
   (define path (editor-document->path doc-id))
   (cond
     [(and path (string-suffix? path ".jl"))
-     ;; .jl: per-line comment scanning, returns tab-separated format.
-     ;; Pass hide_math_layout when the math-render plugin is active so
-     ;; the concealer suppresses inline `_{…}^{…}` / `\frac{…}{…}` that
-     ;; math-render is already painting as virtual above/below rows.
+     ;; .jl: per-line comment scan; 2nd arg hides layout math-render already stacks.
      (parse-tsv-overlays
        (compute-conceal-overlays-for-comments-with-options
          text (unbox *math-render-active*)))]
     [(and path (string-suffix? path ".typ"))
-     ;; .typ: Typst math scanning, returns tab-separated format
      (parse-tsv-overlays (compute-conceal-overlays-for-typst text))]
     [else
-     ;; Other files: full-document LaTeX scan, returns JSON
      (parse-overlay-json (compute-conceal-overlays-ffi text))]))
 
 ;;;@doc
@@ -95,9 +71,7 @@
             (let ([line (car lines)])
               (if (equal? line "")
                   (loop (cdr lines) result)
-                  ;; split-once yields a 2-element list on a tab, and a
-                  ;; non-list (void) when the line has none — guard on list?
-                  ;; so a tab-less line is skipped, not car'd into a crash.
+                  ;; split-once returns a 2-list on a tab, else a non-list; guard so tab-less lines are skipped.
                   (let ([parts (split-once line "\t")])
                     (if (list? parts)
                         (loop (cdr lines)
@@ -105,12 +79,7 @@
                                     result))
                         (loop (cdr lines) result)))))))))
 
-;;; Parse the JSON overlay string into a list of (offset . replacement) pairs.
-;;; This is pure computation — safe to run on any thread.
-;;;
-;;; Input format is the serde_json output of `Vec<Overlay>`, i.e.
-;;;   `[{"offset":N,"replacement":"X"},...]`. We walk the string with
-;;;   position indices and lean on json-utils for the shared primitives.
+;; Parse the JSON `[{"offset":N,"replacement":"X"},...]` string into (offset . replacement) pairs.
 (define (parse-overlay-json json-str)
   (if (string=? json-str "[]")
       '()
@@ -131,13 +100,7 @@
                          (cons (cons offset-val replacement-str) result)))]
           [else (parse-loop (+ pos 1) result)]))))
 
-;;; ─── Conceal orchestration ───────────────────────────────────────────────────
-;;;
-;;; The orchestration layer owns the "when should conceal run" logic and
-;;; the interaction with the fingerprinted cache in conceal-state.scm.
-;;; Every public function here is a safe entry point for hooks and commands —
-;;; it validates the document fingerprint and fails closed rather than
-;;; apply stale char offsets.
+;; Conceal orchestration
 
 (define *conceal-extensions* '("md" "markdown" "tex" "jl" "typ" "qmd" "rmd"))
 
@@ -152,18 +115,7 @@
            [else (loop (cdr exts))]))))
 
 ;;@doc
-;; Compute and apply conceal overlays for the current buffer synchronously.
-;; Tags the cache with the current document fingerprint so later cursor
-;; moves can validate it.
-;;
-;; When math-render is active we ALSO re-stage the above/below virtual
-;; rows. The annotations are keyed to absolute line numbers — if a user
-;; adds or removes a line, every annotation below the edit sits at the
-;; wrong index until something refreshes it. Previously only `:w`
-;; rebuilt them, so the buffer visibly drifted while typing (operators
-;; gained/lost virtual rows as lines shifted under stale annotations).
-;; Piggy-backing the refresh onto the debounced conceal cycle keeps the
-;; annotations aligned without adding a second timer.
+;; Compute and apply conceal overlays for the current buffer, tagging the cache with the doc fingerprint.
 (define (conceal-math!)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -184,10 +136,7 @@
   (clear-overlays!))
 
 ;;@doc
-;; Re-filter the cached overlays to exclude the cursor's current line.
-;; Fails closed: if the cache fingerprint no longer matches the current
-;; document, the view overlays are cleared and we wait for the next
-;; reconceal to rebuild them.
+;; Re-filter cached overlays to exclude the cursor's current line; fails closed on a stale fingerprint.
 (define (apply-conceal-for-cursor!)
   (cond
     [(conceal-cache-empty?) #f]
@@ -216,14 +165,10 @@
         (set-overlays! filtered)
         ((unbox *markdown-style-hook*) line-start-char line-end-char)])]))
 
-;; Debounce generation counter. Every call to schedule-reconceal bumps it so
-;; only the most recent scheduled callback actually runs.
 (define *reconceal-generation* 0)
 
 ;;@doc
-;; Schedule a reconceal after `delay-ms` milliseconds, collapsing rapid
-;; successive calls via a generation counter. Safe to call from hooks that
-;; fire many times in quick succession.
+;; Schedule a reconceal after `delay-ms` ms, collapsing rapid successive calls.
 (define (schedule-reconceal delay-ms)
   (set! *reconceal-generation* (+ *reconceal-generation* 1))
   (define my-gen *reconceal-generation*)

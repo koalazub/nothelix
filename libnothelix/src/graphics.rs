@@ -124,7 +124,7 @@ mod tests {
             "jpeg"
         } else if data.starts_with(b"GIF8") {
             "gif"
-        } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP") {
+        } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(&b"WEBP"[..]) {
             "webp"
         } else if data.starts_with(b"<svg") || data.starts_with(b"<?xml") {
             "svg"

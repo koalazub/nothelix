@@ -1,11 +1,4 @@
-;;; cursor-restore.scm - Cursor preservation across async buffer mutations
-;;;
-;;; Stashes and restores (line, col) pairs keyed by doc-id so that
-;;; execute-cell and execute-all-cells can mutate the buffer (insert
-;;; output headers, result bodies, footers, image padding) without
-;;; leaving the cursor parked at the bottom of the output block.
-;;; Concurrent executions on different documents don't clobber each
-;;; other because each save is keyed by its own doc-id.
+;;; cursor-restore.scm — Cursor preservation across async buffer mutations
 
 (require "common.scm")
 (require "string-utils.scm")
@@ -19,21 +12,11 @@
          clear-cursor-restore!
          move-to-line-start-no-center!)
 
-;;; ============================================================================
-;;; CURSOR SAVE / RESTORE
-;;; ============================================================================
-
-;; Hash of (doc-id -> (marker-ordinal offset col)) entries. The position is
-;; stored RELATIVE to the cursor's enclosing cell marker (the Nth `@cell` /
-;; `@markdown` line at or above it) rather than as an absolute line, because
-;; execute-all-cells inserts output below each cell and shifts every absolute
-;; line below it. The enclosing marker's ordinal and the cursor's offset within
-;; the cell are invariant under those inserts, so the cursor lands where the
-;; user actually was instead of drifting up into an earlier output block.
+;; doc-id -> (marker-ordinal offset col): position stored relative to its
+;; enclosing cell marker so output inserted below cells doesn't drift it.
 (define *pending-cursor-restore* (hash))
 
-;; Count the cell markers at indices 0..line inclusive — the 1-based ordinal of
-;; the cell the cursor sits in (0 when the cursor is above the first marker).
+;; 1-based ordinal of the cell marker enclosing `line` (0 if above the first marker).
 (define (enclosing-marker-ordinal rope total line)
   (let loop ([i 0] [n 0])
     (cond
@@ -53,10 +36,7 @@
 (define (clamp lo x hi) (max lo (min x hi)))
 
 ;;@doc
-;; Move the cursor to the start of `line` WITHOUT recentering the viewport —
-;; `helix.goto` aligns the view to centre, which is what makes the page lurch
-;; while output is inserted cell-by-cell. A plain selection set only scrolls if
-;; the target is off-screen, so on-screen insert points stay visually put.
+;; Move the cursor to the start of `line` without recentering the viewport.
 (define (move-to-line-start-no-center! rope line)
   (define total (text.rope-len-lines rope))
   (define safe (max 0 (min line (max 0 (- total 1)))))
@@ -64,7 +44,7 @@
   (helix.static.set-current-selection-object!
     (helix.static.range->selection (helix.static.range c c))))
 
-;; Visible length of a line (excluding the trailing newline), for col clamping.
+;; Visible length of `line`, excluding the trailing newline.
 (define (line-visible-length rope line)
   (let ([s (text.rope->string (text.rope->line rope line))])
     (if (string-suffix? s "\n")
@@ -72,9 +52,7 @@
         (string-length s))))
 
 ;;@doc
-;; Snapshot the current cursor position for `doc-id`, anchored to its enclosing
-;; cell marker. Called before any buffer mutation so the captured position is
-;; the user's true cursor, not a mid-insert intermediate.
+;; Snapshot the cursor position for `doc-id`, anchored to its enclosing cell marker.
 (define (save-cursor-for-restore! doc-id)
   (define rope (editor->text doc-id))
   (define total (text.rope-len-lines rope))
@@ -91,13 +69,7 @@
         (hash-insert *pending-cursor-restore* doc-id (list ord offset col))))
 
 ;;@doc
-;; Move the cursor back to the position saved by `save-cursor-for-restore!`
-;; for `doc-id`, resolving the enclosing marker's CURRENT line so output
-;; inserted above doesn't misplace it. Uses a direct selection set rather than
-;; `helix.goto`, which recenters the viewport (the "page jumping" the user
-;; sees); a plain selection only scrolls if the target is off-screen. Does
-;; nothing if no entry exists; deliberately does NOT clear the entry so
-;; successive cells in `execute-all-cells` each pull back to the same spot.
+;; Restore `doc-id`'s saved cursor, resolving the enclosing marker's current line; leaves the entry in place for repeated restores.
 (define (restore-cursor-for! doc-id)
   (when (hash-contains? *pending-cursor-restore* doc-id)
     (define entry (hash-get *pending-cursor-restore* doc-id))
@@ -120,9 +92,7 @@
     (helix.static.collapse_selection)))
 
 ;;@doc
-;; Discard the pending cursor-restore entry for `doc-id`. Called by
-;; `execute-cell-list` after the whole run finishes so the stash
-;; doesn't leak across unrelated executions.
+;; Discard the pending cursor-restore entry for `doc-id`.
 (define (clear-cursor-restore! doc-id)
   (when (hash-contains? *pending-cursor-restore* doc-id)
     (set! *pending-cursor-restore*

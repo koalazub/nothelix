@@ -1,11 +1,4 @@
-;;; math-format.scm - Multi-line formatter for LaTeX block envs in notebook
-;;; comments.
-;;;
-;;; Wraps the Rust `format-math` FFI in a buffer-rewriting command. Reads the
-;;; document, asks Rust to expand any single-line `\begin{cases}...`,
-;;; `\begin{pmatrix}...`, etc. into multi-line `$$` blocks, then replaces the
-;;; buffer content in place. Idempotent — running it against an
-;;; already-formatted buffer is a no-op.
+;;; math-format.scm - Expand single-line LaTeX block envs in notebook comments into multi-line $$ blocks.
 
 (require "common.scm")
 (require "conceal.scm")
@@ -23,13 +16,7 @@
 (provide format-math-buffer)
 
 ;;@doc
-;; Rewrite single-line math environments in the current buffer into their
-;; multi-line block form. Leaves prose and already-multi-line envs alone.
-;;
-;; `silent?` (optional, default #false) suppresses status-bar messages so
-;; the save-hook invocation doesn't stomp on Helix's own "wrote N bytes"
-;; notification. User-invoked calls (from the command palette) use the
-;; default chatty behavior so the user gets feedback.
+;; Rewrite single-line math environments in the current buffer into multi-line block form.
 (define (format-math-buffer . args)
   (define silent? (and (not (null? args)) (car args)))
   (define focus (editor-focus))
@@ -56,18 +43,7 @@
         (helix.static.replace-selection-with rewritten)
         (helix.static.collapse_selection)
         (helix.static.commit-changes-to-history)
-        ;; The whole-buffer rewrite invalidates every cached conceal
-        ;; overlay (offsets shift, math env content changes shape).
-        ;; Schedule a reconceal so the next render reflects the new
-        ;; layout instead of painting stale overlays on top of fresh
-        ;; bytes — that's the source of the previously-reported jitter
-        ;; right after format-math fires on save.
         (schedule-reconceal 50)
-        ;; Always confirm a real rewrite happened — even in silent (save-
-        ;; hook) mode — so the user has a breadcrumb that their on-disk
-        ;; copy will update on the next `:w`. Suppress only the
-        ;; no-op/wrong-file-type noise, not the actual "I did a thing"
-        ;; signal.
         (set-status!
           (if silent?
               "math formatted (save again to flush to disk)"

@@ -15,11 +15,9 @@
 
 (provide run-cell-extraction-tests)
 
-;; Test counter
 (define *tests-passed* 0)
 (define *tests-failed* 0)
 
-;; Test assertion helper
 (define (assert-equal actual expected description)
   (if (equal? actual expected)
       (begin
@@ -39,7 +37,6 @@
 (define (assert-contains haystack needle description)
   (assert-true (string-contains? haystack needle) description))
 
-;; Create a test .jl file
 (define test-jl-path "/tmp/test-notebook.jl")
 (define test-jl-content "#=
 # Test Notebook
@@ -68,7 +65,6 @@ using Statistics
 mean([1, 2, 3])
 ")
 
-;; Create a test .ipynb file
 (define test-ipynb-path "/tmp/test-notebook.ipynb")
 (define test-ipynb-content "{
   \"cells\": [
@@ -88,22 +84,17 @@ mean([1, 2, 3])
 }
 ")
 
-;; Write test files
 (define (setup-test-files)
   (displayln "Setting up test files...")
-  ;; Write .jl file
   (write-string-to-file! test-jl-path test-jl-content)
-  ;; Write .ipynb file
   (write-string-to-file! test-ipynb-path test-ipynb-content)
   (displayln "Test files created"))
 
-;; Clean up test files
 (define (cleanup-test-files)
   (helix.run-shell-command (string-append "rm -f " test-jl-path))
   (helix.run-shell-command (string-append "rm -f " test-ipynb-path))
   (displayln "Test files cleaned up"))
 
-;; Test get-cell-code-from-jl
 (define (test-jl-cell-extraction)
   (displayln "\n## Testing .jl cell extraction (get-cell-code-from-jl)")
   (displayln "  ⚠ SKIPPED - Rebuild Helix with get-cell-code-from-jl registered first")
@@ -136,73 +127,54 @@ mean([1, 2, 3])
   ;; (assert-true (> (string-length cell99-error) 0) "Non-existent cell should return error")
   )
 
-;; Test notebook-get-cell-code
-;;
-;; notebook-get-cell-code returns the raw source string for the cell,
-;; not a JSON object. The tests below verify the source content directly.
+;; notebook-get-cell-code returns the raw source string, not a JSON object.
 (define (test-ipynb-cell-extraction)
   (displayln "\n## Testing .ipynb cell extraction (notebook-get-cell-code)")
 
-  ;; Test cell 0 (markdown)
   (define cell0-source (notebook-get-cell-code test-ipynb-path 0))
   (assert-contains cell0-source "# Test Notebook" "Cell 0 should contain markdown heading")
 
-  ;; Test cell 1 (code)
   (define cell1-source (notebook-get-cell-code test-ipynb-path 1))
   (assert-contains cell1-source "x = 100" "Cell 1 should contain 'x = 100'")
   (assert-contains cell1-source "y = 200" "Cell 1 should contain 'y = 200'")
 
-  ;; Test cell 2 (code)
   (define cell2-source (notebook-get-cell-code test-ipynb-path 2))
   (assert-contains cell2-source "z = x + y" "Cell 2 should contain 'z = x + y'")
   (assert-contains cell2-source "println(z)" "Cell 2 should contain 'println(z)'")
 
-  ;; Cell count should be 3
   (assert-equal (notebook-cell-count test-ipynb-path) 3 "Notebook should have 3 cells"))
 
-;; Test get-cell-at-line for .jl files
-;;
 ;; get-cell-at-line uses 0-indexed line numbers.
 (define (test-cell-at-line-jl)
   (displayln "\n## Testing get-cell-at-line for .jl files")
 
-  ;; Line 5 is the "@cell 1 10" marker; line 6 is the first code line.
   (define result1 (get-cell-at-line test-jl-path 6))
   (define idx1 (json-get result1 "cell_index"))
   (assert-equal idx1 "1" "Line 7 (1-indexed) should be in cell 1")
 
-  ;; Line 7 is the second code line of cell 1.
   (define result2 (get-cell-at-line test-jl-path 7))
   (define idx2 (json-get result2 "cell_index"))
   (assert-equal idx2 "1" "Line 8 (1-indexed) should be in cell 1")
 
-  ;; Line 17 is the first code line of cell 3.
   (define result3 (get-cell-at-line test-jl-path 17))
   (define idx3 (json-get result3 "cell_index"))
   (assert-equal idx3 "3" "Line 18 (1-indexed) should be in cell 3")
 
-  ;; Test source_path extraction. When the .jl file lacks a nothelix
-  ;; notebook header, the parser derives the source .ipynb path from
-  ;; the .jl path by swapping the extension.
   (define source-path (json-get result1 "source_path"))
   (assert-equal source-path test-ipynb-path "source_path should derive .ipynb sibling"))
 
-;; Test that code extraction preserves whitespace and structure
 (define (test-code-structure-preservation)
   (displayln "\n## Testing code structure preservation")
 
   (define cell1-json (get-cell-code-from-jl test-jl-path 1))
   (define cell1-code (json-get cell1-json "code"))
 
-  ;; Should have newline between statements
   (assert-true (string-contains? cell1-code "\n") "Code should preserve newlines")
 
-  ;; Should not have leading/trailing whitespace
   (define trimmed (string-trim cell1-code))
   (assert-equal (string-length cell1-code) (string-length trimmed)
                 "Code should be trimmed"))
 
-;; Main test runner
 (define (run-cell-extraction-tests)
   (displayln "\n╔════════════════════════════════════════════════════════╗")
   (displayln "║  Cell Extraction Tests                                 ║")
@@ -236,7 +208,6 @@ mean([1, 2, 3])
       (displayln (string-append "✗ " (number->string *tests-failed*) " test(s) failed")))
   suite-passed)
 
-;; Helper to repeat string n times
 (define (string-repeat str n)
   (if (<= n 0)
       ""

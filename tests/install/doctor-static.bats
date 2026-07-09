@@ -33,8 +33,6 @@ exit 0
 EOF
     chmod +x "$HOME/.local/bin/hx-nothelix"
     cp "$WRAPPER" "$HOME/.local/bin/nothelix"
-    echo "#!/bin/bash" > "$HOME/.local/bin/julia-lsp"
-    chmod +x "$HOME/.local/bin/julia-lsp"
 
     echo "fake" > "$STEEL_HOME/native/libnothelix.dylib"
     echo "BUILD_ID=ci-20260412-abcdef12" > "$STEEL_HOME/native/libnothelix.meta"

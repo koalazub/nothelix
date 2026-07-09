@@ -42,9 +42,6 @@ def main [
     print $"target file  : ($file)"
     print ""
 
-    # Kill any lingering julia-lsp so we don't race the monkey patch.
-    ^pkill -f LanguageServer | complete | ignore
-
     # Truncate the log before the run so the tail we read at the end
     # is guaranteed to be from THIS invocation, not accumulated from
     # previous runs by fern's append-only behaviour.

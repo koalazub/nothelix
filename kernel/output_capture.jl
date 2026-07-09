@@ -624,11 +624,13 @@ function capture_toplevel(mod::Module, code::String)
             # `plot(...)` calls existed.
             exprs = Meta.parseall(code)
             local last_result = nothing
+            local current_line = LineNumberNode(0, :none)
             for expr in exprs.args
                 if expr isa LineNumberNode
+                    current_line = expr
                     continue
                 end
-                last_result = Core.eval(mod, expr)
+                last_result = Core.eval(mod, Expr(:toplevel, current_line, expr))
                 if last_result !== nothing && is_displayable_plot(last_result)
                     animated = capture_animated_output(last_result)
                     if animated !== nothing

@@ -22,7 +22,6 @@ setup() {
 
     echo "fresh hx" > "$CACHE_DIR/extracted/bin/hx-nothelix"
     echo "fresh nothelix" > "$CACHE_DIR/extracted/bin/nothelix"
-    echo "fresh julia-lsp" > "$CACHE_DIR/extracted/bin/julia-lsp"
     echo "fresh dylib" > "$CACHE_DIR/extracted/lib/libnothelix.dylib"
     echo "BUILD_ID=ci-fresh-00000000" > "$CACHE_DIR/extracted/lib/libnothelix.meta"
     echo "fresh plugin" > "$CACHE_DIR/extracted/share/nothelix/plugin/nothelix.scm"

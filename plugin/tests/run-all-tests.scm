@@ -1,8 +1,4 @@
-;;; run-all-tests.scm - Master test runner for Nothelix
-;;;
-;;; Loads each test suite, enables math-image test mode so no binary
-;;; Kitty graphics payloads are emitted, runs every suite, and prints an
-;;; aggregated PASS/FAIL summary.
+;;; run-all-tests.scm — master runner: runs every suite and prints an aggregated PASS/FAIL summary.
 
 (require "cell-extraction-test.scm")
 (require "kernel-persistence-test.scm")
@@ -19,8 +15,6 @@
          run-string-utils-tests)
 
 (define (run-all-nothelix-tests)
-  ;; Suppress image rendering for the duration of the test run so the
-  ;; terminal is not polluted with binary Kitty graphics data.
   (set-math-image-test-mode! #t)
 
   (displayln "")
@@ -36,7 +30,6 @@
       (cons "math-image" (run-math-image-tests))
       (cons "string-utils" (run-string-utils-tests))))
 
-  ;; Suites that don't return a boolean are reported as unknown.
   (define (suite-status passed?)
     (cond
       [(eq? passed? #t) "PASS"]
@@ -66,7 +59,6 @@
   (displayln "============================================================")
   (displayln "")
 
-  ;; Restore normal image rendering.
   (set-math-image-test-mode! #f)
 
   all-passed)

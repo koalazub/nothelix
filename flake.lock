@@ -44,11 +44,11 @@
     "helix-fork": {
       "flake": false,
       "locked": {
-        "lastModified": 1782549665,
-        "narHash": "sha256-NM0dRVmtcvxc9eXKvUvmIJp5tf2GvqIy3YQ7It/i+ww=",
+        "lastModified": 1782559641,
+        "narHash": "sha256-I7DKpzF4Q03pW/1KzY/B3fkW5lrTImNYYnwFDePEBAw=",
         "owner": "koalazub",
         "repo": "helix",
-        "rev": "fa0fb9fe67b9310fb3c24c463f4a82283f29096e",
+        "rev": "0a08a3c18fd3f9b4af553666305cb07561639445",
         "type": "github"
       },
       "original": {

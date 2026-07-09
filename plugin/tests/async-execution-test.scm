@@ -1,8 +1,6 @@
 #!/usr/bin/env steel
 
-;; Async Execution Test
-;; Tests the background polling mechanism
-;; Run with: :scm (require "plugins/tests/async-execution-test.scm")
+;;; async-execution-test.scm — manual: drive kernel-execute-start + status polling and a background-thread callback. Run: :scm (require "plugins/tests/async-execution-test.scm")
 
 (require "plugins/nothelix.scm")
 
@@ -50,7 +48,6 @@
              (displayln "=== TEST FAILED ===")]
 
             [else
-             ;; Still running - wait and poll again
              (helix.run-shell-command "sleep 0.1")
              (poll-loop (+ count 1) max-polls)])))
 

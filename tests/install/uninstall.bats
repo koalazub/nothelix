@@ -16,7 +16,6 @@ setup() {
 
     echo "binary" > "$HOME/.local/bin/hx-nothelix"
     echo "wrapper" > "$HOME/.local/bin/nothelix"
-    echo "lsp wrapper" > "$HOME/.local/bin/julia-lsp"
     echo "dylib" > "$STEEL_HOME/native/libnothelix.dylib"
     echo "BUILD_ID=ci-test-00000000" > "$STEEL_HOME/native/libnothelix.meta"
     echo "plugin" > "$STEEL_HOME/cogs/nothelix.scm"
@@ -51,7 +50,6 @@ teardown() {
     [ "$status" -eq 0 ]
     [ ! -f "$HOME/.local/bin/hx-nothelix" ]
     [ ! -f "$HOME/.local/bin/nothelix" ]
-    [ ! -f "$HOME/.local/bin/julia-lsp" ]
     [ ! -f "$STEEL_HOME/native/libnothelix.dylib" ]
     [ ! -f "$STEEL_HOME/native/libnothelix.meta" ]
     [ ! -f "$STEEL_HOME/cogs/nothelix.scm" ]

@@ -1,16 +1,4 @@
-;;; animation-test.scm - Plugin-side behavioural tests for the animation
-;;; driver. Re-implements the lifecycle predicates and hook handlers from
-;;; nothelix/animation.scm in this test harness with stubbed FFI symbols,
-;;; then drives them through scenarios that match the way the editor
-;;; calls them. The intent is to catch state-machine regressions
-;;; (focus/viewport gating, manual pause, schedule-tick exits) without
-;;; needing a running editor.
-;;;
-;;; The actual nothelix/animation.scm cannot be required from outside
-;;; the embedded helix Steel runtime because it (#%require-dylib)s
-;;; libnothelix and (require)s helix/* modules. The lifecycle code is
-;;; mirrored here verbatim so a refactor that breaks behaviour shows
-;;; up as a test failure.
+;;; animation-test.scm — behavioural tests mirroring nothelix/animation.scm's lifecycle predicates and hook handlers (kept in sync by hand).
 
 (provide run-animation-tests)
 
@@ -46,10 +34,6 @@
     [(null? v) "()"]
     [else "<...>"]))
 
-;;; ---------------------------------------------------------------------------
-;;; Mirror of animation.scm's state predicates (kept in sync by hand).
-;;; ---------------------------------------------------------------------------
-
 (define (animation-state-active? st)
   (and st
        (hash-try-get st 'focused?)
@@ -57,8 +41,6 @@
        (not (hash-try-get st 'manual-paused?))
        (eq? (hash-try-get st 'status) 'playing)))
 
-;; Positional with overrides via a tail hash (Steel's keyword-arg story
-;; varies between embeds, so we keep this portable).
 (define (make-state)
   (hash 'char-idx 0
         'doc-id 0
@@ -69,16 +51,11 @@
         'status 'playing))
 
 (define (state-with st . kvs)
-  ;; (state-with st 'focused? #f 'visible? #t ...)
   (let loop ([s st] [pairs kvs])
     (cond
       [(null? pairs) s]
-      [(null? (cdr pairs)) s] ; odd trailing key — ignore
+      [(null? (cdr pairs)) s]
       [else (loop (hash-insert s (car pairs) (cadr pairs)) (cddr pairs))])))
-
-;;; ---------------------------------------------------------------------------
-;;; Test 1 — animation-state-active? truth table
-;;; ---------------------------------------------------------------------------
 
 (define (test-active-predicate)
   (displayln "animation-state-active? truth table")
@@ -96,10 +73,6 @@
     "errored state is inactive")
   (assert-false (animation-state-active? #f)
     "nil state is inactive (no panic)"))
-
-;;; ---------------------------------------------------------------------------
-;;; Test 2 — focus-lost / focus-gained handlers update the right engines
-;;; ---------------------------------------------------------------------------
 
 (define (apply-focus-lost! anims doc-id)
   (define result anims)
@@ -138,10 +111,6 @@
   (assert-true (hash-try-get (hash-try-get after-gained 100) 'focused?)
     "engine 100 regains focus on doc 1 focus-gained"))
 
-;;; ---------------------------------------------------------------------------
-;;; Test 3 — viewport-changed flips 'visible? based on anchor/height
-;;; ---------------------------------------------------------------------------
-
 (define (apply-viewport-changed! anims doc-id anchor height)
   (define visible-end (+ anchor (* (max 1 height) 200)))
   (define result anims)
@@ -160,9 +129,9 @@
 (define (test-viewport-handler)
   (displayln "viewport-changed visibility logic")
   (define anims
-    (hash 1 (state-with (make-state) 'doc-id 1 'char-idx 50)    ; in viewport
-          2 (state-with (make-state) 'doc-id 1 'char-idx 5000)  ; below viewport
-          3 (state-with (make-state) 'doc-id 2 'char-idx 50)))  ; different doc
+    (hash 1 (state-with (make-state) 'doc-id 1 'char-idx 50)
+          2 (state-with (make-state) 'doc-id 1 'char-idx 5000)
+          3 (state-with (make-state) 'doc-id 2 'char-idx 50)))
   (define after (apply-viewport-changed! anims 1 0 10))
   (assert-true (hash-try-get (hash-try-get after 1) 'visible?)
     "engine in viewport stays visible")
@@ -170,14 +139,9 @@
     "engine outside viewport becomes invisible")
   (assert-true (hash-try-get (hash-try-get after 3) 'visible?)
     "engine in different doc unaffected")
-  ;; Scroll past so engine 1 is no longer visible
   (define after2 (apply-viewport-changed! after 1 10000 10))
   (assert-false (hash-try-get (hash-try-get after2 1) 'visible?)
     "engine becomes invisible when scrolled past"))
-
-;;; ---------------------------------------------------------------------------
-;;; Test 4 — manual-pause toggle
-;;; ---------------------------------------------------------------------------
 
 (define (toggle-manual-pause anims eid)
   (define st (hash-try-get anims eid))
@@ -201,15 +165,9 @@
   (assert-true (animation-state-active? (hash-try-get after2 7))
     "resumed state is active again"))
 
-;;; ---------------------------------------------------------------------------
-;;; Test 5 — interleaved focus + viewport + manual gates compose correctly
-;;; ---------------------------------------------------------------------------
-
 (define (test-gate-composition)
   (displayln "compound gate: any false = inactive")
   (define st0 (make-state))
-  ;; Lose focus, then user manually pauses, then refocuses, then scrolls
-  ;; offscreen. Engine remains inactive throughout.
   (define st1 (hash-insert st0 'focused? #f))
   (define st2 (hash-insert st1 'manual-paused? #t))
   (define st3 (hash-insert st2 'focused? #t))
@@ -218,20 +176,10 @@
   (assert-false (animation-state-active? st2) "after manual-pause: inactive")
   (assert-false (animation-state-active? st3) "still manual-paused: inactive")
   (assert-false (animation-state-active? st4) "and offscreen: inactive")
-  ;; Clear all gates back to active.
   (define st5 (hash-insert st4 'manual-paused? #f))
   (define st6 (hash-insert st5 'visible? #t))
   (assert-true (animation-state-active? st6)
     "all gates cleared: active again"))
-
-;;; ---------------------------------------------------------------------------
-;;; Test 6 — schedule-tick gate semantics (functional simulation)
-;;; ---------------------------------------------------------------------------
-
-;; Simulates the inner loop of schedule-tick: a callback that, when
-;; invoked, ticks once, optionally re-arms based on the active gate.
-;; We count how many times the callback fires across a sequence of
-;; gate flips.
 
 (define *tick-count* 0)
 (define *reschedule-count* 0)
@@ -250,10 +198,8 @@
 
 (define (test-schedule-tick-gate)
   (displayln "schedule-tick gate exits when state goes inactive")
-  ;; Active state ticks max-iters times.
   (simulate-tick-loop (make-state) 5)
   (assert-equal *tick-count* 5 "active engine ticks max-iters times")
-  ;; Inactive state never ticks.
   (simulate-tick-loop (state-with (make-state) 'focused? #f) 5)
   (assert-equal *tick-count* 0 "unfocused engine never ticks")
   (simulate-tick-loop (state-with (make-state) 'visible? #f) 5)
@@ -262,10 +208,6 @@
   (assert-equal *tick-count* 0 "manually-paused engine never ticks")
   (simulate-tick-loop (state-with (make-state) 'status 'finished) 5)
   (assert-equal *tick-count* 0 "finished engine never ticks"))
-
-;;; ---------------------------------------------------------------------------
-;;; Runner
-;;; ---------------------------------------------------------------------------
 
 (define (run-animation-tests)
   (displayln "")
@@ -292,6 +234,4 @@
               *failures*))
   (= *tests-failed* 0))
 
-;; When invoked directly via the steel CLI (steel animation-test.scm)
-;; we run immediately so the harness reports pass/fail.
 (run-animation-tests)

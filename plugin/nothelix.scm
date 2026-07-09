@@ -1,11 +1,4 @@
-;;; nothelix.scm - Jupyter notebooks for Helix
-;;;
-;;; Commands:
-;;;   :convert-notebook - Convert .ipynb to cell format (Rust, non-blocking)
-;;;   :execute-cell     - Run current cell
-;;;   :next-cell        - Jump to next cell
-;;;   :previous-cell    - Jump to previous cell
-;;;   :cell-picker      - Interactive cell navigation
+;;; nothelix.scm — Jupyter notebooks for Helix
 
 ;; Helix core imports
 (require "helix/editor.scm")
@@ -18,33 +11,8 @@
 (require-builtin helix/core/keymaps as helix.keymaps.)
 (require (prefix-in helix. "helix/commands.scm"))
 
-;; FFI import for shell-free utilities
-(#%require-dylib "libnothelix"
-                 (only-in nothelix
-                          ensure-lsp-environment
-                          lsp-environment-ready
-                          lsp-project-dir
-                          lsp-depot-dir))
-
-;; FFI version handshake — keep this the FIRST nothelix require. Steel
-;; executes required modules before any body form of this file, so the
-;; handshake module's load-time assert is the earliest point in the
-;; plugin load: it hard-fails against a stale dylib before any module
-;; (including this file's #%require-dylib above, whose defines also run
-;; after all requires) pulls symbols out of it.
+;; FFI version handshake — must be the FIRST nothelix require.
 (require "nothelix/ffi-version.scm")
-
-;;; ============================================================================
-;;; LSP ENVIRONMENT SETUP
-;;; ============================================================================
-;;; On first load, spawn Julia in the background to set up the minimal LSP
-;;; environment (LanguageServer only, isolated depot). The editor is never
-;;; blocked — Julia runs concurrently and the LSP becomes available once
-;;; the environment is ready.
-
-(define lsp-setup-result (ensure-lsp-environment))
-(when (not (string=? lsp-setup-result ""))
-  (displayln (string-append "nothelix: LSP setup failed: " lsp-setup-result)))
 
 ;; Nothelix modules (order matters: common first, then leaf modules)
 (require "nothelix/string-utils.scm")
@@ -58,6 +26,7 @@
 (require "nothelix/cursor-restore.scm")
 (require "nothelix/image-cache.scm")
 (require "nothelix/output-insert.scm")
+(require "nothelix/plot-resize.scm")
 (require "nothelix/execution.scm")
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
@@ -70,20 +39,22 @@
 (require "nothelix/math-render.scm")
 (require "nothelix/math-image.scm")
 (require "nothelix/table-image.scm")
+(require "nothelix/project-config.scm")
 (require "nothelix/markdown-render.scm")
 (require "nothelix/animation.scm")
 (require "nothelix/health.scm")
+(require "nothelix/lsp-statusline.scm")
 
-;; Test modules are loaded at startup so the `:run-*-tests` commands can
-;; invoke them without needing `require` inside `eval`, which Steel rejects.
+;; Test modules loaded at startup so the :run-*-tests commands can invoke them.
 (require "tests/run-all-tests.scm")
 
-(provide convert-notebook sync-to-ipynb export-markdown export-typst
+(provide convert-notebook sync-to-ipynb export-markdown export-typst export-pdf
          execute-cell execute-all-cells execute-cells-above cancel-cell
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
          view-chart
          insert-image
+         plot-grow plot-shrink
          format-math-buffer
          math-render-buffer
          math-render-clear
@@ -92,6 +63,7 @@
          render-all-tables
          clear-math-images
          kernel-shutdown kernel-shutdown-all
+         nothelix-trust-project nothelix-untrust-project nothelix-project-trust-status
          graphics-protocol graphics-check nothelix-status
          julia-tab-complete
          conceal-math clear-conceal
@@ -102,13 +74,7 @@
          ;; Shorthands
          xc xca nc)
 
-;;; ============================================================================
-;;; CONCEAL — thin shim for backwards-compatible provided names
-;;; ============================================================================
-;;;
-;;; All conceal logic lives in nothelix/conceal.scm. These aliases keep the
-;;; top-level provide list stable so users of the plugin don't need to
-;;; re-import anything.
+;; Conceal — shims for backwards-compatible provided names (logic in conceal.scm)
 
 ;;@doc
 ;; Apply LaTeX unicode concealment to the current buffer.
@@ -118,26 +84,16 @@
 ;; Remove LaTeX unicode concealment overlays from the current buffer.
 (define (clear-conceal) (clear-conceal!))
 
-;;; ============================================================================
-;;; COMMAND SHORTHANDS
-;;; ============================================================================
+;; Command shorthands
 
-(define (xc) (execute-cell))          ;; :xc   = :execute-cell
-(define (xca) (execute-all-cells))    ;; :xca  = :execute-all-cells
-(define (nc) (next-cell))             ;; :nc   = :next-cell
+(define (xc) (execute-cell))
+(define (xca) (execute-all-cells))
+(define (nc) (next-cell))
 
-;;; ============================================================================
-;;; DEBUG MODE — thin command shims for the `nothelix/debug.scm` module
-;;; ============================================================================
-;;;
-;;; When toggled on, modules across the plugin start emitting
-;;; `nothelix: …` lines via `debug-log`, which are routed to the
-;;; helix log at info level. Off by default.
+;; Debug mode command shims
 
 ;;@doc
-;; Turn nothelix debug logging on. Every cell execution and image
-;; registration then logs to ~/.cache/helix/helix.log (needs -v / -vv
-;; on the hx command line to surface info-level lines).
+;; Turn nothelix debug logging on.
 (define (nothelix-debug-on) (nothelix-debug-enable!))
 
 ;;@doc
@@ -149,21 +105,13 @@
 (define (nothelix-debug-toggle) (nothelix-debug-toggle!))
 
 ;;@doc
-;; Print the current nothelix health-check status. Re-runs the check
-;; on every invocation so you can verify a fix mid-session without
-;; restarting Helix. Empty output ⇒ all checks pass; otherwise the
-;; full set of issues prints on the status line, joined by " | ".
+;; Print the current nothelix health-check status (re-runs the check).
 (define (nothelix-status) (nothelix-status-command))
 
-;;; ============================================================================
-;;; SCAFFOLDING — thin command shims for the `nothelix/scaffold.scm` module
-;;; ============================================================================
+;; Scaffolding command shims
 
 ;;@doc
-;; Insert a new cell at the cursor. Opens a small picker to choose
-;; between a code cell (using the file's language, typically Julia)
-;; or a markdown cell. The picked marker is stamped with the next
-;; available cell index, and the cursor is positioned ready to type.
+;; Insert a new cell (code or markdown) at the cursor.
 (define (new-cell)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -175,15 +123,10 @@
   (open-cell-type-picker line-idx next-idx (file-lang (or path ""))))
 
 ;;@doc
-;; Renumber every @cell / @markdown marker in the current buffer to
-;; a contiguous 0-indexed sequence. Runs automatically on save and
-;; on :sync-to-ipynb; exposed here so you can also invoke it manually
-;; after a bunch of mid-file cell deletions.
+;; Renumber every @cell / @markdown marker to a contiguous 0-indexed sequence.
 (define (renumber-cells) (renumber-cells!))
 
-;;; ============================================================================
-;;; KERNEL LIFECYCLE
-;;; ============================================================================
+;; Kernel lifecycle
 
 ;;@doc
 ;; Shutdown the kernel for the current document
@@ -200,14 +143,65 @@
 (define (kernel-shutdown-all)
   (stop-all-kernels))
 
-;;; ============================================================================
-;;; KEYBINDINGS
-;;; ============================================================================
+;; Project trust — gate for .nothelix.conf executable settings (julia-bin /
+;; julia-project). Display settings never need trust; these do.
 
-;; Register extension-specific keybindings for notebook files
-;; NOTE: The keymap macro's (inherit-from ...) has a bug in helix keymaps.scm:216-218
-;; (pattern uses 'map' but body uses 'kmap'), so we call the functions directly.
+;;@doc
+;; Trust the current notebook's project so its .nothelix.conf may launch a
+;; custom Julia binary / project env. Restarts the kernel so it takes effect.
+(define (nothelix-trust-project)
+  (define path (focused-notebook-path))
+  (if (not path)
+      (set-status! "nothelix: no file in focus")
+      (let ([dir (project-dir-for path)])
+        (if (not dir)
+            (set-status! "nothelix: no .nothelix.conf found for this project")
+            (let ([res (trust-project! dir)])
+              (if (> (string-length res) 0)
+                  (set-status! (string-append "nothelix: " res))
+                  (begin
+                    (stop-kernel path)
+                    (set-status!
+                      (string-append "nothelix: trusted " dir
+                        " — its Julia runtime applies on the next cell run")))))))))
 
+;;@doc
+;; Revoke trust for the current notebook's project; restarts the kernel.
+(define (nothelix-untrust-project)
+  (define path (focused-notebook-path))
+  (if (not path)
+      (set-status! "nothelix: no file in focus")
+      (let ([dir (project-dir-for path)])
+        (if (not dir)
+            (set-status! "nothelix: no .nothelix.conf found for this project")
+            (begin
+              (untrust-project! dir)
+              (stop-kernel path)
+              (set-status!
+                (string-append "nothelix: untrusted " dir
+                  " — kernel reverts to PATH julia on the next run")))))))
+
+;;@doc
+;; Report whether the current project is trusted and the runtime it would use.
+(define (nothelix-project-trust-status)
+  (define path (focused-notebook-path))
+  (if (not path)
+      (set-status! "nothelix: no file in focus")
+      (let ([dir (project-dir-for path)])
+        (if (not dir)
+            (set-status! "nothelix: no .nothelix.conf for this project")
+            (let ([rt (project-runtime-for path)])
+              (set-status!
+                (string-append "nothelix: " dir
+                  (if (project-trusted? dir) " [trusted]" " [untrusted]")
+                  (if (> (string-length (car rt)) 0)
+                      (string-append " julia-bin=" (car rt)) "")
+                  (if (> (string-length (cdr rt)) 0)
+                      (string-append " julia-project=" (cdr rt)) ""))))))))
+
+;; Keybindings
+
+;; keymaps.scm's (inherit-from ...) is buggy (map vs kmap), so call functions directly.
 (define notebook-bindings
   (keymap
     (normal
@@ -218,25 +212,12 @@
                   ("j" ":cell-picker")
                   ("a" ":select-cell")
                   ("i" ":select-cell-code")
-                  ("o" ":select-output"))
+                  ("o" ":select-output")
+                  ("=" ":plot-grow")
+                  ("-" ":plot-shrink"))
              ("p" ":animation-toggle-at-cursor")))))
 
-;; ─── Plugin command documentation ─────────────────────────────────────────────
-;;
-;; Helix's keybinding help tries to look up each bound command's
-;; docstring via `#%function-ptr-table-get`, but that table is only
-;; populated by commands registered through Helix's Rust-side
-;; `template_function_arityN` macros — Steel plugin `define`s don't
-;; write into it even with a `;;@doc` block attached. So every
-;; nothelix command falls through to the "Undocumented plugin
-;; command" default no matter what we annotate.
-;;
-;; Fix: maintain the doc hash ourselves and push it into the
-;; keymap directly via `keymap-update-documentation!` right after
-;; `merge-keybindings` has stamped the bindings. The Rust side
-;; applies the hash to every matching command in the trie, so the
-;; `<space>n…` menu and the command palette both show real
-;; descriptions instead of the fallback.
+;; Command docs for the keymap help UI (Helix can't read Steel doc strings).
 (define nothelix-command-docs
   (hash
     ;; Notebook lifecycle
@@ -244,6 +225,7 @@
     "sync-to-ipynb"    "Sync edits in the .jl file back to the source .ipynb."
     "export-markdown"  "Export the .jl notebook to Markdown (.md)."
     "export-typst"     "Export the .jl notebook to Typst (.typ)."
+    "export-pdf"       "Export the .jl notebook to a PDF (.pdf) via Typst."
     "new-notebook"     "Create a new .jl notebook file and open it."
     "renumber-cells"   "Renumber @cell / @markdown markers to 0, 1, 2, …"
 
@@ -268,6 +250,10 @@
     ;; Image insertion
     "insert-image" "Insert a `# @image <path>` marker + blank canvas at the cursor."
 
+    ;; Plot resizing
+    "plot-grow"   "Grow the @image plot block under the cursor and re-render."
+    "plot-shrink" "Shrink the @image plot block under the cursor and re-render."
+
     ;; Math formatting
     "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
     "math-render-buffer" "Stack big-operator limits (\\int / \\sum / \\prod …) above/below their glyph via virtual rows."
@@ -280,6 +266,11 @@
     ;; Kernel lifecycle
     "kernel-shutdown"     "Stop the kernel for the current document."
     "kernel-shutdown-all" "Stop every running kernel."
+
+    ;; Project trust (.nothelix.conf executable settings)
+    "nothelix-trust-project"        "Trust this project's .nothelix.conf to launch a custom Julia bin/env."
+    "nothelix-untrust-project"      "Revoke trust for this project's custom Julia runtime."
+    "nothelix-project-trust-status" "Show whether this project is trusted and the runtime it would use."
 
     ;; Graphics
     "graphics-protocol" "Show which graphics protocol nothelix detected."
@@ -302,13 +293,11 @@
     "run-kernel-tests"     "Run the kernel-persistence tests only."
     "run-execution-tests"  "Run the execution-flow tests only."))
 
-;; Helper: apply nothelix-command-docs to a keymap after it's been
-;; built via `merge-keybindings`. Wraps the existing Rust-side hook.
 (define (nothelix-document-keymap! keymap)
   (helix.keymaps.keymap-update-documentation! keymap nothelix-command-docs)
   keymap)
 
-;; Register for .ipynb files (raw notebooks)
+;; Register for .ipynb files
 (helix.keymaps.#%add-extension-or-labeled-keymap
   "ipynb"
   (nothelix-document-keymap!
@@ -320,19 +309,14 @@
     (insert
       ("tab" ":julia-tab-complete"))))
 
-;; Register for .jl files (converted notebooks) — notebook keys + Tab completion
+;; Register for .jl files (notebook keys + Tab completion)
 (let ((km (deep-copy-global-keybindings)))
   (merge-keybindings km notebook-bindings)
   (merge-keybindings km jl-tab-bindings)
   (nothelix-document-keymap! km)
   (helix.keymaps.#%add-extension-or-labeled-keymap "jl" km))
 
-;;; ============================================================================
-;;; AUTO-CONCEAL
-;;; ============================================================================
-;;;
-;;; file-has-conceal-extension? and the conceal orchestration live in
-;;; nothelix/conceal.scm. This file only wires the hooks.
+;; Auto-conceal (orchestration lives in conceal.scm; this file wires the hooks)
 
 ;;@doc
 ;; Apply conceal if the current buffer is a markdown/tex/jl file.
@@ -343,67 +327,32 @@
   (when (file-has-conceal-extension? path)
     (conceal-math!)))
 
-;;; ============================================================================
-;;; EXIT CLEANUP HOOK
-;;; ============================================================================
+;; Exit cleanup hook
 
-;; List of quit commands that should trigger kernel cleanup
 (define *quit-commands*
   '("quit" "force-quit" "quit-all" "force-quit-all"
     "write-quit" "force-write-quit" "write-quit-all" "force-write-quit-all"
     "cquit" "force-cquit"))
 
-;; Debounce counter: each new trigger increments the generation.
-;; Callbacks check their captured generation against the current one;
-;; if stale, they skip execution.
+;; Debounce generation counter; callbacks compare their captured gen and skip if stale.
 (define *conceal-generation* 0)
 
-;; Commands that mutate the buffer and therefore invalidate the conceal
-;; cache when they run. post-command fires after the command returns, so
-;; we schedule a reconceal to rebuild the cache against the new document
-;; state. execute-cell lives in a different class — its output lands
-;; asynchronously inside update-cell-output, which calls schedule-reconceal
-;; directly at the end of that callback.
+;; Commands that mutate the buffer and invalidate the conceal cache.
 (define *mutating-commands*
   '("convert-notebook" "sync-to-ipynb" "export-markdown" "export-typst"
     "insert-image" "format-math-buffer" "math-render-buffer" "math-render-clear"
-    ;; Native helix commands that move/duplicate buffer content. Adding
-    ;; them here means a paste-or-yank of a math-containing region
-    ;; triggers a reconceal so overlays land on the new offsets instead
-    ;; of the old ones — common source of "math half-rendered after
-    ;; pasting/deleting a cell" jitter.
     "paste_after" "paste_before" "paste_clipboard_after" "paste_clipboard_before"
     "replace_with_yanked" "replace_selections_with_clipboard"
     "delete_selection" "delete_selection_noyank"
     "change_selection" "change_selection_noyank"))
 
-;; Commands that write the buffer to disk. We hook these to run the
-;; cell renumber pass so holes that accumulate during editing (from
-;; deleting or rearranging cells) get cleaned up at the natural "I
-;; committed to this" moment. The renumber runs *after* the write,
-;; so the on-disk copy lags by one save — the next `:w` syncs the
-;; clean numbers. In practice you don't notice because the file
-;; content is identical apart from the integers in the markers.
+;; Commands that write the buffer to disk; we hook these to renumber cells.
 (define *save-commands*
   '("write" "force-write" "write-quit" "force-write-quit"
     "write-all" "force-write-all" "write-quit-all" "force-write-quit-all"
     "write-buffer-close"))
 
-;; Hook for kernel cleanup, conceal refresh on buffer switch, and conceal
-;; invalidation after mutating commands.
-;;
-;; Buffer switches used to also trigger `render-cached-images`, but that
-;; accumulated duplicate RawContent entries on stock Helix (see
-;; execution.scm for the full explanation). Images now register exactly
-;; once per doc via `document-opened` and persist on the document for
-;; the lifetime of the view, so this hook only needs to refresh
-;; concealment on buffer switch.
 (define (nothelix-post-command-hook command-name)
-  ;; Every non-quit command gets the image-marker sync check. It's
-  ;; cheap (one buffer scan + count compare) and only escalates to a
-  ;; full re-register when the `# @image` line count actually changed,
-  ;; so typing stays snappy and backspacing a marker line really does
-  ;; make the image disappear.
   (when (not (member command-name *quit-commands*))
     (sync-images-if-markers-changed!))
   (cond
@@ -417,32 +366,14 @@
          (when (= my-gen *conceal-generation*)
            (maybe-conceal-current-buffer))))]
     [(member command-name *save-commands*)
-     ;; On save we do two passes against the buffer:
-     ;;   (1) expand any single-line `\begin{cases}...\end{cases}`
-     ;;       (or pmatrix/aligned/...) into multi-line `$$` blocks so
-     ;;       the concealer can render them properly. Runs in `silent?`
-     ;;       mode so Helix's own "wrote N bytes" message isn't stomped.
-     ;;   (2) Renumber cells to a contiguous 0-indexed sequence. Holes
-     ;;       from mid-file deletion/rearrangement get swept up here so
-     ;;       the file on disk stays tidy between sessions.
-     ;;
-     ;; Both run *after* the write, so the on-disk copy lags by one
-      ;; save; the next `:w` syncs the tidied form. Practically
-      ;; invisible since the only change between saves is whitespace /
-      ;; integers in markers.
        (format-math-buffer #true)
        (math-render-buffer)
        (when (not (math-image-test-mode?))
          (render-all-display-math)
          (render-all-tables))
        (renumber-cells!)
-       ;; Markdown tables conceal inline like math; the save-time tidy
-       ;; above shifts char offsets, so refresh overlays against the
-       ;; rewritten buffer.
        (schedule-reconceal 50)]
     [(member command-name *mutating-commands*)
-     ;; Cache is stale from the moment the command started running.
-     ;; apply-conceal-for-cursor will fail closed until reconceal completes.
      (renumber-cells!)
      (schedule-reconceal 50)]))
 
@@ -454,16 +385,17 @@
     (enqueue-thread-local-callback-with-delay 200
       (lambda ()
         (when (= my-gen *conceal-generation*)
+          ;; Apply per-project display config before the first render so
+          ;; font/colour/width settings take effect immediately.
+          (maybe-apply-project-config!)
           (render-cached-images)
-          (maybe-conceal-current-buffer)
+          (when (conceal-on-open?)
+            (maybe-conceal-current-buffer))
           (when (not (math-image-test-mode?))
             (render-all-display-math)
             (render-all-tables)))))))
 
-;; Cursor-aware conceal: when the cursor moves to a different line, re-filter
-;; cached overlays to exclude that line so the user sees raw LaTeX while
-;; editing. apply-conceal-for-cursor! validates the cache fingerprint and
-;; fails closed if stale.
+;; Cursor-aware conceal: reveal raw LaTeX on the cursor's line while editing.
 (define *conceal-cursor-line* -1)
 (register-hook! "selection-did-change"
   (lambda (_doc-id)
@@ -477,30 +409,16 @@
         (set! *conceal-cursor-line* cursor-line)
         (apply-conceal-for-cursor!)))))
 
-;; Insert-driven reconceal *and* cell marker autofill. Both run from
-;; the same `post-insert-char` hook because they want the same event
-;; and both no-op cheaply when the typed character isn't interesting.
-;;
-;; - Autofill: checks for a just-typed space after `@<word>` on an
-;;   otherwise empty line in a notebook file and rewrites the line
-;;   (either directly for `@md`/`@mark`/`@markdown`, or via the
-;;   cell-type picker for `@cell` and any unknown `@<word>`).
-;; - Reconceal: debounces a LaTeX-overlay refresh so conceal stays
-;;   in sync with buffer edits in files that opt in.
+;; post-insert-char: cell-marker autofill + marker-count sync + debounced reconceal.
 (register-hook! "post-insert-char"
   (lambda (char)
     (define path (editor-document->path (editor->doc-id (editor-focus))))
     (maybe-expand-cell-marker! char)
-    ;; Marker-count sync on insert. The check is O(lines) and is
-    ;; a no-op when nothing about the `# @image` markers changed,
-    ;; so rapid typing doesn't pay the full re-register cost.
     (sync-images-if-markers-changed!)
     (when (file-has-conceal-extension? path)
       (schedule-reconceal 400))))
 
-;;; ============================================================================
-;;; TEST COMMANDS
-;;; ============================================================================
+;; Test commands
 
 ;;@doc
 ;; Run all Nothelix tests.

@@ -26,9 +26,6 @@ setup() {
     echo "echo stub nothelix" >> "$TARBALL_DIR/bin/nothelix"
     chmod +x "$TARBALL_DIR/bin/nothelix"
 
-    echo "#!/bin/bash" > "$TARBALL_DIR/bin/julia-lsp"
-    chmod +x "$TARBALL_DIR/bin/julia-lsp"
-
     echo "fake dylib" > "$TARBALL_DIR/lib/libnothelix.dylib"
     echo "BUILD_ID=ci-20260412-abcdef12" > "$TARBALL_DIR/lib/libnothelix.meta"
 
@@ -68,12 +65,6 @@ teardown() {
     run "$TARBALL_DIR/install-local.sh" "$TARBALL_DIR"
     [ "$status" -eq 0 ]
     [ -x "$HOME/.local/bin/nothelix" ]
-}
-
-@test "install-local places julia-lsp" {
-    run "$TARBALL_DIR/install-local.sh" "$TARBALL_DIR"
-    [ "$status" -eq 0 ]
-    [ -x "$HOME/.local/bin/julia-lsp" ]
 }
 
 @test "install-local places libnothelix.dylib and .meta" {

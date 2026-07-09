@@ -1,46 +1,11 @@
-;;; animation.scm - Animated media driver
-;;;
-;;; The libnothelix `animation` module owns engines (decoder + renderer + cache
-;;; + state). This module is the conduit between fork events and those engines:
-;;; it subscribes to focus / viewport / tick signals, calls
-;;; `animation-tick`, and routes the rendered bytes back into Helix's
-;;; `add-or-replace-animating-raw-content!` so the editor draws the next frame.
-;;;
-;;; Lifecycle:
-;;;   register-animation!     -> insert state, schedule first tick
-;;;   document-focus-lost     -> mark engines for the doc as unfocused, drop
-;;;                              their next callback
-;;;   document-focus-gained   -> mark engines as focused, reschedule
-;;;   viewport-changed        -> recompute 'visible? for engines in that doc,
-;;;                              reschedule the ones that just became visible
-;;;
-;;; Pause-when-offscreen / pause-when-unfocused short-circuits in
-;;; `animation-state-active?`: when the predicate is false, the in-flight
-;;; callback fires once, sees the gate, exits without re-arming. Idle cost
-;;; is then dominated by the dedup hot-path on the libnothelix side (8 ns
-;;; per tick benchmarked).
+;;; animation.scm — animated media driver bridging fork events to libnothelix engines
 
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
 (require-builtin steel/time)
 
-;; Steel resolves `prefix-in` imports at module-load time against the
-;; import set, not at call time. So a bare `helix.static.add-or-
-;; replace-animating-raw-content!` reference here fails with
-;; FreeIdentifier on any binary where the symbol isn't already in the
-;; helix.static. namespace at load — not just stale binaries, but ALSO
-;; rebuilt binaries where the static-command registration timing means
-;; the symbol may not be in the import set yet when this module is
-;; first compiled. `eval` defers the lookup to call time so we get the
-;; symbol when it actually exists, and `with-handler` turns missing-
-;; symbol errors into silent no-ops (which the doctor / `:nothelix-
-;; status` then flag for the user). `set-status!` keeps the failure
-;; visible on the first occurrence per session so silent-no-op doesn't
-;; mask a genuine stale-binary case.
 (define *animation-ffi-warned?* #f)
-;; Rust signature is (cx, view_id, char_idx, id, payload, height, is_animating);
-;; cx is auto-injected by Steel, leaving 6 user-visible args in that exact order.
 (define (try-add-or-replace-animating-raw-content! view-id char-idx id bytes height is-anim?)
   (with-handler
     (lambda (err)
@@ -70,26 +35,13 @@
          animation-resume-all
          animation-engine-count)
 
-;;; ---------------------------------------------------------------------------
-;;; State
-;;; ---------------------------------------------------------------------------
+;; State
 
-;; Map engine_id (int) -> state hash with keys:
-;;   'char-idx        char index where the overlay is anchored (int)
-;;   'doc-id          owning document id
-;;   'height          terminal rows the overlay occupies
-;;   'focused?        is the doc currently focused?
-;;   'visible?        is the cell within the current viewport?
-;;   'manual-paused?  user pressed <space>p
-;;   'status          'playing 'finished 'errored
-;;
-;; We never assume the hash exists in any branch; every hash-ref carries a
-;; default and every mutation rebinds *animations* via set!.
+;; engine_id -> hash with keys: 'char-idx 'doc-id 'height 'focused?
+;; 'visible? 'manual-paused? 'status.
 (define *animations* (hash))
 (define *first-hint-shown?* #f)
-;; True while the hx terminal window holds focus. Flipped by the
-;; `terminal-focus-{gained,lost}` hooks below; AND'd into the tick
-;; gate so animations don't burn CPU when the user has alt-tabbed.
+;; True while the hx terminal window holds focus.
 (define *terminal-focused?* #t)
 
 (define (animation-engine-count)
@@ -120,18 +72,10 @@
        (not (hash-try-get st 'manual-paused?))
        (eq? (hash-try-get st 'status) 'playing)))
 
-;;; ---------------------------------------------------------------------------
-;;; Public commands
-;;; ---------------------------------------------------------------------------
+;; Public commands
 
 ;;@doc
-;; Register an animation engine and start its tick loop.
-;; mime: MIME string (e.g. "image/gif")
-;; bytes: bytevector / list of bytes containing the source
-;; char-idx: anchor position in the document (int)
-;; height: rows the overlay occupies (int)
-;; Returns the engine id on success, or #f when libnothelix refused
-;; (unknown MIME, malformed bytes, lock failure).
+;; Register an animation engine and start its tick loop; returns the engine id or #f on failure.
 (define (register-animation! mime bytes char-idx height)
   (define result (animation-register mime bytes))
   (define id (if (number? result) result -999))
@@ -152,8 +96,7 @@
      id]))
 
 ;;@doc
-;; Toggle play/pause on the engine whose anchor is at the current cursor line.
-;; Returns the engine-id toggled, or #f if no animation under cursor.
+;; Toggle play/pause on the animation under the cursor; returns its engine id or #f.
 (define (animation-toggle-at-cursor)
   (define eid (find-engine-near-cursor))
   (cond
@@ -171,7 +114,7 @@
      eid]))
 
 ;;@doc
-;; Pause every active engine (used by :command palette).
+;; Pause every active engine.
 (define (animation-pause-all)
   (for-each
     (lambda (eid)
@@ -189,24 +132,16 @@
       (schedule-tick eid))
     (hash-keys->list *animations*)))
 
-;;; ---------------------------------------------------------------------------
-;;; Tick scheduler
-;;; ---------------------------------------------------------------------------
+;; Tick scheduler
 
-;; Mean per-tick work measured at 2.6 µs for kitty-replay; the
-;; enqueue-thread-local-callback-with-delay primitive is the standard nothelix
-;; pattern for self-rescheduling (see execution.scm). When the gate flips
-;; false the callback exits without re-arming, so idle cost is one dispatch's
-;; worth of work — no busy loop.
 (define (schedule-tick eid)
   (define st (state-of eid))
   (when (animation-state-active? st)
-    (animation-tick eid) ; advances engine + populates last-tick-* metadata
+    (animation-tick eid)
     (define status (animation-tick-status eid))
     (define delay (max 16 (animation-tick-delay-ms eid)))
     (cond
       [(= status 0)
-       ;; Frame produced — pull bytes, register raw content, request redraw.
        (define bytes (animation-tick-bytes eid))
        (when (> (bytes-length bytes) 0)
          (define char-idx (hash-try-get st 'char-idx))
@@ -220,11 +155,10 @@
            #t)
          (helix.redraw))]
       [(= status 2)
-       ;; Finished — mark and stop.
        (state-update! eid (lambda (s) (hash-insert s 'status 'finished)))]
       [(< status 0)
        (state-update! eid (lambda (s) (hash-insert s 'status 'errored)))]
-      ;; status == 1: same content, no transmit, but keep ticking.
+      ;; status 1: unchanged content, keep ticking.
       [else (void)])
     (when (and (>= status 0)
                (animation-state-active? (state-of eid)))
@@ -232,14 +166,9 @@
         delay
         (lambda () (schedule-tick eid))))))
 
-;;; ---------------------------------------------------------------------------
-;;; Cursor / overlay lookup
-;;; ---------------------------------------------------------------------------
+;; Cursor / overlay lookup
 
-;; Cheap match: cursor's char index falls within `[char-idx, char-idx + 4096)`
-;; of an engine's anchor. The plugin doesn't currently track per-overlay
-;; height in characters, so we use a generous window — false positives are
-;; harmless (toggle only affects engines that actually exist).
+;; Match engines whose anchor is within 4096 chars of the cursor.
 (define (find-engine-near-cursor)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
@@ -255,14 +184,8 @@
       (hash-keys->list *animations*)))
   (if (null? candidates) #f (car candidates)))
 
-;;; ---------------------------------------------------------------------------
-;;; Hooks
-;;; ---------------------------------------------------------------------------
+;; Hooks
 
-;; Fork-only events `document-focus-{lost,gained}` and
-;; `viewport-changed`. On a stale `hx` these throw `Unknown event
-;; type` at plugin-load; the doctor and `:nothelix-status` warn the
-;; user before they get here.
 (register-hook! "document-focus-lost"
   (lambda (doc-id)
     (for-each
@@ -299,13 +222,6 @@
             (schedule-tick eid))))
       (hash-keys->list *animations*))))
 
-;; Whole-window focus. Without this, alt-tabbing to a browser leaves
-;; `'focused?` true on the active doc and animations keep ticking off-
-;; screen. On focus loss we flip the global gate so every engine's
-;; `animation-state-active?` returns false; on regain we re-arm by
-;; calling `schedule-tick` on each engine (the gate decides whether
-;; the tick actually runs — engines whose doc is now backgrounded or
-;; whose cell isn't visible stay paused).
 (register-hook! "terminal-focus-lost"
   (lambda ()
     (set! *terminal-focused?* #f)))
@@ -314,10 +230,6 @@
   (lambda ()
     (set! *terminal-focused?* #t)
     (for-each schedule-tick (hash-keys->list *animations*))))
-
-;;; ---------------------------------------------------------------------------
-;;; Discoverability
-;;; ---------------------------------------------------------------------------
 
 (define (maybe-show-first-hint!)
   (when (not *first-hint-shown?*)

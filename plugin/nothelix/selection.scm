@@ -1,7 +1,4 @@
-;;; selection.scm - Cell and output selection text objects
-;;;
-;;; Provides text-object-style selections for cells: select the whole cell,
-;;; just the code portion, or just the output section.
+;;; selection.scm — Cell and output selection text objects
 
 (require "common.scm")
 (require "cell-boundaries.scm")
@@ -17,8 +14,6 @@
 
 ;;@doc
 ;; Find the full cell end including any output section.
-;; If an output section follows the code, returns the line after its footer;
-;; otherwise returns `code-end`.
 (define (find-full-cell-end get-line total-lines code-end)
   (define output-start (find-output-start get-line total-lines code-end))
   (if output-start

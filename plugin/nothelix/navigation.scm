@@ -1,7 +1,4 @@
-;;; navigation.scm - Cell navigation commands
-;;;
-;;; Provides :next-cell and :previous-cell for jumping between @cell / @markdown
-;;; markers in a converted notebook.
+;;; navigation.scm — Cell navigation commands
 
 (require "common.scm")
 (require "helix/editor.scm")

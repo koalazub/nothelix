@@ -14,11 +14,9 @@
 
 (provide run-execution-flow-tests)
 
-;; Test counter
 (define *tests-passed* 0)
 (define *tests-failed* 0)
 
-;; Test assertion helpers
 (define (assert-equal actual expected description)
   (if (equal? actual expected)
       (begin
@@ -41,7 +39,6 @@
 (define (assert-not-contains haystack needle description)
   (assert-true (not (string-contains? haystack needle)) description))
 
-;; Helper: Wait for kernel result with timeout
 (define (wait-for-kernel-result kernel-dir max-attempts)
   (define (poll-loop attempts)
     (if (>= attempts max-attempts)
@@ -56,7 +53,6 @@
               result))))
   (poll-loop 0))
 
-;; Test: Cell code extraction matches execution
 (define (test-code-extraction-accuracy)
   (displayln "\n## Testing code extraction accuracy")
 
@@ -70,7 +66,6 @@ z = 100")
 
   (helix.run-shell-command (string-append "echo '" content "' > " test-file))
 
-  ;; Extract cell 1
   (define cell1-json (get-cell-code-from-jl test-file 1))
   (define cell1-code (json-get cell1-json "code"))
 
@@ -78,7 +73,6 @@ z = 100")
   (assert-contains cell1-code "y = x * 2" "Cell 1 code should contain second line")
   (assert-not-contains cell1-code "@cell" "Cell 1 code should not contain marker")
 
-  ;; Extract cell 3
   (define cell3-json (get-cell-code-from-jl test-file 3))
   (define cell3-code (json-get cell3-json "code"))
 
@@ -86,7 +80,6 @@ z = 100")
 
   (helix.run-shell-command (string-append "rm -f " test-file)))
 
-;; Test: Sequential execution maintains state
 (define (test-sequential-execution)
   (displayln "\n## Testing sequential execution with state")
 
@@ -103,17 +96,14 @@ counter")
 
   (helix.run-shell-command (string-append "echo '" content "' > " test-nb))
 
-  ;; Get kernel
   (define kernel (kernel-get-for-notebook test-nb "julia"))
   (define kernel-dir (hash-get kernel 'kernel-dir))
 
-  ;; Execute cell 1
   (define code1 (json-get (get-cell-code-from-jl test-nb 1) "code"))
   (kernel-execute-cell-start kernel-dir 1 code1)
   (define result1 (wait-for-kernel-result kernel-dir 50))
   (assert-equal (json-get result1 "status") "ok" "Cell 1 should execute successfully")
 
-  ;; Execute cell 3 - uses counter from cell 1
   (define code3 (json-get (get-cell-code-from-jl test-nb 3) "code"))
   (kernel-execute-cell-start kernel-dir 3 code3)
   (define result3 (wait-for-kernel-result kernel-dir 50))
@@ -121,7 +111,6 @@ counter")
   (assert-not-contains (json-get result3 "error") "UndefVarError"
                        "Cell 3 should see counter from cell 1")
 
-  ;; Execute cell 5 - uses counter from cell 3
   (define code5 (json-get (get-cell-code-from-jl test-nb 5) "code"))
   (kernel-execute-cell-start kernel-dir 5 code5)
   (define result5 (wait-for-kernel-result kernel-dir 50))
@@ -129,11 +118,9 @@ counter")
   (define output5 (json-get result5 "output_repr"))
   (assert-contains output5 "10" "Cell 5 should output 10 (0+5)*2")
 
-  ;; Cleanup
   (stop-kernel test-nb)
   (helix.run-shell-command (string-append "rm -f " test-nb)))
 
-;; Test: Error handling doesn't break kernel
 (define (test-error-handling)
   (displayln "\n## Testing error handling")
 
@@ -151,17 +138,14 @@ good_var * 2")
 
   (helix.run-shell-command (string-append "echo '" content "' > " test-nb))
 
-  ;; Get kernel
   (define kernel (kernel-get-for-notebook test-nb "julia"))
   (define kernel-dir (hash-get kernel 'kernel-dir))
 
-  ;; Execute cell 1 - should succeed
   (define code1 (json-get (get-cell-code-from-jl test-nb 1) "code"))
   (kernel-execute-cell-start kernel-dir 1 code1)
   (define result1 (wait-for-kernel-result kernel-dir 50))
   (assert-equal (json-get result1 "status") "ok" "Cell 1 should execute successfully")
 
-  ;; Execute cell 3 - should error
   (define code3 (json-get (get-cell-code-from-jl test-nb 3) "code"))
   (kernel-execute-cell-start kernel-dir 3 code3)
   (define result3 (wait-for-kernel-result kernel-dir 50))
@@ -169,7 +153,6 @@ good_var * 2")
   (assert-contains (json-get result3 "error") "UndefVarError"
                    "Cell 3 error should be UndefVarError")
 
-  ;; Execute cell 5 - kernel should still work
   (define code5 (json-get (get-cell-code-from-jl test-nb 5) "code"))
   (kernel-execute-cell-start kernel-dir 5 code5)
   (define result5 (wait-for-kernel-result kernel-dir 50))
@@ -178,11 +161,9 @@ good_var * 2")
   (define output5 (json-get result5 "output_repr"))
   (assert-contains output5 "84" "Cell 5 should compute 42 * 2 = 84")
 
-  ;; Cleanup
   (stop-kernel test-nb)
   (helix.run-shell-command (string-append "rm -f " test-nb)))
 
-;; Test: Cell with output capture
 (define (test-output-capture)
   (displayln "\n## Testing output capture")
 
@@ -194,30 +175,24 @@ x")
 
   (helix.run-shell-command (string-append "echo '" content "' > " test-nb))
 
-  ;; Get kernel
   (define kernel (kernel-get-for-notebook test-nb "julia"))
   (define kernel-dir (hash-get kernel 'kernel-dir))
 
-  ;; Execute cell
   (define code1 (json-get (get-cell-code-from-jl test-nb 1) "code"))
   (kernel-execute-cell-start kernel-dir 1 code1)
   (define result1 (wait-for-kernel-result kernel-dir 50))
 
   (assert-equal (json-get result1 "status") "ok" "Cell should execute successfully")
 
-  ;; Check stdout
   (define stdout (json-get result1 "stdout"))
   (assert-contains stdout "Hello from Julia" "stdout should contain println output")
 
-  ;; Check output_repr
   (define output (json-get result1 "output_repr"))
   (assert-contains output "123" "output_repr should contain return value")
 
-  ;; Cleanup
   (stop-kernel test-nb)
   (helix.run-shell-command (string-append "rm -f " test-nb)))
 
-;; Test: Multiple kernels for different notebooks
 (define (test-multiple-kernels)
   (displayln "\n## Testing multiple concurrent kernels")
 
@@ -227,7 +202,6 @@ x")
   (helix.run-shell-command (string-append "echo '@cell 1 10\nnb1_var = 100' > " nb1))
   (helix.run-shell-command (string-append "echo '@cell 1 10\nnb2_var = 200' > " nb2))
 
-  ;; Get kernels
   (define kernel1 (kernel-get-for-notebook nb1 "julia"))
   (define kernel2 (kernel-get-for-notebook nb2 "julia"))
 
@@ -237,28 +211,23 @@ x")
   (assert-true (not (equal? dir1 dir2))
                "Different notebooks should have different kernel directories")
 
-  ;; Execute in first kernel
   (kernel-execute-cell-start dir1 1 "nb1_var = 100")
   (define result1 (wait-for-kernel-result dir1 50))
   (assert-equal (json-get result1 "status") "ok" "Notebook 1 cell should execute")
 
-  ;; Execute in second kernel
   (kernel-execute-cell-start dir2 1 "nb2_var = 200")
   (define result2 (wait-for-kernel-result dir2 50))
   (assert-equal (json-get result2 "status") "ok" "Notebook 2 cell should execute")
 
-  ;; Variables should be isolated
-  (kernel-execute-cell-start dir1 3 "nb2_var")  ; Should fail in kernel1
+  (kernel-execute-cell-start dir1 3 "nb2_var")
   (define result3 (wait-for-kernel-result dir1 50))
   (assert-equal (json-get result3 "status") "error"
                 "Notebook 1 kernel should not see notebook 2 variables")
 
-  ;; Cleanup
   (stop-kernel nb1)
   (stop-kernel nb2)
   (helix.run-shell-command (string-append "rm -f " nb1 " " nb2)))
 
-;; Main test runner
 (define (run-execution-flow-tests)
   (displayln "\n╔════════════════════════════════════════════════════════╗")
   (displayln "║  Execution Flow Integration Tests                      ║")
@@ -300,7 +269,6 @@ x")
       (displayln (string-append "✗ " (number->string *tests-failed*) " test(s) failed")))
   suite-passed)
 
-;; Helper to repeat string n times
 (define (string-repeat str n)
   (if (<= n 0)
       ""
