@@ -113,7 +113,7 @@
           cargoLock = {
             lockFile = "${helix-fork}/Cargo.lock";
             outputHashes = {
-              "steel-core-0.8.2" = "sha256-qPDz0ax290E7UEFTDfrmLmsn1r9dIuOxMiRmNrDkfZo=";
+              "steel-core-0.8.2" = "sha256-TP1hmlju7h7ce0dnSKuIMk7XK5kcloqiyR+sxumNsQk=";
             };
           };
 
@@ -160,7 +160,8 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes = {
-              # Same hash as nixoala/packages/helix — same steel rev
+              # steel rev b67efd5c (nothelix Cargo.lock); helix-fork pins a
+              # different rev, so hx-nothelix carries its own outputHash above
               "steel-core-0.8.2" = "sha256-qPDz0ax290E7UEFTDfrmLmsn1r9dIuOxMiRmNrDkfZo=";
             };
           };
