@@ -40,6 +40,7 @@
 (require "nothelix/math-image.scm")
 (require "nothelix/table-image.scm")
 (require "nothelix/project-config.scm")
+(require "nothelix/resume.scm")
 (require "nothelix/markdown-render.scm")
 (require "nothelix/animation.scm")
 (require "nothelix/health.scm")
@@ -372,6 +373,7 @@
          (render-all-display-math)
          (render-all-tables))
        (renumber-cells!)
+       (save-resume-position!)
        (schedule-reconceal 50)]
     [(member command-name *mutating-commands*)
      (renumber-cells!)
@@ -379,7 +381,7 @@
 
 (register-hook! "post-command" nothelix-post-command-hook)
 (register-hook! "document-opened"
-  (lambda (_doc-id)
+  (lambda (doc-id)
     (set! *conceal-generation* (+ *conceal-generation* 1))
     (define my-gen *conceal-generation*)
     (enqueue-thread-local-callback-with-delay 200
@@ -393,7 +395,8 @@
             (maybe-conceal-current-buffer))
           (when (not (math-image-test-mode?))
             (render-all-display-math)
-            (render-all-tables)))))))
+            (render-all-tables))
+          (restore-resume-position! doc-id))))))
 
 ;; Cursor-aware conceal: reveal raw LaTeX on the cursor's line while editing.
 (define *conceal-cursor-line* -1)

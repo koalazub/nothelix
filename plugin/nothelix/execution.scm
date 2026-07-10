@@ -5,6 +5,7 @@
 (require "string-utils.scm")
 (require "cell-boundaries.scm")
 (require "cursor-restore.scm")
+(require "resume.scm")
 (require "image-cache.scm")
 (require "output-insert.scm")
 (require "kernel.scm")
@@ -88,6 +89,7 @@
 ;;@doc
 ;; Execute the code cell under the cursor (async, non-blocking).
 (define (execute-cell)
+  (save-resume-position!)
   (with-saved-notebook ":execute-cell" execute-cell-under-cursor))
 
 (define (execute-cell-under-cursor doc-id path current-line)
