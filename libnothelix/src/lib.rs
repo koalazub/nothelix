@@ -44,6 +44,8 @@ mod kitty_placeholder;
 #[cfg(feature = "native")]
 mod notebook;
 #[cfg(feature = "native")]
+mod resume;
+#[cfg(feature = "native")]
 mod trust;
 
 #[cfg(all(feature = "wasm", not(feature = "native")))]
@@ -67,7 +69,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 18;
+pub const NOTHELIX_FFI_VERSION: u32 = 19;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -198,6 +200,8 @@ fn build_module() -> FFIModule {
     m.register_fn("nothelix-trust-contains", trust::trust_contains);
     m.register_fn("nothelix-trust-add", trust::trust_add);
     m.register_fn("nothelix-trust-remove", trust::trust_remove);
+    m.register_fn("resume-get", resume::resume_get);
+    m.register_fn("resume-set", resume::resume_set);
     m.register_fn("resolve-symlink-dir", resolve_symlink_dir);
     m.register_fn("sleep-ms", sleep_ms);
     m.register_fn("getenv", getenv);
