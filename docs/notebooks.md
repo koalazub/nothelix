@@ -81,6 +81,10 @@ One kernel runs per notebook, keyed to the file path, not the buffer.
 - Close and reopen the file, or restart Helix: nothelix reattaches to the running kernel with all state intact.
 - State is lost only on `:kernel-shutdown`, `:kernel-shutdown-all`, or quitting Helix.
 
+## Resume position
+
+Reopening a notebook returns your cursor to the last cell you worked in. The position is captured when you run a cell or save the file (`:w`), and restored when you open the notebook. It is stored per-user in `~/.local/share/nothelix/`, not in the project directory.
+
 ## Per-project settings
 
 Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a notebook underneath.
