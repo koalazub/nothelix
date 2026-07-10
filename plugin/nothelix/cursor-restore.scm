@@ -10,7 +10,9 @@
 (provide save-cursor-for-restore!
          restore-cursor-for!
          clear-cursor-restore!
-         move-to-line-start-no-center!)
+         move-to-line-start-no-center!
+         compute-cursor-anchor
+         move-cursor-to-anchor!)
 
 ;; doc-id -> (marker-ordinal offset col): position stored relative to its
 ;; enclosing cell marker so output inserted below cells doesn't drift it.
@@ -52,8 +54,9 @@
         (string-length s))))
 
 ;;@doc
-;; Snapshot the cursor position for `doc-id`, anchored to its enclosing cell marker.
-(define (save-cursor-for-restore! doc-id)
+;; The (ord offset col) cursor anchor for `doc-id`'s focused cursor, anchored to
+;; the enclosing cell marker so output inserted below cells does not drift it.
+(define (compute-cursor-anchor doc-id)
   (define rope (editor->text doc-id))
   (define total (text.rope-len-lines rope))
   (define pos (cursor-position))
@@ -65,31 +68,39 @@
     (if (> ord 0)
         (let ([m (nth-marker-line rope total ord)]) (if m (- line m) line))
         line))
+  (list ord offset col))
+
+;;@doc
+;; Move `doc-id`'s cursor to the (ord offset col) anchor, resolving the marker's
+;; current line and clamping so a since-edited file lands nearby, not out of range.
+(define (move-cursor-to-anchor! doc-id ord offset col)
+  (define rope (editor->text doc-id))
+  (define total (text.rope-len-lines rope))
+  (define base-line
+    (if (> ord 0)
+        (let ([m (nth-marker-line rope total ord)]) (if m m 0))
+        0))
+  (define target-line (clamp 0 (+ base-line offset) (max 0 (- total 1))))
+  (define line-start (text.rope-line->char rope target-line))
+  (define target-col (clamp 0 col (line-visible-length rope target-line)))
+  (define char (+ line-start target-col))
+  (define r (helix.static.range char char))
+  (define sel (helix.static.range->selection r))
+  (helix.static.set-current-selection-object! sel)
+  (helix.static.collapse_selection))
+
+;;@doc
+;; Snapshot the cursor position for `doc-id`, anchored to its enclosing cell marker.
+(define (save-cursor-for-restore! doc-id)
   (set! *pending-cursor-restore*
-        (hash-insert *pending-cursor-restore* doc-id (list ord offset col))))
+        (hash-insert *pending-cursor-restore* doc-id (compute-cursor-anchor doc-id))))
 
 ;;@doc
 ;; Restore `doc-id`'s saved cursor, resolving the enclosing marker's current line; leaves the entry in place for repeated restores.
 (define (restore-cursor-for! doc-id)
   (when (hash-contains? *pending-cursor-restore* doc-id)
     (define entry (hash-get *pending-cursor-restore* doc-id))
-    (define ord (list-ref entry 0))
-    (define offset (list-ref entry 1))
-    (define col (list-ref entry 2))
-    (define rope (editor->text doc-id))
-    (define total (text.rope-len-lines rope))
-    (define base-line
-      (if (> ord 0)
-          (let ([m (nth-marker-line rope total ord)]) (if m m 0))
-          0))
-    (define target-line (clamp 0 (+ base-line offset) (max 0 (- total 1))))
-    (define line-start (text.rope-line->char rope target-line))
-    (define target-col (clamp 0 col (line-visible-length rope target-line)))
-    (define char (+ line-start target-col))
-    (define r (helix.static.range char char))
-    (define sel (helix.static.range->selection r))
-    (helix.static.set-current-selection-object! sel)
-    (helix.static.collapse_selection)))
+    (move-cursor-to-anchor! doc-id (list-ref entry 0) (list-ref entry 1) (list-ref entry 2))))
 
 ;;@doc
 ;; Discard the pending cursor-restore entry for `doc-id`.
