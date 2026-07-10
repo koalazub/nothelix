@@ -272,6 +272,61 @@ mod tests {
         assert!(!tsv.contains('│'), "no box rows: {tsv:?}");
     }
 
+    /// Apply the byte-offset overlays to the (ASCII-LaTeX) input to get the
+    /// visible text a reader would see. Input is ASCII so every overlay offset
+    /// is a char boundary; an empty replacement hides that byte.
+    fn apply_overlays(input: &str) -> String {
+        let tsv = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
+        let mut reps: std::collections::HashMap<usize, &str> = std::collections::HashMap::new();
+        for line in tsv.lines() {
+            if let Some((off, rep)) = line.split_once('\t')
+                && let Ok(n) = off.parse::<usize>()
+            {
+                reps.insert(n, rep);
+            }
+        }
+        let mut out = String::new();
+        for (i, ch) in input.char_indices() {
+            match reps.get(&i) {
+                Some(rep) => out.push_str(rep),
+                None => out.push(ch),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn transpose_top_renders_superscript_t() {
+        assert_eq!(apply_overlays("# $A^\\top$\n"), "# Aᵀ\n");
+        assert_eq!(apply_overlays("# $A^{\\top}$\n"), "# Aᵀ\n");
+        assert_eq!(apply_overlays("# $A^\\intercal$\n"), "# Aᵀ\n");
+        assert_eq!(apply_overlays("# $A^{\\mathsf{T}}$\n"), "# Aᵀ\n");
+    }
+
+    #[test]
+    fn plain_letter_transpose_still_renders() {
+        assert_eq!(apply_overlays("# $A^T$\n"), "# Aᵀ\n");
+    }
+
+    #[test]
+    fn command_superscripts_render_raised_glyph() {
+        assert_eq!(apply_overlays("# $90^\\circ$\n"), "# 90°\n");
+        assert_eq!(apply_overlays("# $f^\\prime$\n"), "# f′\n");
+        assert_eq!(apply_overlays("# $A^\\dagger$\n"), "# A†\n");
+        assert_eq!(apply_overlays("# $V^\\perp$\n"), "# V⊥\n");
+    }
+
+    #[test]
+    fn command_subscripts_render_lowered_glyph() {
+        assert_eq!(apply_overlays("# $v_\\perp$\n"), "# v⊥\n");
+        assert_eq!(apply_overlays("# $v_\\parallel$\n"), "# v∥\n");
+    }
+
+    #[test]
+    fn unmapped_command_superscript_leaves_caret() {
+        assert_eq!(apply_overlays("# $x^\\alpha$\n"), "# x^α\n");
+    }
+
     #[test]
     fn mathbb_conceals_to_double_struck() {
         let text = "# subspace of $\\mathbb{R}^3$.\n";

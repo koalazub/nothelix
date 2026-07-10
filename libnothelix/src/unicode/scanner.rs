@@ -18,7 +18,10 @@ use std::borrow::Cow;
 
 use super::fence::{close_fence, mid_fence, open_fence};
 use super::overlay::Overlay;
-use super::sub_super::{latex_font_to_julia, sub_lookup, super_lookup};
+use super::sub_super::{
+    braced_sub_command, braced_super_command, latex_font_to_julia, sub_command_lookup, sub_lookup,
+    super_command_lookup, super_lookup,
+};
 use super::symbol_table::unicode_lookup;
 
 /// Per-scan options. Passed by the caller instead of pulled from a
@@ -238,6 +241,11 @@ impl<'a> Scanner<'a> {
         if b[i] == b'^' && i + 1 < len && b[i + 1] == b'{' {
             return self.scan_braced_superscript(i);
         }
+        // ^\command (\top → ᵀ, \circ → °); unmapped commands fall through so
+        // the following \command still conceals normally.
+        if b[i] == b'^' && i + 1 < len && b[i + 1] == b'\\' {
+            return self.scan_command_superscript(i);
+        }
         // ^x — any single byte whose superscript form exists in SUPER_MAP.
         // We used to gate this on `!is_ascii_alphabetic()` back when only
         // `n`/`i` had letter supers; that guard now blocks valid letter
@@ -252,6 +260,10 @@ impl<'a> Scanner<'a> {
         if b[i] == b'_' && i + 1 < len && b[i + 1] == b'{' {
             return self.scan_braced_subscript(i);
         }
+        // _\command (\perp → ⊥); unmapped commands fall through.
+        if b[i] == b'_' && i + 1 < len && b[i + 1] == b'\\' {
+            return self.scan_command_subscript(i);
+        }
         // _x
         if b[i] == b'_' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'_'
         {
@@ -259,6 +271,60 @@ impl<'a> Scanner<'a> {
         }
 
         i + 1
+    }
+
+    /// Byte index just past a `\command` name starting at `from` (the first
+    /// byte after the backslash).
+    fn command_name_end(&self, from: usize) -> usize {
+        let mut j = from;
+        while j < self.bytes.len() && self.bytes[j].is_ascii_alphabetic() {
+            j += 1;
+        }
+        j
+    }
+
+    /// `^\command` — a command-valued superscript (`^\top` → ᵀ). Mirrors the
+    /// big-operator limit handling of the single-char path. Unmapped commands
+    /// leave the caret and return so the command conceals on its own.
+    fn scan_command_superscript(&mut self, caret: usize) -> usize {
+        let name_start = caret + 2;
+        let name_end = self.command_name_end(name_start);
+        if self.pending_limits > 0 {
+            self.pending_limits -= 1;
+            if self.options.hide_math_layout {
+                Overlay::hide_range(&mut self.overlays, caret, name_end);
+                return name_end;
+            }
+        }
+        let name = &self.text[name_start..name_end];
+        if let Some(rep) = super_command_lookup(name) {
+            self.overlays.push(Overlay::at(caret, rep));
+            Overlay::hide_range(&mut self.overlays, caret + 1, name_end);
+            name_end
+        } else {
+            caret + 1
+        }
+    }
+
+    /// `_\command` — a command-valued subscript (`_\perp` → ⊥).
+    fn scan_command_subscript(&mut self, underscore: usize) -> usize {
+        let name_start = underscore + 2;
+        let name_end = self.command_name_end(name_start);
+        if self.pending_limits > 0 {
+            self.pending_limits -= 1;
+            if self.options.hide_math_layout {
+                Overlay::hide_range(&mut self.overlays, underscore, name_end);
+                return name_end;
+            }
+        }
+        let name = &self.text[name_start..name_end];
+        if let Some(rep) = sub_command_lookup(name) {
+            self.overlays.push(Overlay::at(underscore, rep));
+            Overlay::hide_range(&mut self.overlays, underscore + 1, name_end);
+            name_end
+        } else {
+            underscore + 1
+        }
     }
 
     /// Parse a `\commandname` and dispatch to the matching sub-case.
@@ -799,6 +865,12 @@ impl<'a> Scanner<'a> {
             return past_close;
         }
 
+        if let Some(rep) = braced_super_command(content) {
+            self.overlays.push(Overlay::at(caret_pos, rep));
+            Overlay::hide_range(&mut self.overlays, caret_pos + 1, past_close);
+            return past_close;
+        }
+
         self.overlays.push(Overlay::hide(caret_pos + 1));
         self.overlays.push(Overlay::hide(past_close - 1));
         content_start
@@ -864,6 +936,12 @@ impl<'a> Scanner<'a> {
                 char_offset += ch.len_utf8();
             }
             self.overlays.push(Overlay::hide(past_close - 1));
+            return past_close;
+        }
+
+        if let Some(rep) = braced_sub_command(content) {
+            self.overlays.push(Overlay::at(underscore_pos, rep));
+            Overlay::hide_range(&mut self.overlays, underscore_pos + 1, past_close);
             return past_close;
         }
 

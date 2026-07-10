@@ -156,6 +156,103 @@ pub(super) fn sub_lookup(ch: char) -> Option<&'static str> {
     lut_lookup(&SUB_LUT, ch)
 }
 
+/// LaTeX commands that appear as super/subscript *content*, mapped to the
+/// glyph to render in the raised slot. The transpose family (`\top`,
+/// `\intercal`, `\transpose`) maps to superscript T because `A^\top` is
+/// transpose notation, not the ⊤ lattice symbol — outside a superscript,
+/// `\top` still concealment-maps to ⊤ via the symbol table. Marks that already
+/// read as raised (° ′ † ‡ ∗ ⋆ ⊥) are placed as-is.
+static SUPER_COMMAND_MAP: &[(&str, &str)] = &[
+    ("ast", "∗"),
+    ("bullet", "∙"),
+    ("circ", "°"),
+    ("dag", "†"),
+    ("dagger", "†"),
+    ("ddag", "‡"),
+    ("ddagger", "‡"),
+    ("intercal", "ᵀ"),
+    ("perp", "⊥"),
+    ("prime", "′"),
+    ("star", "⋆"),
+    ("top", "ᵀ"),
+    ("transpose", "ᵀ"),
+];
+
+/// LaTeX commands that appear as subscript content, mapped to the glyph to
+/// render in the lowered slot. Physics uses `v_\perp` / `v_\parallel` for
+/// perpendicular/parallel components.
+static SUB_COMMAND_MAP: &[(&str, &str)] = &[
+    ("ast", "∗"),
+    ("bullet", "∙"),
+    ("circ", "∘"),
+    ("dagger", "†"),
+    ("intercal", "ᵀ"),
+    ("parallel", "∥"),
+    ("perp", "⊥"),
+    ("prime", "′"),
+    ("star", "⋆"),
+    ("top", "ᵀ"),
+];
+
+fn command_map_lookup(map: &[(&str, &'static str)], name: &str) -> Option<&'static str> {
+    map.iter().find(|(k, _)| *k == name).map(|&(_, v)| v)
+}
+
+/// Look up a LaTeX command's superscript rendering (`\top` → ᵀ), or `None`.
+#[inline]
+pub(super) fn super_command_lookup(name: &str) -> Option<&'static str> {
+    command_map_lookup(SUPER_COMMAND_MAP, name)
+}
+
+/// Look up a LaTeX command's subscript rendering (`\perp` → ⊥), or `None`.
+#[inline]
+pub(super) fn sub_command_lookup(name: &str) -> Option<&'static str> {
+    command_map_lookup(SUB_COMMAND_MAP, name)
+}
+
+/// Resolve braced super/subscript content that is a single command
+/// (`{\top}`) or a font-wrapped single letter (`{\mathsf{T}}`) to its
+/// raised/lowered glyph. `cmd_lookup` handles the bare-command case;
+/// `char_lookup` handles the font-wrapped letter, ignoring the font.
+fn braced_command(
+    content: &str,
+    cmd_lookup: fn(&str) -> Option<&'static str>,
+    char_lookup: fn(char) -> Option<&'static str>,
+) -> Option<&'static str> {
+    let rest = content.trim().strip_prefix('\\')?;
+    let name_len = rest.chars().take_while(char::is_ascii_alphabetic).count();
+    let (name, after) = rest.split_at(name_len);
+    if after.is_empty() {
+        return cmd_lookup(name);
+    }
+    if matches!(
+        name,
+        "mathsf" | "mathrm" | "text" | "mathtt" | "mathbf" | "mathit" | "mathbb" | "mathcal"
+            | "boldsymbol"
+    ) && after.starts_with('{')
+        && after.ends_with('}')
+    {
+        let inner = &after[1..after.len() - 1];
+        let mut it = inner.chars();
+        if let (Some(ch), None) = (it.next(), it.next()) {
+            return char_lookup(ch);
+        }
+    }
+    None
+}
+
+/// Braced superscript command resolution (`{\top}`/`{\mathsf{T}}` → ᵀ).
+#[inline]
+pub(super) fn braced_super_command(content: &str) -> Option<&'static str> {
+    braced_command(content, super_command_lookup, super_lookup)
+}
+
+/// Braced subscript command resolution (`{\perp}` → ⊥).
+#[inline]
+pub(super) fn braced_sub_command(content: &str) -> Option<&'static str> {
+    braced_command(content, sub_command_lookup, sub_lookup)
+}
+
 /// Map a LaTeX font command + letter to a Julia symbol table name.
 /// E.g. `("mathbf", "b")` → `"bfb"` → `𝐛`, `("mathbb", "R")` → `"bbR"` → `ℝ`.
 pub(super) fn latex_font_to_julia(cmd: &str, letter: &str) -> Option<&'static str> {
