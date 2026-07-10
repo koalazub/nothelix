@@ -253,6 +253,23 @@ pub(super) fn braced_sub_command(content: &str) -> Option<&'static str> {
     braced_command(content, sub_command_lookup, sub_lookup)
 }
 
+/// Spell out a single ASCII digit; pass anything else through unchanged.
+fn digit_to_word(s: &str) -> &str {
+    match s {
+        "0" => "zero",
+        "1" => "one",
+        "2" => "two",
+        "3" => "three",
+        "4" => "four",
+        "5" => "five",
+        "6" => "six",
+        "7" => "seven",
+        "8" => "eight",
+        "9" => "nine",
+        _ => s,
+    }
+}
+
 /// Map a LaTeX font command + letter to a Julia symbol table name.
 /// E.g. `("mathbf", "b")` → `"bfb"` → `𝐛`, `("mathbb", "R")` → `"bbR"` → `ℝ`.
 pub(super) fn latex_font_to_julia(cmd: &str, letter: &str) -> Option<&'static str> {
@@ -266,7 +283,10 @@ pub(super) fn latex_font_to_julia(cmd: &str, letter: &str) -> Option<&'static st
         "mathtt" => "tt",
         _ => return None,
     };
-    // Build the Julia name (e.g., "bfb", "bbR") and binary-search SYMBOLS.
+    // Bold/double-struck/mono digit glyphs are keyed by word ("bfzero", not
+    // "bf0"), so a bare digit must be spelled out before the lookup.
+    let letter = digit_to_word(letter);
+    // Build the Julia name (e.g., "bfb", "bbR", "bfzero") and binary-search.
     let julia_name = format!("{prefix}{letter}");
     SYMBOLS
         .binary_search_by_key(&julia_name.as_str(), |&(k, _)| k)
