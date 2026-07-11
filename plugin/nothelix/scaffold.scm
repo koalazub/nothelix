@@ -264,12 +264,15 @@
 ;; Renumber cells
 
 ;;@doc
-;; Renumber all `@cell/@markdown/@raw/@typst N` markers into a contiguous 0-indexed sequence; runs after saves and as `:renumber-cells`.
-(define (renumber-cells!)
+;; Renumber all `@cell/@markdown/@raw/@typst N` markers into a contiguous 0-indexed sequence; runs after saves and as `:renumber-cells`. Pass #false as commit? to defer the undo-history commit to the caller. Returns #true if any markers were renumbered, #false otherwise.
+(define (renumber-cells! . args)
+  (define commit? (if (null? args) #true (car args)))
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
-  (when (notebook-file? path)
+  (if (not (notebook-file? path))
+      #false
+      (let ()
     (define rope (editor->text doc-id))
     (define total-lines (text.rope-len-lines rope))
 
@@ -335,7 +338,8 @@
 
     (cond
       [(null? indexed)
-       (debug-log "scaffold.renumber: nothing to renumber")]
+       (debug-log "scaffold.renumber: nothing to renumber")
+       #false]
       [else
        (for-each
          (lambda (entry)
@@ -347,7 +351,7 @@
            (helix.static.delete_selection)
            (helix.static.insert_string (string-append new-line "\n")))
          (reverse indexed))
-       (helix.static.commit-changes-to-history)
+       (when commit? (helix.static.commit-changes-to-history))
 
        (helix.goto (number->string (+ saved-line 1)))
        (helix.static.goto_line_start)
@@ -360,7 +364,8 @@
          (string-append "scaffold.renumber: rewrote="
                         (number->string (length indexed))
                         " restored-line=" (number->string saved-line)
-                        " restored-col=" (number->string saved-col)))])))
+                        " restored-col=" (number->string saved-col)))
+       #true]))))
 
 ;; New-notebook scaffold
 

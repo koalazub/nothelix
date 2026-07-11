@@ -368,12 +368,14 @@
          (when (= my-gen *conceal-generation*)
            (maybe-conceal-current-buffer))))]
     [(member command-name *save-commands*)
-       (format-math-buffer #true)
+       (define fm-changed (format-math-buffer #true #false))
        (math-render-buffer)
        (when (not (math-image-test-mode?))
          (render-all-display-math)
          (render-all-tables))
-       (renumber-cells!)
+       (define rc-changed (renumber-cells! #false))
+       (when (or fm-changed rc-changed)
+         (helix.static.commit-changes-to-history))
        (save-resume-position!)
        (schedule-reconceal 50)]
     [(member command-name *mutating-commands*)
