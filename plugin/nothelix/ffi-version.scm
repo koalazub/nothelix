@@ -8,7 +8,7 @@
 ;; Must equal NOTHELIX_FFI_VERSION in libnothelix/src/lib.rs. The
 ;; ffi-version-mismatch doctor in health.rs scans for this exact
 ;; `(define EXPECTED-FFI-VERSION <n>)` shape — keep it.
-(define EXPECTED-FFI-VERSION 19)
+(define EXPECTED-FFI-VERSION 20)
 
 ;; Probe at runtime: %#maybe-module-get returns #false for a missing
 ;; symbol (unlike %module-get%, which panics); any other failure → v0.
