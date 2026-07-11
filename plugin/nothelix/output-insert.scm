@@ -102,16 +102,6 @@
   (define cell-code-end (cdr marker+code-end))
   (define anchor-line (and cell-code-end (- cell-code-end 1)))
 
-  (when (and anchor-line (>= (+ anchor-line 1) total-lines))
-    (helix.goto (number->string (+ anchor-line 1)))
-    (helix.static.goto_line_end_newline)
-    (helix.static.insert_string "\n")
-    (set! total-lines (text.rope-len-lines (editor->text doc-id))))
-
-  (when anchor-line
-    (helix.goto (number->string (+ anchor-line 2)))
-    (helix.static.goto_line_start))
-
   (define cell-code
     (if (and cell-marker-line cell-code-end)
         (string-join (extract-cell-code (lambda (idx) (doc-get-line rope total-lines idx))
@@ -181,6 +171,14 @@
 
      (define image-marker-line -1)
      (when image-ready
+       (when (and anchor-line (>= (+ anchor-line 1) total-lines))
+         (helix.goto (number->string (+ anchor-line 1)))
+         (helix.static.goto_line_end_newline)
+         (helix.static.insert_string "\n")
+         (set! total-lines (text.rope-len-lines (editor->text doc-id))))
+       (when anchor-line
+         (helix.goto (number->string (+ anchor-line 2)))
+         (helix.static.goto_line_start))
        (set! image-marker-line (current-line-number))
        (define cache-path (save-image-to-cache! jl-path cell-index image-b64))
        (if (string-starts-with? cache-path "ERROR:")

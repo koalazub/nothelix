@@ -42,6 +42,18 @@
          find-cell-marker-by-index)
 
 ;;@doc
+;; Render a kernel-start failure as virtual error rows at the cell's anchor
+;; and persist it to the output store, instead of writing text into the buffer.
+(define (render-cell-error! anchor-line store-cell-id store-source-hash err)
+  (define error-rows (list (string-append "# ERROR: " err)))
+  (when anchor-line
+    (try-set-output-lines-below! anchor-line error-rows))
+  (store-put! store-cell-id store-source-hash
+              (encode-outputs+rows
+                (outputs-json-for-cell "" "" "" err) error-rows))
+  (set-status! (string-append "✗ " err)))
+
+;;@doc
 ;; Advance the spinner animation in the status line.
 (define (update-spinner-frame)
   (define new-frame (spinner-next-frame))
@@ -147,10 +159,7 @@
          (when (or (string-contains? err "does not exist")
                    (string-contains? err "PID file missing"))
            (set! *kernels* (hash-remove *kernels* path)))
-         (helix.static.insert_string (string-append "# ERROR: " err "\n"))
-         (helix.static.insert_string "# ─────────────\n")
-         (set-status! (string-append "✗ " err))
-         (helix.static.commit-changes-to-history)
+         (render-cell-error! (- cell-code-end 1) (cell-id cell-index) (cell-source-hash code) err)
          (set! *executing-kernel-dir* #false)
          (helix.redraw)]))))
 
@@ -266,29 +275,13 @@
             (let ()
               (define err (json-get start-result "error"))
               (set! *executing-kernel-dir* #false)
-              (handle-execution-error cell-code-end err)
+              (handle-execution-error cell-code-end err cell-idx cell-code)
               (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line))))))
 
 ;;@doc
-;; Handle an execution error: write error line and footer under the output header.
-(define (handle-execution-error cell-code-end err)
-  (define focus (editor-focus))
-  (define doc-id (editor->doc-id focus))
-  (define post-rope (editor->text doc-id))
-  (define post-lines (text.rope-len-lines post-rope))
-
-  (let scan ([idx cell-code-end] [lim (+ cell-code-end 20)])
-    (cond
-      [(or (>= idx lim) (>= idx post-lines)) #false]
-      [(string-contains?
-         (text.rope->string (text.rope->line post-rope idx))
-         "─── Output ───")
-       (move-to-line-start-no-center! post-rope (+ idx 1))]
-      [else (scan (+ idx 1) lim)]))
-
-  (helix.static.insert_string (string-append "# ERROR: " err "\n# ─────────────\n"))
-  (helix.static.collapse_selection)
-  (helix.static.commit-changes-to-history)
+;; Handle an execution error: render error rows at the cell's anchor and store them.
+(define (handle-execution-error cell-code-end err cell-idx cell-code)
+  (render-cell-error! (- cell-code-end 1) (cell-id cell-idx) (cell-source-hash cell-code) err)
   (helix.redraw))
 
 (define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)
@@ -353,7 +346,7 @@
             (define code-end (find-cell-code-end get-line total-lines (+ marker-line 1)))
             (define anchor-line (- code-end 1))
             (define code (string-join (extract-cell-code get-line marker-line code-end) "\n"))
-            (define stored (store-get (cell-id cell-idx)))
+            (define stored (store-get-for path (cell-id cell-idx)))
             (define rows (decode-stored-rows stored (cell-source-hash code)))
             (when (list? rows)
               (try-set-output-lines-below! anchor-line rows))))

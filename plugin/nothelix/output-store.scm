@@ -8,7 +8,7 @@
                  (only-in nothelix output-store-put output-store-get output-store-clear))
 
 (provide workspace-id cell-id cell-source-hash
-         store-put! store-get store-clear!
+         store-put! store-get-for store-clear!
          json-escape-string outputs-json-for-cell
          encode-outputs+rows decode-stored-rows)
 
@@ -32,7 +32,10 @@
 (define (store-put! id source-hash outputs-json)
   (output-store-put (workspace-id) id source-hash outputs-json))
 
-(define (store-get id) (output-store-get (workspace-id) id))
+;;@doc
+;; Fetch a cell's stored output, keyed off an explicit workspace path rather
+;; than `editor-focus` — so restore works on a doc that isn't the focused one.
+(define (store-get-for path id) (output-store-get (if path path "unknown") id))
 
 (define (store-clear! id) (output-store-clear (workspace-id) id))
 
@@ -45,7 +48,7 @@
   (string-append outputs-json "\n" *rows-sep-line* "\n" (string-join rows "\n")))
 
 ;;@doc
-;; Given `store-get`'s raw "<hash>\t<body>" value and the cell's current
+;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
 ;; source hash, return the stored text rows when the hash matches and the
 ;; body carries a rows blob, or #false (missing, stale, or no rows).
 (define (decode-stored-rows raw current-hash)

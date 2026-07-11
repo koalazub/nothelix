@@ -14,8 +14,6 @@
          find-output-end-line
          extract-cell-code
          line-blank?
-         expand-delete-start-backward
-         expand-delete-end-forward
          find-last-non-blank-line-before
          delete-line-range
          find-cell-marker-by-index)
@@ -97,24 +95,6 @@
            (char=? (string-ref trimmed i) #\tab))
        (loop (+ i 1))]
       [else #false])))
-
-;;@doc
-;; Walk backward from start-1 over blank lines; return lowest index to delete.
-(define (expand-delete-start-backward get-line floor-line start)
-  (let loop ([i (- start 1)])
-    (cond
-      [(<= i floor-line) (+ floor-line 1)]
-      [(line-blank? (get-line i)) (loop (- i 1))]
-      [else (+ i 1)])))
-
-;;@doc
-;; Walk forward from end over blank lines; return first non-blank index.
-(define (expand-delete-end-forward get-line total-lines end)
-  (let loop ([i end])
-    (cond
-      [(>= i total-lines) i]
-      [(line-blank? (get-line i)) (loop (+ i 1))]
-      [else i])))
 
 ;;@doc
 ;; Walk backward from start-1 to the first non-blank line, floored at floor-line.
