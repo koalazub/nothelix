@@ -2,6 +2,14 @@
 
 (require "string-utils.scm")
 (require "common.scm")
+(require "cell-boundaries.scm")
+(require "stale-tags.scm")
+(require "execution.scm")
+(require "helix/editor.scm")
+(require "helix/misc.scm")
+(require "helix/components.scm")
+(require-builtin helix/core/text as text.)
+(require (prefix-in helix.static. "helix/static.scm"))
 
 (provide parse-param-line
          format-number
@@ -10,7 +18,9 @@
          find-param-target-line
          collect-assigned-names
          token-references?
-         scan-stale-lines)
+         scan-stale-lines
+         param-up
+         param-down)
 
 (define (split-on-first s ch)
   (let loop ([i 0])
@@ -154,3 +164,135 @@
       [(and current-marker (any-name-referenced? (get-line i) names))
        (loop (+ i 1) current-marker #true acc)]
       [else (loop (+ i 1) current-marker hit acc)])))
+
+;; Buffer rewrite — replace the target line's full text (in-place literal edit)
+
+(define (param-line-char-range rope total-lines line-idx)
+  (define start (text.rope-line->char rope line-idx))
+  (define end
+    (if (< (+ line-idx 1) total-lines)
+        (text.rope-line->char rope (+ line-idx 1))
+        (text.rope-len-chars rope)))
+  (cons start end))
+
+(define (rewrite-param-literal! doc-id line-idx new-line-text)
+  (define rope (editor->text doc-id))
+  (define total-lines (text.rope-len-lines rope))
+  (define rng (param-line-char-range rope total-lines line-idx))
+  (define r (helix.static.range (car rng) (cdr rng)))
+  (define sel (helix.static.range->selection r))
+  (helix.static.set-current-selection-object! sel)
+  (helix.static.replace-selection-with new-line-text)
+  (helix.static.collapse_selection)
+  (helix.static.commit-changes-to-history))
+
+(define (build-param-line name new-value-str spec-suffix)
+  (string-append name " = " new-value-str spec-suffix))
+
+;; Active-param statusline readout
+
+(define (param-readout-style) (theme-scope-ref "ui.statusline"))
+
+(define (param-readout-element view-id focused)
+  (if (not focused)
+      '()
+      (let* ([doc-id (editor->doc-id view-id)]
+             [path (and doc-id (editor-document->path doc-id))])
+        (if (not (and path (string-suffix? path ".jl")))
+            '()
+            (let* ([rope (editor->text doc-id)]
+                   [total (text.rope-len-lines rope)]
+                   [cl (current-line-number)]
+                   [tgt (find-param-target-line
+                          (lambda (i) (doc-get-line rope total i)) total cl)])
+              (if (not tgt)
+                  '()
+                  (let ([p (parse-param-line (doc-get-line rope total tgt))])
+                    (if (not p)
+                        '()
+                        (list (span (string-append
+                                      " " (car p) "=" (cadr p)
+                                      " [" (number->string (list-ref p 2))
+                                      ":" (number->string (list-ref p 3)) "] ")
+                                    (param-readout-style)))))))))))
+
+(push-status-element! 'right (status-element param-readout-element))
+
+;; Debounced single re-run scheduler — nudging repeatedly coalesces into one
+;; execute-cell after 150ms of quiet, via a generation counter.
+
+(define *param-rerun-generation* (box 0))
+
+(define (schedule-param-rerun!)
+  (define gen (+ 1 (unbox *param-rerun-generation*)))
+  (set-box! *param-rerun-generation* gen)
+  (enqueue-thread-local-callback-with-delay 150
+    (lambda ()
+      (when (= gen (unbox *param-rerun-generation*))
+        (execute-cell)))))
+
+;; Stale-tag staging — each line goes through try-set-stale-tag!, which
+;; no-ops via its own with-handler on an hx without the Phase A fork builtins.
+
+(define (stage-stale-tags! doc-id param-line names)
+  (when (pair? names)
+    (define rope (editor->text doc-id))
+    (define total (text.rope-len-lines rope))
+    (define get-line (lambda (i) (doc-get-line rope total i)))
+    (define stale-lines (scan-stale-lines get-line total param-line names))
+    (define label (string-append "  ○ stale · " (string-join names ", ") " changed"))
+    (set-stale-tags-for-lines! stale-lines label)))
+
+;; :param-up / :param-down commands
+
+(define (string-trim-right s)
+  (if (string? s) (trim-end s) ""))
+
+(define (nudge-param! dir)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (cond
+    [(not (and path (string-suffix? path ".jl")))
+     (set-status! "param: only runs on .jl notebook files")]
+    [else
+     (define rope (editor->text doc-id))
+     (define total (text.rope-len-lines rope))
+     (define get-line (lambda (i) (doc-get-line rope total i)))
+     (define cl (current-line-number))
+     (define tgt (find-param-target-line get-line total cl))
+     (cond
+       [(not tgt) (set-status! "param: no @param at or above the cursor")]
+       [else
+        (define line (get-line tgt))
+        (define p (parse-param-line line))
+        (define name (car p))
+        (define cur (string->number (cadr p)))
+        (define lo (list-ref p 2))
+        (define hi (list-ref p 3))
+        (define step (list-ref p 4))
+        (define kind (list-ref p 5))
+        (define next (nudge-param-value cur lo hi step dir))
+        (define dec (if (eq? kind 'int) 0 (decimals-of step)))
+        (define new-str (format-number next dec))
+        (define comment-half (split-on-first line #\#))
+        (define spec-suffix (if comment-half (string-append "  #" (cdr comment-half)) ""))
+        (define newline-suffix (if (string-suffix? line "\n") "\n" ""))
+        (rewrite-param-literal! doc-id tgt
+          (string-append (build-param-line name new-str (string-trim-right spec-suffix)) newline-suffix))
+        (define cell-start (find-cell-start-line get-line tgt))
+        (define cell-end (find-cell-code-end get-line total (+ cell-start 1)))
+        (define names (collect-assigned-names get-line cell-start cell-end))
+        (stage-stale-tags! doc-id cell-start names)
+        (schedule-param-rerun!)
+        (set-status! (string-append name " = " new-str))])]))
+
+;;@doc
+;; Increase the @param at/above the cursor by one step, rewrite the literal,
+;; stage downstream stale tags, and debounce a single cell re-run.
+(define (param-up) (nudge-param! 1))
+
+;;@doc
+;; Decrease the @param at/above the cursor by one step, rewrite the literal,
+;; stage downstream stale tags, and debounce a single cell re-run.
+(define (param-down) (nudge-param! -1))

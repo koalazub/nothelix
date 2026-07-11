@@ -13,6 +13,7 @@
 (require "project-config.scm")
 (require "kernel.scm")
 (require "spinner.scm")
+(require "stale-tags.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -111,6 +112,7 @@
   (define (get-line idx) (doc-get-line rope total-lines idx))
 
   (define cell-start (find-cell-start-line get-line current-line))
+  (clear-stale-tag-for-line! cell-start)
 
   (when (not (string-starts-with? (string-trim (get-line cell-start)) "@cell"))
     (set-status! "Not a code cell — @markdown/@raw/@typst cells are not executed")
@@ -243,6 +245,7 @@
   (define updated-rope (editor->text doc-id))
   (define updated-total-lines (text.rope-len-lines updated-rope))
   (define cell-marker-line (find-cell-marker-by-index updated-rope updated-total-lines cell-idx))
+  (when cell-marker-line (clear-stale-tag-for-line! cell-marker-line))
 
   (if (not cell-marker-line)
       (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)

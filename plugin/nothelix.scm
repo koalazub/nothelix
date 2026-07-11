@@ -28,6 +28,7 @@
 (require "nothelix/output-insert.scm")
 (require "nothelix/plot-resize.scm")
 (require "nothelix/execution.scm")
+(require "nothelix/param-tweak.scm")
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
 (require "nothelix/chart-viewer.scm")
@@ -57,6 +58,7 @@
          view-chart
          insert-image
          plot-grow plot-shrink
+         param-up param-down
          format-math-buffer
          math-render-buffer
          math-render-clear
@@ -207,8 +209,8 @@
 (define notebook-bindings
   (keymap
     (normal
-      ("]" ("l" ":next-cell"))
-      ("[" ("l" ":previous-cell"))
+      ("]" ("l" ":next-cell") ("p" ":param-up"))
+      ("[" ("l" ":previous-cell") ("p" ":param-down"))
       (space ("n" ("r" ":execute-cell")
                   ("n" ":new-cell")
                   ("j" ":cell-picker")
@@ -255,6 +257,10 @@
     ;; Plot resizing
     "plot-grow"   "Grow the @image plot block under the cursor and re-render."
     "plot-shrink" "Shrink the @image plot block under the cursor and re-render."
+
+    ;; Tweakable parameters
+    "param-up"   "Increase the @param at/above the cursor by one step and re-render."
+    "param-down" "Decrease the @param at/above the cursor by one step and re-render."
 
     ;; Math formatting
     "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
