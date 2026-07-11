@@ -44,8 +44,8 @@
   (define (get-line idx) (doc-get-line rope total-lines idx))
 
   (define cell-start (find-cell-start-line get-line current-line))
-  (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
-  (define cell-end (find-full-cell-end get-line total-lines cell-code-end))
+  (define cell-region-end (find-cell-region-end get-line total-lines (+ cell-start 1)))
+  (define cell-end (find-full-cell-end get-line total-lines cell-region-end))
 
   (select-line-range cell-start cell-end)
   (set-status! (string-append "Selected cell: lines "

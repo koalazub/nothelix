@@ -17,9 +17,18 @@
          line-blank?
          find-last-non-blank-line-before
          delete-line-range
-         find-cell-marker-by-index)
+         find-cell-marker-by-index
+         output-image-line?)
 
 ;; Cell boundary detection
+
+;;@doc
+;; #t iff `line` belongs to a cell's output-image region: a rendered
+;; `# @image ` marker, or a `# [Plot ` render-failure comment emitted by
+;; update-cell-output when a plot fails to render.
+(define (output-image-line? line)
+  (or (string-starts-with? line "# @image ")
+      (string-starts-with? line "# [Plot ")))
 
 ;;@doc
 ;; Find the cell start by searching backwards for a marker; 0 if none.
@@ -31,30 +40,34 @@
             (find-cell-start-line get-line (- line-idx 1))))))
 
 ;;@doc
-;; Find where cell code ends: the next marker, output header, `# @image`
-;; marker, or EOF.
+;; Find where cell code ends: the next marker, output header, output-image
+;; line (`# @image ` or `# [Plot `), or EOF.
 (define (find-cell-code-end get-line total-lines line-idx)
   (if (>= line-idx total-lines) total-lines
       (let ([line (get-line line-idx)])
         (if (or (cell-marker? line)
                 (string-starts-with? line "# ═══")
                 (string-starts-with? line "# ─── Output")
-                (string-starts-with? line "# @image "))
+                (output-image-line? line))
             line-idx
             (find-cell-code-end get-line total-lines (+ line-idx 1))))))
 
 ;;@doc
-;; Find the end of a cell's full region — code plus any stale `# @image`
-;; marker/blank lines from a prior run — stopping at the next marker, output
-;; header, or EOF. Unlike find-cell-code-end, does not stop at `# @image `.
+;; Find the end of a cell's full region — code plus any stale output-image
+;; lines (`# @image ` marker/blank canvas rows, or `# [Plot ` render-failure
+;; comments) from a prior run — stopping at the next marker, output header,
+;; or EOF. Unlike find-cell-code-end, does not stop at output-image lines.
 (define (find-cell-region-end get-line total-lines line-idx)
   (if (>= line-idx total-lines) total-lines
       (let ([line (get-line line-idx)])
-        (if (or (cell-marker? line)
-                (string-starts-with? line "# ═══")
-                (string-starts-with? line "# ─── Output"))
-            line-idx
-            (find-cell-region-end get-line total-lines (+ line-idx 1))))))
+        (cond
+          [(output-image-line? line)
+           (find-cell-region-end get-line total-lines (+ line-idx 1))]
+          [(or (cell-marker? line)
+               (string-starts-with? line "# ═══")
+               (string-starts-with? line "# ─── Output"))
+           line-idx]
+          [else (find-cell-region-end get-line total-lines (+ line-idx 1))]))))
 
 ;;@doc
 ;; Find the "# ─── Output ───" header from line-idx, or #false.
