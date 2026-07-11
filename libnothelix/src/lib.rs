@@ -71,7 +71,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 23;
+pub const NOTHELIX_FFI_VERSION: u32 = 24;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -157,6 +157,7 @@ fn build_module() -> FFIModule {
     m.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
     m.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
     m.register_fn("json-get-all-images", json_utils::json_get_all_images);
+    m.register_fn("json-get-text-plots", json_utils::json_get_text_plots);
 
     // ── Graphics ──────────────────────────────────────────────────────────────
     m.register_fn("viuer-protocol", graphics::viuer_protocol);

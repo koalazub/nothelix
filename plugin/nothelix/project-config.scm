@@ -17,6 +17,7 @@
 ;;;   render-width    = 220         ; pin math/table image width in columns
 ;;;   conceal-on-open = true        ; auto-conceal LaTeX when a file opens
 ;;;   plots-per-cell  = 32          ; image-id slots reserved per cell
+;;;   plot-mode       = auto        ; auto | raster | braille
 ;;;
 ;;; A line-based format (not s-expr) is deliberate: Steel's `read` leaves the
 ;;; reader wedged after a parse error, so one malformed config could silently
@@ -40,6 +41,8 @@
                           nothelix-trust-remove))
 
 (provide conceal-on-open?
+         plot-mode
+         set-plot-mode!
          maybe-apply-project-config!
          apply-project-config!
          find-project-config
@@ -59,6 +62,27 @@
 ;; conceal-on-open defaults to on; a project file may turn it off.
 (define *conceal-on-open* (box #true))
 (define (conceal-on-open?) (unbox *conceal-on-open*))
+
+;;@doc
+;; How a UnicodePlots-capable cell should render: "auto" (kernel decides,
+;; today always braille for a UnicodePlots value), "raster" (force a PNG
+;; capture instead of braille text), or "braille" (force the colored
+;; braille text-plot path). Threaded into the kernel's execute-cell
+;; request (see `execution.scm`'s `kernel-execute-cell-start` calls); the
+;; kernel does not yet branch on it — see `libnothelix/src/kernel.rs`'s
+;; `kernel_execute_cell_start` doc comment for the follow-up note.
+(define *plot-mode* (box "auto"))
+(define (plot-mode) (unbox *plot-mode*))
+
+(define (valid-plot-mode? v)
+  (or (equal? v "auto") (equal? v "raster") (equal? v "braille")))
+
+;;@doc
+;; Override the plot-render mode. Ignores anything that isn't one of
+;; "auto"/"raster"/"braille" — an untrusted or malformed config value
+;; leaves the current mode (default "auto") in place.
+(define (set-plot-mode! v)
+  (when (and (string? v) (valid-plot-mode? v)) (set-box! *plot-mode* v)))
 
 ;; --- path helpers (string-only; no new primitives) ---
 
@@ -156,6 +180,8 @@
     (when (and (number? rw) (> rw 0)) (set-math-image-width-override! rw)))
   (let ([ppc (config-ref alist "plots-per-cell" #false)])
     (when (and (exact-integer? ppc) (> ppc 0)) (set-plots-per-cell! ppc)))
+  (let ([pm (config-ref alist "plot-mode" #false)])
+    (when (string? pm) (set-plot-mode! pm)))
   (let ([co (config-ref alist "conceal-on-open" 'unset)])
     (when (boolean? co) (set-box! *conceal-on-open* co)))
   alist)

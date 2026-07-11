@@ -27,6 +27,7 @@
                           json-get-first-image-bytes
                           json-get-animated-mime
                           json-get-plot-data
+                          json-get-text-plots
                           kitty-placeholder-payload
                           kitty-placeholder-rows
                           save-image-to-cache!
@@ -102,6 +103,7 @@
 
 ;;@doc
 ;; Insert execution results (stdout, stderr, images, errors) into the buffer under the cell's output header.
+;; Text-plot styled rows (span lists, not plain strings) are folded only into what's rendered — the store keeps the plain-string rows separately.
 (define (update-cell-output result-json jl-path cell-index . rest)
   (define saved-kernel-dir
     (if (and (not (null? rest)) (string? (car rest)))
@@ -158,6 +160,16 @@
      (define has-error (equal? (field-at 5) "true"))
      (define text-lines
        (if (> (string-length stdout-text) 0) (text->plain-lines stdout-text) '()))
+
+     (define text-plots-blob (json-get-text-plots result-json))
+     (define text-plot-groups (decode-text-plots-blob text-plots-blob))
+     (define text-plot-ready? (not (null? text-plot-groups)))
+     (define text-plot-styled-rows
+       (if text-plot-ready?
+           (apply append
+                  (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
+                       text-plot-groups))
+           '()))
 
      (define all-images-str
        (json-get-all-images result-json
@@ -238,7 +250,7 @@
      (when (> (string-length image-error-msg) 0)
        (helix.static.insert_string image-error-msg))
 
-     (when (and (not image-ready) (> (string-length output-repr) 0))
+     (when (and (not image-ready) (not text-plot-ready?) (> (string-length output-repr) 0))
        (set! text-lines (append text-lines (text->plain-lines output-repr))))
 
      (define filtered-stderr
@@ -263,12 +275,17 @@
      (when (> (string-length (string-trim filtered-stderr)) 0)
        (set! text-lines (append text-lines (cons "stderr:" (text->plain-lines filtered-stderr)))))
 
+     (define stored-text-lines text-lines)
+     (define render-lines
+       (if text-plot-ready? (append text-lines text-plot-styled-rows) text-lines))
+
      (when anchor-line
-       (try-set-output-lines-below! anchor-line text-lines))
+       (try-set-output-lines-below! anchor-line render-lines))
      (store-put! store-cell-id store-source-hash
-                 (encode-outputs+rows
+                 (encode-outputs+rows+text-plots
                    (outputs-json-for-cell stdout-text filtered-stderr output-repr "")
-                   text-lines))
+                   stored-text-lines
+                   text-plots-blob))
 
      (define animated-mime
        (json-get-animated-mime result-json))
@@ -331,7 +348,7 @@
      (define base-status
        (cond
          [has-error "Cell executed with errors"]
-         [image-ready "✓ Cell executed (with plot)"]
+         [(or image-ready text-plot-ready?) "✓ Cell executed (with plot)"]
          [else "✓ Cell executed"]))
      (set-status!
        (if truncated?

@@ -172,6 +172,83 @@ pub fn json_get_plot_data(json_str: String) -> String {
         .unwrap_or_default()
 }
 
+/// Grammar for a result JSON's `text_plots` array (see
+/// `kernel/output_capture.jl`'s `capture_unicode_plot_text`) flattened into
+/// one delimiter-joined string for the plugin's hand-rolled Scheme JSON
+/// reader (`json-utils.scm`), which only walks flat objects/string-arrays —
+/// the same "parse JSON in Rust, decode delimiters in Scheme" split
+/// `json_get_many`/`json_get_all_images` already use. Delimiters follow
+/// `math_image::BATCH_SEP`'s convention (ASCII information separators,
+/// widest scope first); a plot's rows/spans sections are always present
+/// (possibly empty), so splitting a plot on `SECTION_SEP` always yields
+/// exactly two parts:
+///
+///   text_plots := plot (PLOT_SEP plot)*
+///   plot       := rows SECTION_SEP spans
+///   rows       := row ("\n" row)*         -- "" for a plot with no rows
+///   spans      := span (SPAN_SEP span)*   -- "" for a plot with no spans
+///   span       := "<row>,<start>,<end>,<color>" (four ASCII integers)
+const PLOT_SEP: char = '\u{1e}';
+const SECTION_SEP: char = '\u{1d}';
+const SPAN_SEP: char = '\u{1f}';
+
+/// Flatten the result JSON's `text_plots` array into the delimiter-joined
+/// string described above. Returns "" if `text_plots` is absent, not an
+/// array, or empty.
+pub fn json_get_text_plots(json_str: String) -> String {
+    let parsed: Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    let Some(plots) = parsed.get("text_plots").and_then(Value::as_array) else {
+        return String::new();
+    };
+    plots
+        .iter()
+        .map(encode_one_text_plot)
+        .collect::<Vec<_>>()
+        .join(&PLOT_SEP.to_string())
+}
+
+fn encode_one_text_plot(plot: &Value) -> String {
+    let rows = plot
+        .get("rows")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    let spans = plot
+        .get("spans")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(encode_one_span)
+                .collect::<Vec<_>>()
+                .join(&SPAN_SEP.to_string())
+        })
+        .unwrap_or_default();
+    format!("{rows}{SECTION_SEP}{spans}")
+}
+
+/// One `[row, start, end, color]` span to `"row,start,end,color"`. `None`
+/// (dropped by the `filter_map` caller) for a malformed entry — fewer than
+/// four elements, or any of the four isn't an integer.
+fn encode_one_span(span: &Value) -> Option<String> {
+    let arr = span.as_array()?;
+    if arr.len() < 4 {
+        return None;
+    }
+    let row = arr[0].as_i64()?;
+    let start = arr[1].as_i64()?;
+    let end = arr[2].as_i64()?;
+    let color = arr[3].as_i64()?;
+    Some(format!("{row},{start},{end},{color}"))
+}
+
 /// Recursively search `v` for image data (base64 or `file:` sidecar marker).
 ///
 /// Handles two formats:
@@ -418,5 +495,53 @@ mod tests {
     fn all_images_no_images_key() {
         let json = r#"{"stdout": "hello"}"#;
         assert_eq!(json_get_all_images(json.into(), String::new()), "");
+    }
+
+    #[test]
+    fn text_plots_absent_returns_empty() {
+        assert_eq!(json_get_text_plots(r#"{"stdout":"hi"}"#.to_string()), "");
+    }
+
+    #[test]
+    fn text_plots_not_array_returns_empty() {
+        assert_eq!(
+            json_get_text_plots(r#"{"text_plots":"oops"}"#.to_string()),
+            ""
+        );
+    }
+
+    #[test]
+    fn text_plots_empty_array_returns_empty() {
+        assert_eq!(json_get_text_plots(r#"{"text_plots":[]}"#.to_string()), "");
+    }
+
+    #[test]
+    fn text_plots_single_plot_encodes_rows_and_spans() {
+        let json = r#"{"text_plots":[{"rows":["AB","CD"],"spans":[[0,0,1,2],[1,0,2,4]]}]}"#;
+        let out = json_get_text_plots(json.to_string());
+        assert_eq!(out, "AB\nCD\u{1d}0,0,1,2\u{1f}1,0,2,4");
+    }
+
+    #[test]
+    fn text_plots_plot_with_no_spans_has_empty_spans_section() {
+        let json = r#"{"text_plots":[{"rows":["A"],"spans":[]}]}"#;
+        let out = json_get_text_plots(json.to_string());
+        assert_eq!(out, "A\u{1d}");
+    }
+
+    #[test]
+    fn text_plots_multi_plot_joins_with_plot_sep() {
+        let json =
+            r#"{"text_plots":[{"rows":["A"],"spans":[]},{"rows":["B"],"spans":[[0,0,1,3]]}]}"#;
+        let out = json_get_text_plots(json.to_string());
+        let parts: Vec<&str> = out.split('\u{1e}').collect();
+        assert_eq!(parts, vec!["A\u{1d}", "B\u{1d}0,0,1,3"]);
+    }
+
+    #[test]
+    fn text_plots_malformed_span_is_skipped() {
+        let json = r#"{"text_plots":[{"rows":["A"],"spans":[[0,0,1],[0,0,1,2]]}]}"#;
+        let out = json_get_text_plots(json.to_string());
+        assert_eq!(out, "A\u{1d}0,0,1,2");
     }
 }

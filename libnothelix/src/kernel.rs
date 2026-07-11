@@ -310,8 +310,23 @@ pub fn kernel_stop_all_processes() -> String {
     "All kernel processes stopped".to_string()
 }
 
-pub fn kernel_execute_cell_start(kernel_dir: String, cell_index: isize, code: String) -> String {
-    let cmd = json!({"type": "execute_cell", "cell_index": cell_index, "code": code});
+/// `plot_mode` is `"auto"`, `"raster"`, or `"braille"` (the project's
+/// `plot-mode` config, `plugin/nothelix/project-config.scm`) — forwarded to
+/// the kernel command so a future runner.jl revision can force PNG vs
+/// braille rendering. Threaded through as of this change; the kernel does
+/// not yet read the field (follow-up), so it's currently inert.
+pub fn kernel_execute_cell_start(
+    kernel_dir: String,
+    cell_index: isize,
+    code: String,
+    plot_mode: String,
+) -> String {
+    let cmd = json!({
+        "type": "execute_cell",
+        "cell_index": cell_index,
+        "code": code,
+        "plot_mode": plot_mode,
+    });
     match write_kernel_command(&kernel_dir, &cmd) {
         Ok(_) => json!({"status": "started"}).to_string(),
         Err(e) => json!({"status": "error", "error": e}).to_string(),
@@ -431,5 +446,22 @@ mod tests {
             out.contains("\"status\":\"none\""),
             "sleep is not runner.jl: {out}"
         );
+    }
+
+    #[test]
+    fn execute_cell_start_writes_plot_mode_into_input_json() {
+        let dir = std::env::temp_dir().join("nothelix-execute-plot-mode-test");
+        let _ = fs::create_dir_all(&dir);
+        let out = kernel_execute_cell_start(
+            dir.to_string_lossy().into_owned(),
+            3,
+            "1+1".to_string(),
+            "braille".to_string(),
+        );
+        let written = fs::read_to_string(dir.join("input.json")).expect("read input.json");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(out.contains("\"status\":\"started\""), "{out}");
+        assert!(written.contains("\"plot_mode\":\"braille\""), "{written}");
+        assert!(written.contains("\"cell_index\":3"), "{written}");
     }
 }

@@ -10,6 +10,7 @@
 (require "output-insert.scm")
 (require "output-store.scm")
 (require "output-render.scm")
+(require "project-config.scm")
 (require "kernel.scm")
 (require "spinner.scm")
 (require "helix/editor.scm")
@@ -147,7 +148,7 @@
       (helix.redraw)
 
       (set! *executing-kernel-dir* kernel-dir)
-      (define start-result (kernel-execute-cell-start kernel-dir cell-index code))
+      (define start-result (kernel-execute-cell-start kernel-dir cell-index code (plot-mode)))
       (define start-status (json-get start-result "status"))
 
       (cond
@@ -266,7 +267,7 @@
         (helix.redraw)
 
         (set! *executing-kernel-dir* kernel-dir)
-        (define start-result (kernel-execute-cell-start kernel-dir cell-idx cell-code))
+        (define start-result (kernel-execute-cell-start kernel-dir cell-idx cell-code (plot-mode)))
         (define start-status (json-get start-result "status"))
 
         (if (equal? start-status "started")
@@ -347,7 +348,13 @@
             (define anchor-line (- code-end 1))
             (define code (string-join (extract-cell-code get-line marker-line code-end) "\n"))
             (define stored (store-get-for path (cell-id cell-idx)))
-            (define rows (decode-stored-rows stored (cell-source-hash code)))
-            (when (list? rows)
-              (try-set-output-lines-below! anchor-line rows))))
+            (define hash (cell-source-hash code))
+            (define rows (decode-stored-rows stored hash))
+            (define text-plot-rows
+              (apply append
+                     (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
+                          (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash) "")))))
+            (when (or (list? rows) (not (null? text-plot-rows)))
+              (try-set-output-lines-below! anchor-line
+                (append (if (list? rows) rows '()) text-plot-rows)))))
         cell-indices))))
