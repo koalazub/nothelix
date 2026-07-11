@@ -9,7 +9,8 @@
 
 (provide workspace-id cell-id cell-source-hash
          store-put! store-get store-clear!
-         json-escape-string outputs-json-for-cell)
+         json-escape-string outputs-json-for-cell
+         encode-outputs+rows decode-stored-rows)
 
 ;;@doc
 ;; The current document's path, used as the workspace key for the output store.
@@ -34,6 +35,35 @@
 (define (store-get id) (output-store-get (workspace-id) id))
 
 (define (store-clear! id) (output-store-clear (workspace-id) id))
+
+(define *rows-sep-line* "###NOTHELIX-OUTPUT-ROWS###")
+
+;;@doc
+;; Bundle nbformat outputs-json with the exact text rows that were rendered
+;; for it, so a later reopen can restore the rows without re-parsing JSON.
+(define (encode-outputs+rows outputs-json rows)
+  (string-append outputs-json "\n" *rows-sep-line* "\n" (string-join rows "\n")))
+
+;;@doc
+;; Given `store-get`'s raw "<hash>\t<body>" value and the cell's current
+;; source hash, return the stored text rows when the hash matches and the
+;; body carries a rows blob, or #false (missing, stale, or no rows).
+(define (decode-stored-rows raw current-hash)
+  (if (or (not raw) (equal? raw ""))
+      #false
+      (let ([hash+body (split-once raw "\t")])
+        (if (not (list? hash+body))
+            #false
+            (let ([stored-hash (car hash+body)]
+                  [body (cadr hash+body)])
+              (if (not (equal? stored-hash current-hash))
+                  #false
+                  (let ([marker (string-append "\n" *rows-sep-line* "\n")])
+                    (let ([json+rows (split-once body marker)])
+                      (if (not (list? json+rows))
+                          #false
+                          (let ([rows-blob (cadr json+rows)])
+                            (if (equal? rows-blob "") '() (string-split rows-blob "\n"))))))))))))
 
 ;;@doc
 ;; Escape a string for embedding as a JSON string literal (no surrounding quotes).

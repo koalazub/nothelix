@@ -36,7 +36,7 @@
 
 (require "nothelix/animation.scm")
 
-(provide update-cell-output)
+(provide update-cell-output cell-marker-and-code-end clear-cell-output!)
 
 ;;@doc
 ;; Strip a trailing newline and split `text` into a list of plain lines; "" yields '().
@@ -59,6 +59,25 @@
             (find-cell-code-end (lambda (idx) (doc-get-line rope total-lines idx))
                                  total-lines (+ cell-marker-line 1)))
       (cons #false #false)))
+
+;;@doc
+;; Clear a cell's prior output: virtual text rows at its anchor, its image id
+;; band, and its stored output entry.
+(define (clear-cell-output! cell-index)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define rope (editor->text doc-id))
+  (define total-lines (text.rope-len-lines rope))
+  (define marker+code-end (cell-marker-and-code-end rope total-lines cell-index))
+  (define cell-code-end (cdr marker+code-end))
+  (define anchor-line (and cell-code-end (- cell-code-end 1)))
+  (when anchor-line
+    (try-clear-output-lines-at! anchor-line))
+  (define image-id (cell-index->image-id cell-index))
+  (with-handler
+    (lambda (_) #f)
+    (eval `(helix.static.clear-raw-content-in-range! ,image-id ,(+ image-id 1))))
+  (store-clear! (cell-id cell-index)))
 
 ;;@doc
 ;; Insert execution results (stdout, stderr, images, errors) into the buffer under the cell's output header.
@@ -114,10 +133,12 @@
        (if (and jl-path (string-suffix? jl-path ".jl"))
            (format-julia-error-with-notebook (or structured "") err jl-path)
            (format-julia-error (or structured "") err)))
+     (define error-rows (text->plain-lines formatted))
      (when anchor-line
-       (try-set-output-lines-below! anchor-line (text->plain-lines formatted)))
+       (try-set-output-lines-below! anchor-line error-rows))
      (store-put! store-cell-id store-source-hash
-                 (outputs-json-for-cell "" "" "" formatted))
+                 (encode-outputs+rows
+                   (outputs-json-for-cell "" "" "" formatted) error-rows))
      (set-status! (string-append "✗ " err))]
     [else
      (define output-repr (field-at 2))
@@ -201,7 +222,9 @@
      (when anchor-line
        (try-set-output-lines-below! anchor-line text-lines))
      (store-put! store-cell-id store-source-hash
-                 (outputs-json-for-cell stdout-text filtered-stderr output-repr ""))
+                 (encode-outputs+rows
+                   (outputs-json-for-cell stdout-text filtered-stderr output-repr "")
+                   text-lines))
 
      (define animated-mime
        (json-get-animated-mime result-json))

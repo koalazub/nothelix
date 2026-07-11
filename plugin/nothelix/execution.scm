@@ -8,6 +8,8 @@
 (require "resume.scm")
 (require "image-cache.scm")
 (require "output-insert.scm")
+(require "output-store.scm")
+(require "output-render.scm")
 (require "kernel.scm")
 (require "spinner.scm")
 (require "helix/editor.scm")
@@ -30,15 +32,13 @@
          execute-all-cells
          execute-cells-above
          cancel-cell
+         restore-cell-outputs-on-open!
          render-cached-images
          sync-images-to-markers!
          sync-images-if-markers-changed!
          find-cell-start-line
          find-cell-code-end
-         find-output-start
-         find-output-end-line
          extract-cell-code
-         delete-line-range
          find-cell-marker-by-index)
 
 ;;@doc
@@ -113,12 +113,12 @@
     (helix.redraw)
     (error "Cell is empty"))
 
-  (define output-start (find-output-start get-line total-lines cell-code-end))
-  (when output-start
-    (define output-end (find-output-end-line get-line total-lines (+ output-start 1)))
-    (define extended-start (expand-delete-start-backward get-line cell-start output-start))
-    (define extended-end (expand-delete-end-forward get-line total-lines output-end))
-    (delete-line-range extended-start extended-end))
+  (define cell-info-json (get-cell-at-line path current-line))
+  (define cell-index-str (json-get cell-info-json "cell_index"))
+  (define cell-index (if (> (string-length cell-index-str) 0)
+                          (string->number cell-index-str)
+                          0))
+  (clear-cell-output! cell-index)
 
   (define insert-at-line
     (find-last-non-blank-line-before get-line cell-start cell-code-end))
@@ -128,11 +128,6 @@
   (kernel-get-for-notebook path "julia"
     (lambda (kernel-state)
       (define kernel-dir (hash-get kernel-state 'kernel-dir))
-      (define cell-info-json (get-cell-at-line path current-line))
-      (define cell-index-str (json-get cell-info-json "cell_index"))
-      (define cell-index (if (> (string-length cell-index-str) 0)
-                              (string->number cell-index-str)
-                              0))
 
       (spinner-reset)
       (define spinner-frame (spinner-next-frame))
@@ -249,12 +244,7 @@
 
         (define cell-code-end (find-cell-code-end get-line updated-total-lines (+ cell-marker-line 1)))
 
-        (define output-start (find-output-start get-line updated-total-lines cell-code-end))
-        (when output-start
-          (define output-end (find-output-end-line get-line updated-total-lines (+ output-start 1)))
-          (define extended-start (expand-delete-start-backward get-line cell-marker-line output-start))
-          (define extended-end (expand-delete-end-forward get-line updated-total-lines output-end))
-          (delete-line-range extended-start extended-end))
+        (clear-cell-output! cell-idx)
 
         (define insert-at-line
           (find-last-non-blank-line-before get-line cell-marker-line cell-code-end))
@@ -340,3 +330,31 @@
 
       (define current-cell-idx (string->number (json-get cell-info-json "cell_index")))
       (execute-cells-up-to doc-id path current-line current-cell-idx))))
+
+;;@doc
+;; Re-render every cell's output from the output store on document open,
+;; skipping cells whose stored hash no longer matches their current source
+;; (stale — edited since last run).
+(define (restore-cell-outputs-on-open! doc-id path)
+  (when (and path (string-suffix? path ".jl"))
+    (define cells-json (list-jl-code-cells path 999999))
+    (define cells-err (json-get cells-json "error"))
+    (when (equal? (string-length cells-err) 0)
+      (define indices-str (json-get cells-json "indices"))
+      (define cell-indices (parse-indices-string indices-str))
+      (define rope (editor->text doc-id))
+      (define total-lines (text.rope-len-lines rope))
+      (define (get-line idx) (doc-get-line rope total-lines idx))
+
+      (for-each
+        (lambda (cell-idx)
+          (define marker-line (find-cell-marker-by-index rope total-lines cell-idx))
+          (when marker-line
+            (define code-end (find-cell-code-end get-line total-lines (+ marker-line 1)))
+            (define anchor-line (- code-end 1))
+            (define code (string-join (extract-cell-code get-line marker-line code-end) "\n"))
+            (define stored (store-get (cell-id cell-idx)))
+            (define rows (decode-stored-rows stored (cell-source-hash code)))
+            (when (list? rows)
+              (try-set-output-lines-below! anchor-line rows))))
+        cell-indices))))

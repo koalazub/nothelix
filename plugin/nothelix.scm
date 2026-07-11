@@ -392,6 +392,7 @@
           ;; font/colour/width settings take effect immediately.
           (maybe-apply-project-config!)
           (render-cached-images)
+          (restore-cell-outputs-on-open! doc-id (editor-document->path doc-id))
           (when (conceal-on-open?)
             (maybe-conceal-current-buffer))
           (when (not (math-image-test-mode?))
