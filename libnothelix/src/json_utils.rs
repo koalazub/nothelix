@@ -41,11 +41,6 @@ pub fn json_get_bool(json_str: String, key: String) -> String {
         .unwrap_or_else(|| "false".to_string())
 }
 
-pub fn json_get_first_image(json_str: String) -> String {
-    let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
-    find_first_image_data(&parsed).unwrap_or_default()
-}
-
 const ANIMATED_MIMES: &[&str] = &[
     "image/gif",
     "image/apng",
@@ -93,9 +88,9 @@ fn find_animated_mime(v: &Value) -> Option<String> {
 /// already-base64 data through unchanged. Returns `None` if `data` is
 /// empty or a sidecar read fails.
 ///
-/// Shared by the first-image (`json_get_first_image_with_dir`) and
-/// all-images (`json_get_all_images`) paths so the base64-or-sidecar
-/// resolution logic lives in exactly one place.
+/// Shared by every entry in the all-images (`json_get_all_images`) path —
+/// both the `images`-array case and its single-image mime-bundle fallback —
+/// so the base64-or-sidecar resolution logic lives in exactly one place.
 fn resolve_one_image(data: &str, kernel_dir: &str) -> Option<String> {
     if data.is_empty() {
         return None;
@@ -112,19 +107,12 @@ fn resolve_one_image(data: &str, kernel_dir: &str) -> Option<String> {
     }
 }
 
-/// Like `json_get_first_image` but resolves sidecar files from `kernel_dir`.
-/// If image data starts with `"file:"`, reads the raw PNG and base64-encodes it.
-pub fn json_get_first_image_with_dir(json_str: String, kernel_dir: String) -> String {
-    let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
-    find_first_image_data(&parsed)
-        .and_then(|data| resolve_one_image(&data, &kernel_dir))
-        .unwrap_or_default()
-}
-
-/// Like `json_get_first_image_with_dir` but returns raw bytes instead of
-/// base64, as a Steel bytevector (`FFIValue::ByteVector` — stock steel-core's
-/// only byte-returning FFI shape). Returns an empty bytevector if no image
-/// is found.
+/// Resolves the first image found (runner.jl `images` array or a Jupyter
+/// mime bundle, searched recursively) to raw bytes instead of base64, as a
+/// Steel bytevector (`FFIValue::ByteVector` — stock steel-core's only
+/// byte-returning FFI shape). Returns an empty bytevector if no image is
+/// found. Used by the animation registration path, which needs raw bytes
+/// rather than a base64 string.
 pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> FFIValue {
     let parsed: Value = serde_json::from_str(&json_str).unwrap_or(Value::Null);
     let bytes = match find_first_image_data(&parsed) {
@@ -236,11 +224,14 @@ fn find_first_image_data(v: &Value) -> Option<String> {
 }
 
 /// Collect every entry from the runner.jl `images` array, sidecar-resolved
-/// via `resolve_one_image`. Unlike `find_first_image_data`, this only
-/// understands the `images` array shape (multiple plots per cell are a
-/// runner.jl-only concept; Jupyter mime bundles represent a single display).
+/// via `resolve_one_image`. When the `images` array is absent or empty —
+/// e.g. a display carries an image only as a bare Jupyter mime bundle, with
+/// no runner.jl wrapper — falls back to `find_first_image_data`'s recursive
+/// single-image search so a mime-bundle-only payload still renders that one
+/// image instead of nothing.
 fn find_all_image_data(v: &Value, kernel_dir: &str) -> Vec<String> {
-    v.get("images")
+    let from_array: Vec<String> = v
+        .get("images")
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
@@ -250,31 +241,28 @@ fn find_all_image_data(v: &Value, kernel_dir: &str) -> Vec<String> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if !from_array.is_empty() {
+        return from_array;
+    }
+
+    find_first_image_data(v)
+        .and_then(|data| resolve_one_image(&data, kernel_dir))
+        .into_iter()
+        .collect()
 }
 
 /// Every image in a cell's `images` array, sidecar-resolved and joined by
-/// `"\n"`. Empty string when there are no images.
+/// `"\n"`. Falls back to a single mime-bundle image (see
+/// `find_all_image_data`) when no `images` array is present. Empty string
+/// when there are no images anywhere in the JSON.
 pub fn json_get_all_images(json_str: String, kernel_dir: String) -> String {
     let parsed: Value = match serde_json::from_str(&json_str) {
         Ok(v) => v,
         Err(_) => return String::new(),
     };
     find_all_image_data(&parsed, &kernel_dir).join("\n")
-}
-
-/// Count of entries in a cell's `images` array, as a decimal string. `"0"`
-/// when absent or the JSON is invalid.
-pub fn json_get_image_count(json_str: String) -> String {
-    let parsed: Value = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => return "0".into(),
-    };
-    parsed
-        .get("images")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len)
-        .to_string()
 }
 
 #[cfg(test)]
@@ -318,45 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn first_image_runner_format() {
-        let json = r#"{"images": [{"format": "png", "data": "iVBORw0KGgo="}]}"#;
-        assert_eq!(json_get_first_image(json.into()), "iVBORw0KGgo=");
-    }
-
-    #[test]
-    fn first_image_jupyter_format() {
-        let json = r#"{"image/png": "iVBORw0KGgo="}"#;
-        assert_eq!(json_get_first_image(json.into()), "iVBORw0KGgo=");
-    }
-
-    #[test]
-    fn first_image_nested() {
-        let json = r#"{"data": {"image/png": "abc123"}}"#;
-        assert_eq!(json_get_first_image(json.into()), "abc123");
-    }
-
-    #[test]
-    fn first_image_empty_data_skipped() {
-        let json = r#"{"images": [{"format": "png", "data": ""}]}"#;
-        assert_eq!(json_get_first_image(json.into()), "");
-    }
-
-    #[test]
-    fn first_image_no_images() {
-        let json = r#"{"stdout": "hello"}"#;
-        assert_eq!(json_get_first_image(json.into()), "");
-    }
-
-    #[test]
-    fn animated_mime_picked_before_png_when_both_present() {
-        // Kernel emits the animated payload AND a PNG static fallback in the
-        // same display_data bundle. find_first_image_data must return the
-        // animated bytes so the plugin sees animation-eligible data.
-        let json = r#"{"data": {"image/gif": "GIFBASE64", "image/png": "PNGBASE64"}}"#;
-        assert_eq!(json_get_first_image(json.into()), "GIFBASE64");
-    }
-
-    #[test]
     fn json_get_animated_mime_returns_gif() {
         let json = r#"{"data": {"image/gif": "abc", "image/png": "xyz"}}"#;
         assert_eq!(json_get_animated_mime(json.into()), "image/gif");
@@ -394,41 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn first_image_sidecar_file() {
-        // Create a temp dir with a fake PNG sidecar
-        let dir = tempfile::tempdir().unwrap();
-        let png_path = dir.path().join("image_1.png");
-        std::fs::write(&png_path, b"\x89PNG fake data").unwrap();
-
-        let json = r#"{"images": [{"format": "png", "data": "file:image_1.png"}]}"#;
-        let result =
-            json_get_first_image_with_dir(json.into(), dir.path().to_string_lossy().into_owned());
-        // Should be base64 of the raw bytes
-        assert!(!result.is_empty());
-        assert!(!result.starts_with("file:"));
-        // Decode and verify
-        use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&result)
-            .unwrap();
-        assert_eq!(decoded, b"\x89PNG fake data");
-    }
-
-    #[test]
-    fn first_image_legacy_base64_passthrough() {
-        let json = r#"{"images": [{"format": "png", "data": "iVBORw0KGgo="}]}"#;
-        let result = json_get_first_image_with_dir(json.into(), "/nonexistent".into());
-        assert_eq!(result, "iVBORw0KGgo=");
-    }
-
-    #[test]
-    fn first_image_sidecar_missing_file() {
-        let json = r#"{"images": [{"format": "png", "data": "file:missing.png"}]}"#;
-        let result = json_get_first_image_with_dir(json.into(), "/nonexistent".into());
-        assert_eq!(result, "");
-    }
-
-    #[test]
     fn all_images_returns_every_entry() {
         let j = r#"{"images":[{"format":"png","data":"AAA"},{"format":"png","data":"BBB"}]}"#;
         let out = json_get_all_images(j.to_string(), String::new());
@@ -445,9 +359,33 @@ mod tests {
     }
 
     #[test]
-    fn image_count_matches() {
-        let j = r#"{"images":[{"data":"A"},{"data":"B"},{"data":"C"}]}"#;
-        assert_eq!(json_get_image_count(j.to_string()), "3");
+    fn all_images_falls_back_to_mime_bundle_when_no_images_array() {
+        let json = r#"{"image/png": "MIMEBASE64"}"#;
+        let out = json_get_all_images(json.to_string(), String::new());
+        assert_eq!(out, "MIMEBASE64");
+    }
+
+    #[test]
+    fn all_images_fallback_picks_animated_before_static() {
+        let json = r#"{"data": {"image/gif": "GIFBASE64", "image/png": "PNGBASE64"}}"#;
+        let out = json_get_all_images(json.to_string(), String::new());
+        assert_eq!(out, "GIFBASE64");
+    }
+
+    #[test]
+    fn all_images_fallback_resolves_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let png_path = dir.path().join("image_1.png");
+        std::fs::write(&png_path, b"\x89PNG fake data").unwrap();
+
+        let json = r#"{"image/png": "file:image_1.png"}"#;
+        let out = json_get_all_images(json.to_string(), dir.path().to_string_lossy().into_owned());
+        assert!(!out.is_empty());
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&out)
+            .unwrap();
+        assert_eq!(decoded, b"\x89PNG fake data");
     }
 
     #[test]
@@ -480,15 +418,5 @@ mod tests {
     fn all_images_no_images_key() {
         let json = r#"{"stdout": "hello"}"#;
         assert_eq!(json_get_all_images(json.into(), String::new()), "");
-    }
-
-    #[test]
-    fn image_count_no_images_key() {
-        assert_eq!(json_get_image_count(r#"{"stdout": "hi"}"#.to_string()), "0");
-    }
-
-    #[test]
-    fn image_count_invalid_json() {
-        assert_eq!(json_get_image_count("not json".to_string()), "0");
     }
 }

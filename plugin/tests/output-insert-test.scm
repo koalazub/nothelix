@@ -1,7 +1,8 @@
 ;;; output-insert-test.scm — unit tests for the MG3 multi-image stacking helpers:
 ;;; take-first-n's truncation semantics, the images-truncated? cap predicate, and the
-;;; cell-img->image-id band clear-cell-output! relies on to clear exactly the slots
-;;; insertion used, with no overlap into a neighboring cell's band.
+;;; cell-img->image-id band clear-cell-output! relies on to clear exactly the fixed
+;;; *image-slots-per-cell*-wide slots insertion used, with no overlap into a
+;;; neighboring cell's band, and unaffected by the mutable plots-per-cell cap.
 
 (require "test-framework.scm")
 (require "../nothelix/output-insert.scm")
@@ -9,9 +10,9 @@
 
 (provide run-output-insert-tests)
 
-(define (ids-for-cell cell ppc)
+(define (ids-for-cell cell n)
   (let loop ([i 0] [acc '()])
-    (if (>= i ppc)
+    (if (>= i n)
         (reverse acc)
         (loop (+ i 1) (cons (cell-img->image-id cell i) acc)))))
 
@@ -51,29 +52,29 @@
                 "rendered count = min(raw, cap): raw=0 cap=5 -> 0")
 
   (define default-ppc (plots-per-cell))
+  (define slots *image-slots-per-cell*)
 
-  (define band3 (ids-for-cell 3 default-ppc))
-  (assert-equal default-ppc (length band3)
-                "clear-cell-output! band for a cell has plots-per-cell slots")
+  (define band3 (ids-for-cell 3 slots))
+  (assert-equal slots (length band3)
+                "clear-cell-output! band for a cell has *image-slots-per-cell* slots")
   (assert-true (contiguous-by-1? band3)
                "clear-cell-output! band is contiguous by 1 (=> all ids distinct)")
   (assert-equal (cell-img->image-id 3 0) (car band3)
                 "band's first id matches cell-img->image-id(cell,0)")
-  (assert-equal (cell-img->image-id 3 (- default-ppc 1)) (list-ref band3 (- default-ppc 1))
-                "band's last id matches cell-img->image-id(cell,ppc-1)")
-  (assert-equal (+ 1 (cell-img->image-id 3 (- default-ppc 1))) (cell-img->image-id 4 0)
+  (assert-equal (cell-img->image-id 3 (- slots 1)) (list-ref band3 (- slots 1))
+                "band's last id matches cell-img->image-id(cell,slots-1)")
+  (assert-equal (+ 1 (cell-img->image-id 3 (- slots 1))) (cell-img->image-id 4 0)
                 "cell 3's band ends exactly where cell 4's band begins (disjoint, adjacent)")
-  (assert-equal (+ 1 (cell-img->image-id 0 (- default-ppc 1))) (cell-img->image-id 1 0)
+  (assert-equal (+ 1 (cell-img->image-id 0 (- slots 1))) (cell-img->image-id 1 0)
                 "cell 0's band ends exactly where cell 1's band begins (disjoint, adjacent)")
 
+  (define ids-before (ids-for-cell 7 slots))
   (set-plots-per-cell! 4)
-  (define small-ppc (plots-per-cell))
-  (define band7-small (ids-for-cell 7 small-ppc))
-  (assert-equal 4 (length band7-small) "with plots-per-cell=4, cell 7's band has 4 slots")
-  (assert-true (contiguous-by-1? band7-small)
-               "with plots-per-cell=4, cell 7's band is contiguous by 1")
-  (assert-equal (+ 1 (cell-img->image-id 7 (- small-ppc 1))) (cell-img->image-id 8 0)
-                "with plots-per-cell=4, cell 7's band ends exactly where cell 8's begins")
+  (assert-equal ids-before (ids-for-cell 7 slots)
+                "cell-img->image-id is unaffected by shrinking plots-per-cell")
+  (set-plots-per-cell! 300)
+  (assert-equal ids-before (ids-for-cell 7 slots)
+                "cell-img->image-id is unaffected by growing plots-per-cell")
   (set-plots-per-cell! default-ppc)
 
   (print-test-suite-footer "output-insert"))

@@ -85,13 +85,11 @@
   (define anchor-line (and cell-code-end (- cell-code-end 1)))
   (when anchor-line
     (try-clear-output-lines-at! anchor-line))
-  (let loop ([img-index 0])
-    (when (< img-index (plots-per-cell))
-      (define image-id (cell-img->image-id cell-index img-index))
-      (with-handler
-        (lambda (_) #f)
-        (eval `(helix.static.clear-raw-content-in-range! ,image-id ,(+ image-id 1))))
-      (loop (+ img-index 1))))
+  (define band-start (cell-img->image-id cell-index 0))
+  (with-handler
+    (lambda (_) #f)
+    (eval `(helix.static.clear-raw-content-in-range!
+             ,band-start ,(+ band-start *image-slots-per-cell*))))
   (store-clear! (cell-id cell-index)))
 
 ;;@doc

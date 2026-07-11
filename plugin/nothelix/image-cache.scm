@@ -19,6 +19,7 @@
 
 (provide cell-index->image-id
          cell-img->image-id
+         *image-slots-per-cell*
          plots-per-cell
          set-plots-per-cell!
          path->image-id
@@ -44,25 +45,34 @@
 (define *plots-per-cell* (box 32))
 
 ;;@doc
-;; Configured number of image-id slots reserved per cell.
+;; Configured cap on how many images MG3 renders per cell. Purely a render
+;; cap — it has no bearing on kitty image-id spacing, which is fixed (see
+;; `*image-slots-per-cell*`) so it can't drift out from under an already
+;; rendered cell if this value changes mid-session.
 (define (plots-per-cell) (unbox *plots-per-cell*))
 
 ;;@doc
-;; Override the number of image-id slots reserved per cell. Ignores anything
-;; that isn't a positive integer; clamps in-range values to [1, 256] so the
-;; id-space divisor in `cell-img->image-id` can never be non-positive.
+;; Override the render cap. Ignores anything that isn't a positive integer;
+;; clamps in-range values to [1, 256].
 (define (set-plots-per-cell! n)
   (when (and (exact-integer? n) (> n 0))
     (set-box! *plots-per-cell* (min 256 n))))
 
 ;;@doc
-;; Distinct kitty image id for the (cell, image) pair, inside the plot band.
-;; `img-index` is wrapped into the per-cell block so an out-of-range caller
-;; still lands inside its own cell's slot range.
+;; Fixed number of kitty image-id slots reserved per cell — independent of
+;; the mutable `plots-per-cell` render cap so that an insert and a later
+;; clear of the same cell always agree on its id band, even if
+;; `plots-per-cell` changed in between (e.g. a project reopen mid-session).
+(define *image-slots-per-cell* 256)
+
+;;@doc
+;; Distinct kitty image id for the (cell, image) pair, spaced by the fixed
+;; `*image-slots-per-cell*`. `img-index` is wrapped into the per-cell block
+;; so an out-of-range caller still lands inside its own cell's slot range.
 (define (cell-img->image-id cell-index img-index)
-  (define ppc (plots-per-cell))
-  (+ 1000 (modulo (+ (* cell-index ppc) (modulo img-index ppc))
-                  (- 3999000 ppc))))
+  (+ 1000 (modulo (+ (* cell-index *image-slots-per-cell*)
+                      (modulo img-index *image-slots-per-cell*))
+                  (- 3999000 *image-slots-per-cell*))))
 
 ;;@doc
 ;; Derive a stable kitty image id from a cell index (legacy single-image callers).

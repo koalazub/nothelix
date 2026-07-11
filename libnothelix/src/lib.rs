@@ -71,7 +71,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 22;
+pub const NOTHELIX_FFI_VERSION: u32 = 23;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -150,11 +150,6 @@ fn build_module() -> FFIModule {
     m.register_fn("json-get", json_utils::json_get);
     m.register_fn("json-get-bool", json_utils::json_get_bool);
     m.register_fn("json-get-many", json_utils::json_get_many);
-    m.register_fn("json-get-first-image", json_utils::json_get_first_image);
-    m.register_fn(
-        "json-get-first-image-with-dir",
-        json_utils::json_get_first_image_with_dir,
-    );
     m.register_fn(
         "json-get-first-image-bytes",
         json_utils::json_get_first_image_bytes,
@@ -162,7 +157,6 @@ fn build_module() -> FFIModule {
     m.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
     m.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
     m.register_fn("json-get-all-images", json_utils::json_get_all_images);
-    m.register_fn("json-get-image-count", json_utils::json_get_image_count);
 
     // ── Graphics ──────────────────────────────────────────────────────────────
     m.register_fn("viuer-protocol", graphics::viuer_protocol);
