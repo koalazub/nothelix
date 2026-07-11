@@ -30,6 +30,11 @@ Plots travel from Julia as PNG through the display system; the terminal draws th
 over its graphics protocol. See [Architecture](architecture.md#the-kernel-protocol)
 for the full path.
 
+A `# @param` annotation turns a numeric literal into a live knob — nudge it with
+`]p` / `[p` and the figure re-renders in place. Write `freq = 440   # @param 220:880 step 10`
+on the same line as the parameter, and the plugin handles the instant literal edit
+and debounced cell re-run.
+
 ## Inline math becomes Unicode
 
 Inside `$ … $`, LaTeX is concealed as Unicode as you read: `\alpha` becomes α,

@@ -52,8 +52,8 @@ into the buffer. Inline `$ … $` math becomes Unicode as you read it; display
 arrive inline through the terminal's graphics protocol. A plot's canvas is yours
 to resize in place — `:plot-grow` and `:plot-shrink`, bound to `=` and `-`, expand
 or contract the image block under the cursor and re-render without leaving the
-buffer. Includes the graphics matrix and the honest caveat about multiplexers
-stripping Kitty sequences.
+buffer, and a `# @param` annotation makes a numeric literal a live knob — nudge it
+with `]p` / `[p` to re-compute the figure in place. Includes the graphics matrix and the honest caveat about multiplexers stripping Kitty sequences.
 
 **[Export.](https://koalazub.github.io/nothelix/export)** Turning a notebook into
 something to hand over — Markdown, Typst, or a typeset PDF — and why the

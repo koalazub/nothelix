@@ -50,6 +50,10 @@ only for `.jl` and `.ipynb` files.
 | `:insert-image` | Insert a `# @image <path>` marker and a blank canvas at the cursor |
 | `:plot-grow` | Grow the plot block under the cursor and re-render |
 | `:plot-shrink` | Shrink the plot block under the cursor and re-render |
+| `:param-up` | Increase the numeric literal on a `# @param` line and re-run the cell |
+| `:param-down` | Decrease the numeric literal on a `# @param` line and re-run the cell |
+
+A `# @param` annotation marks a numeric literal as a live knob: `freq = 440   # @param 220:880 step 10`. The grammar is `<lo>:<hi>` (clamp range, required) and `step <s>` (increment, optional; defaults to `1` for integers, `(hi − lo) / 100` for floats). Nudging with `]p` or `[p` rewrites the literal instantly in the buffer, debounces a re-run of the same cell (no downstream side effects), and flags cells below as stale if they reference the changed variable. The stale detection is a name-based heuristic (tokenized word-match, no dataflow); reassignment or shadowing can cause over- or under-flagging, so treat it as an alert, not a guarantee.
 
 ## Mathematics and tables
 
@@ -104,6 +108,8 @@ Registered in normal mode for `.jl` and `.ipynb` files.
 |---|---|
 | `]l` | `:next-cell` |
 | `[l` | `:previous-cell` |
+| `]p` | `:param-up` |
+| `[p` | `:param-down` |
 | `<space>nr` | `:execute-cell` |
 | `<space>nn` | `:new-cell` |
 | `<space>nj` | `:cell-picker` |

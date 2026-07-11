@@ -22,7 +22,9 @@ interactivity direction (live graphs now; audio later).
 - No real-time (60 fps) dragging. A nudge triggers a kernel re-run, which is a *beat*,
   not a frame.
 - No new parameter types beyond numeric scalars (no enums, lists, colours, strings).
-- No FFI changes. This is pure Steel over existing `libnothelix` exports.
+- No `libnothelix` FFI change. The stale-tag display uses a dedicated annotation
+  layer added to the Helix fork (feature-probed by the plugin), parallel to
+  math-lines so the two never collide.
 
 ## 1. Syntax & semantics
 
