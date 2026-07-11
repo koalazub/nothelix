@@ -23,8 +23,7 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           json-get-many
-                          json-get-first-image
-                          json-get-first-image-with-dir
+                          json-get-all-images
                           json-get-first-image-bytes
                           json-get-animated-mime
                           json-get-plot-data
@@ -36,7 +35,8 @@
 
 (require "nothelix/animation.scm")
 
-(provide update-cell-output cell-marker-and-code-end clear-cell-output!)
+(provide update-cell-output cell-marker-and-code-end clear-cell-output!
+         take-first-n images-truncated?)
 
 ;;@doc
 ;; Strip a trailing newline and split `text` into a list of plain lines; "" yields '().
@@ -61,6 +61,18 @@
       (cons #false #false)))
 
 ;;@doc
+;; Return the first `n` elements of `lst` (the whole list if shorter than `n`, '() if `n <= 0`).
+(define (take-first-n lst n)
+  (cond
+    [(or (<= n 0) (null? lst)) '()]
+    [else (cons (car lst) (take-first-n (cdr lst) (- n 1)))]))
+
+;;@doc
+;; #t iff `raw-count` images exceed the per-cell `cap`, i.e. some images will be dropped.
+(define (images-truncated? raw-count cap)
+  (> raw-count cap))
+
+;;@doc
 ;; Clear a cell's prior output: virtual text rows at its anchor, its image id
 ;; band, and its stored output entry.
 (define (clear-cell-output! cell-index)
@@ -73,10 +85,13 @@
   (define anchor-line (and cell-code-end (- cell-code-end 1)))
   (when anchor-line
     (try-clear-output-lines-at! anchor-line))
-  (define image-id (cell-index->image-id cell-index))
-  (with-handler
-    (lambda (_) #f)
-    (eval `(helix.static.clear-raw-content-in-range! ,image-id ,(+ image-id 1))))
+  (let loop ([img-index 0])
+    (when (< img-index (plots-per-cell))
+      (define image-id (cell-img->image-id cell-index img-index))
+      (with-handler
+        (lambda (_) #f)
+        (eval `(helix.static.clear-raw-content-in-range! ,image-id ,(+ image-id 1))))
+      (loop (+ img-index 1))))
   (store-clear! (cell-id cell-index)))
 
 ;;@doc
@@ -138,61 +153,81 @@
      (define text-lines
        (if (> (string-length stdout-text) 0) (text->plain-lines stdout-text) '()))
 
-     (define image-b64
-       (if (and saved-kernel-dir (string? saved-kernel-dir))
-           (json-get-first-image-with-dir result-json saved-kernel-dir)
-           (json-get-first-image result-json)))
+     (define all-images-str
+       (json-get-all-images result-json
+                             (if (and saved-kernel-dir (string? saved-kernel-dir))
+                                 saved-kernel-dir
+                                 "")))
+     (define raw-image-list
+       (if (> (string-length all-images-str) 0) (string-split all-images-str "\n") '()))
+     (define image-list (filter (lambda (s) (> (string-length s) 0)) raw-image-list))
+     (define image-count (length image-list))
+     (define plot-cap (plots-per-cell))
+     (define truncated? (images-truncated? image-count plot-cap))
+
+     (define images-to-place (take-first-n image-list plot-cap))
+
      (define image-ready #false)
      (define image-error-msg "")
-     (define image-id 0)
      (define image-rows *plot-rows*)
      (define image-cols *plot-cols*)
-     (define image-payload "")
-     (define image-placeholder-rows "")
+     (define registered-images '())
+     (define positioned? #false)
 
-     (when (> (string-length image-b64) 0)
-       (set! image-id (cell-index->image-id cell-index))
-       (set! image-payload
-             (with-handler
-               (lambda (_) "ERROR: placeholder-payload-failed")
-               (kitty-placeholder-payload image-b64 image-id)))
-       (set! image-placeholder-rows
-             (with-handler
-               (lambda (_) "")
-               (kitty-placeholder-rows image-id image-cols image-rows)))
+     (define (ensure-image-position!)
+       (when (not positioned?)
+         (set! positioned? #true)
+         (when (and anchor-line (>= (+ anchor-line 1) total-lines))
+           (helix.goto (number->string (+ anchor-line 1)))
+           (helix.static.goto_line_end_newline)
+           (helix.static.insert_string "\n")
+           (set! total-lines (text.rope-len-lines (editor->text doc-id))))
+         (when anchor-line
+           (helix.goto (number->string (+ anchor-line 2)))
+           (helix.static.goto_line_start))))
+
+     (define (place-image! b64 img-index)
+       (define img-id (cell-img->image-id cell-index img-index))
+       (define payload
+         (with-handler
+           (lambda (_) "ERROR: placeholder-payload-failed")
+           (kitty-placeholder-payload b64 img-id)))
+       (define placeholder-rows
+         (with-handler
+           (lambda (_) "")
+           (kitty-placeholder-rows img-id image-cols image-rows)))
        (cond
-         [(string-starts-with? image-payload "ERROR:")
+         [(string-starts-with? payload "ERROR:")
           (set! image-error-msg
-                (string-append "# [Plot: "
-                               (number->string (quotient (string-length image-b64) 1024))
+                (string-append image-error-msg "# [Plot "
+                               (number->string (+ img-index 1)) ": "
+                               (number->string (quotient (string-length b64) 1024))
                                "KB - render failed]\n"))]
-         [(= (string-length image-placeholder-rows) 0)
+         [(= (string-length placeholder-rows) 0)
           (set! image-error-msg
-                (string-append "# [Plot: "
-                               (number->string (quotient (string-length image-b64) 1024))
+                (string-append image-error-msg "# [Plot "
+                               (number->string (+ img-index 1)) ": "
+                               (number->string (quotient (string-length b64) 1024))
                                "KB - grid too large for placeholder protocol]\n"))]
          [else
-          (set! image-ready #true)]))
+          (ensure-image-position!)
+          (define marker-line (current-line-number))
+          (define cache-path (save-image-to-cache! jl-path cell-index img-index b64))
+          (if (string-starts-with? cache-path "ERROR:")
+              (helix.static.insert_string "# @image [render only]\n")
+              (helix.static.insert_string (string-append "# @image " cache-path "\n")))
+          (let loop ([i 1])
+            (when (< i image-rows)
+              (helix.static.insert_string "\n")
+              (loop (+ i 1))))
+          (set! image-ready #true)
+          (set! registered-images
+                (append registered-images (list (list img-id marker-line payload placeholder-rows))))]))
 
-     (define image-marker-line -1)
-     (when image-ready
-       (when (and anchor-line (>= (+ anchor-line 1) total-lines))
-         (helix.goto (number->string (+ anchor-line 1)))
-         (helix.static.goto_line_end_newline)
-         (helix.static.insert_string "\n")
-         (set! total-lines (text.rope-len-lines (editor->text doc-id))))
-       (when anchor-line
-         (helix.goto (number->string (+ anchor-line 2)))
-         (helix.static.goto_line_start))
-       (set! image-marker-line (current-line-number))
-       (define cache-path (save-image-to-cache! jl-path cell-index 0 image-b64))
-       (if (string-starts-with? cache-path "ERROR:")
-           (helix.static.insert_string "# @image [render only]\n")
-           (helix.static.insert_string (string-append "# @image " cache-path "\n")))
-       (let loop ([i 1])
-         (when (< i image-rows)
-           (helix.static.insert_string "\n")
-           (loop (+ i 1)))))
+     (let loop ([entries images-to-place] [idx 0])
+       (when (not (null? entries))
+         (place-image! (car entries) idx)
+         (loop (cdr entries) (+ idx 1))))
 
      (when (> (string-length image-error-msg) 0)
        (helix.static.insert_string image-error-msg))
@@ -238,49 +273,66 @@
        (define doc-id (editor->doc-id focus))
        (define rope (editor->text doc-id))
        (define total-lines (text.rope-len-lines rope))
-       (define safe-line
+
+       (define (register-image! entry first?)
+         (define img-id (list-ref entry 0))
+         (define marker-line (list-ref entry 1))
+         (define payload (list-ref entry 2))
+         (define placeholder-rows (list-ref entry 3))
+         (define safe-line
+           (cond
+             [(< marker-line 0) 0]
+             [(>= marker-line total-lines) (- total-lines 1)]
+             [else marker-line]))
+         (define char-idx (text.rope-line->char rope safe-line))
+         (debug-log
+           (string-append "output-insert.update-cell-output: register image cell="
+                          (number->string cell-index)
+                          " id=" (number->string img-id)
+                          " marker-line=" (number->string safe-line)
+                          " char-idx=" (number->string char-idx)
+                          " total-lines=" (number->string total-lines)
+                          " payload-bytes=" (number->string (string-length payload))
+                          " rows-bytes=" (number->string (string-length placeholder-rows))
+                          " animated-mime=" (if first? animated-mime "")))
+         (with-handler
+           (lambda (_) #f)
+           (eval `(helix.static.clear-raw-content-in-range! ,img-id ,(+ img-id 1))))
+         (define static-fallback!
+           (lambda ()
+             (helix.static.add-raw-content-with-placeholders!
+               payload image-rows image-cols placeholder-rows char-idx)))
          (cond
-           [(< image-marker-line 0) 0]
-           [(>= image-marker-line total-lines) (- total-lines 1)]
-           [else image-marker-line]))
-       (define char-idx (text.rope-line->char rope safe-line))
-       (debug-log
-         (string-append "output-insert.update-cell-output: register image cell="
-                        (number->string cell-index)
-                        " id=" (number->string image-id)
-                        " marker-line=" (number->string safe-line)
-                        " char-idx=" (number->string char-idx)
-                        " total-lines=" (number->string total-lines)
-                        " payload-bytes=" (number->string (string-length image-payload))
-                        " rows-bytes=" (number->string (string-length image-placeholder-rows))
-                        " animated-mime=" animated-mime))
-       (with-handler
-         (lambda (_) #f)
-         (eval `(helix.static.clear-raw-content-in-range! ,image-id ,(+ image-id 1))))
-       (define static-fallback!
-         (lambda ()
-           (helix.static.add-raw-content-with-placeholders!
-             image-payload image-rows image-cols image-placeholder-rows char-idx)))
-       (cond
-         [is-animated?
-          (define raw-bytes
-            (json-get-first-image-bytes result-json (or saved-kernel-dir "")))
-          (define registered?
-            (and (> (bytes-length raw-bytes) 0)
-                 (register-animation! animated-mime raw-bytes char-idx image-rows)))
-          (when (not registered?)
-            (static-fallback!))]
-         [else
-          (static-fallback!)]))
+           [(and first? is-animated?)
+            (define raw-bytes
+              (json-get-first-image-bytes result-json (or saved-kernel-dir "")))
+            (define registered?
+              (and (> (bytes-length raw-bytes) 0)
+                   (register-animation! animated-mime raw-bytes char-idx image-rows)))
+            (when (not registered?)
+              (static-fallback!))]
+           [else
+            (static-fallback!)]))
+
+       (let loop ([entries registered-images] [first? #true])
+         (when (not (null? entries))
+           (register-image! (car entries) first?)
+           (loop (cdr entries) #false))))
 
      (helix.static.collapse_selection)
      (helix.static.commit-changes-to-history)
 
-     (if has-error
-         (set-status! "Cell executed with errors")
-         (if image-ready
-             (set-status! "✓ Cell executed (with plot)")
-             (set-status! "✓ Cell executed")))])
+     (define base-status
+       (cond
+         [has-error "Cell executed with errors"]
+         [image-ready "✓ Cell executed (with plot)"]
+         [else "✓ Cell executed"]))
+     (set-status!
+       (if truncated?
+           (string-append base-status
+                          " (showing " (number->string plot-cap) " of "
+                          (number->string image-count) " plots — plots-per-cell cap)")
+           base-status))])
 
   (restore-cursor-for! doc-id)
 
