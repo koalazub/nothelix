@@ -16,6 +16,7 @@
 ;;;   math-color      = #d0d0d0     ; "#rrggbb" or "rrggbb"
 ;;;   render-width    = 220         ; pin math/table image width in columns
 ;;;   conceal-on-open = true        ; auto-conceal LaTeX when a file opens
+;;;   plots-per-cell  = 32          ; image-id slots reserved per cell
 ;;;
 ;;; A line-based format (not s-expr) is deliberate: Steel's `read` leaves the
 ;;; reader wedged after a parse error, so one malformed config could silently
@@ -25,6 +26,7 @@
 (require "string-utils.scm")
 (require "math-image.scm")
 (require "table-image.scm")
+(require "image-cache.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 
@@ -152,6 +154,8 @@
     (when (string? mc) (set-math-image-color! (strip-hash mc))))
   (let ([rw (config-ref alist "render-width" #false)])
     (when (and (number? rw) (> rw 0)) (set-math-image-width-override! rw)))
+  (let ([ppc (config-ref alist "plots-per-cell" #false)])
+    (when (and (exact-integer? ppc) (> ppc 0)) (set-plots-per-cell! ppc)))
   (let ([co (config-ref alist "conceal-on-open" 'unset)])
     (when (boolean? co) (set-box! *conceal-on-open* co)))
   alist)

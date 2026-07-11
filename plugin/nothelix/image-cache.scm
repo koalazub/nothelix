@@ -18,11 +18,15 @@
                           load-image-from-cache))
 
 (provide cell-index->image-id
+         cell-img->image-id
+         plots-per-cell
+         set-plots-per-cell!
          path->image-id
          count-image-markers
          sync-images-to-markers!
          sync-images-if-markers-changed!
          extract-cell-index-from-path
+         extract-cell-and-img-from-path
          render-cached-images
          insert-image
          djb2-hash)
@@ -37,10 +41,33 @@
 
 ;; ID and path helpers
 
+(define *plots-per-cell* (box 32))
+
 ;;@doc
-;; Derive a stable kitty image id from a cell index.
+;; Configured number of image-id slots reserved per cell.
+(define (plots-per-cell) (unbox *plots-per-cell*))
+
+;;@doc
+;; Override the number of image-id slots reserved per cell. Ignores anything
+;; that isn't a positive integer; clamps in-range values to [1, 256] so the
+;; id-space divisor in `cell-img->image-id` can never be non-positive.
+(define (set-plots-per-cell! n)
+  (when (and (exact-integer? n) (> n 0))
+    (set-box! *plots-per-cell* (min 256 n))))
+
+;;@doc
+;; Distinct kitty image id for the (cell, image) pair, inside the plot band.
+;; `img-index` is wrapped into the per-cell block so an out-of-range caller
+;; still lands inside its own cell's slot range.
+(define (cell-img->image-id cell-index img-index)
+  (define ppc (plots-per-cell))
+  (+ 1000 (modulo (+ (* cell-index ppc) (modulo img-index ppc))
+                  (- 3999000 ppc))))
+
+;;@doc
+;; Derive a stable kitty image id from a cell index (legacy single-image callers).
 (define (cell-index->image-id cell-index)
-  (+ 1000 (modulo cell-index 3999000)))
+  (cell-img->image-id cell-index 0))
 
 ;;@doc
 ;; djb2 string hash, kept below 2^31 for the kitty id space.
@@ -55,9 +82,9 @@
 ;;@doc
 ;; Derive a stable kitty image id for any image path.
 (define (path->image-id rel-path)
-  (define cell-idx (extract-cell-index-from-path rel-path))
-  (if cell-idx
-      (cell-index->image-id cell-idx)
+  (define cell-and-img (extract-cell-and-img-from-path rel-path))
+  (if cell-and-img
+      (cell-img->image-id (car cell-and-img) (cdr cell-and-img))
       (+ 1000000 (modulo (djb2-hash rel-path) 3000000))))
 
 ;;@doc
@@ -69,8 +96,22 @@
     (eval `(helix.static.clear-raw-content-in-range! 0 ,*plot-image-id-limit*))))
 
 ;;@doc
-;; Extract the integer N from a `cell-N.png` path, or #false if it doesn't match.
-(define (extract-cell-index-from-path rel-path)
+;; End index of the run of ASCII digits in `rel-path` starting at `start`
+;; (first non-digit position, or the string length).
+(define (scan-digit-run rel-path start)
+  (let loop ([j start])
+    (cond
+      [(>= j (string-length rel-path)) j]
+      [(and (char>=? (string-ref rel-path j) #\0)
+            (char<=? (string-ref rel-path j) #\9))
+       (loop (+ j 1))]
+      [else j])))
+
+;;@doc
+;; Extract (cell-index . img-index) from a `cell-<idx>-<img>` or legacy
+;; `cell-<idx>` path segment, or #false if it doesn't match. A legacy path
+;; with no img segment resolves to img-index 0.
+(define (extract-cell-and-img-from-path rel-path)
   (define marker "cell-")
   (define marker-len (string-length marker))
   (let scan ([i 0])
@@ -78,20 +119,25 @@
       [(> (+ i marker-len) (string-length rel-path)) #false]
       [(string=? (substring rel-path i (+ i marker-len)) marker)
        (define num-start (+ i marker-len))
-       (let num-scan ([j num-start])
-         (cond
-           [(>= j (string-length rel-path))
-            (if (> j num-start)
-                (string->number (substring rel-path num-start j))
-                #false)]
-           [(and (char>=? (string-ref rel-path j) #\0)
-                 (char<=? (string-ref rel-path j) #\9))
-            (num-scan (+ j 1))]
-           [else
-            (if (> j num-start)
-                (string->number (substring rel-path num-start j))
-                #false)]))]
+       (define num-end (scan-digit-run rel-path num-start))
+       (if (= num-end num-start)
+           #false
+           (let ([cell-idx (string->number (substring rel-path num-start num-end))])
+             (if (and (< num-end (string-length rel-path))
+                      (char=? (string-ref rel-path num-end) #\-))
+                 (let* ([img-start (+ num-end 1)]
+                        [img-end (scan-digit-run rel-path img-start)])
+                   (if (= img-end img-start)
+                       (cons cell-idx 0)
+                       (cons cell-idx (string->number (substring rel-path img-start img-end)))))
+                 (cons cell-idx 0))))]
       [else (scan (+ i 1))])))
+
+;;@doc
+;; Extract the integer N from a `cell-N[-M].png` path, or #false if it doesn't match.
+(define (extract-cell-index-from-path rel-path)
+  (define result (extract-cell-and-img-from-path rel-path))
+  (and result (car result)))
 
 ;; Marker counting and sync
 
@@ -195,9 +241,14 @@
                          (count (+ j 1) (+ n 1))
                          n)])))
               (define image-rows (min max-image-rows (+ 1 available-padding)))
-              (define payload (kitty-placeholder-payload image-b64 image-id))
+              (define payload
+                (with-handler
+                  (lambda (_) "ERROR: placeholder-payload-failed")
+                  (kitty-placeholder-payload image-b64 image-id)))
               (define placeholder-rows
-                (kitty-placeholder-rows image-id image-cols image-rows))
+                (with-handler
+                  (lambda (_) "")
+                  (kitty-placeholder-rows image-id image-cols image-rows)))
               (define char-pos (text.rope-line->char rope line-idx))
               (cond
                 [(string-starts-with? payload "ERROR:")

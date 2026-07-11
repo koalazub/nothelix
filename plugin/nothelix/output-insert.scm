@@ -152,9 +152,14 @@
 
      (when (> (string-length image-b64) 0)
        (set! image-id (cell-index->image-id cell-index))
-       (set! image-payload (kitty-placeholder-payload image-b64 image-id))
+       (set! image-payload
+             (with-handler
+               (lambda (_) "ERROR: placeholder-payload-failed")
+               (kitty-placeholder-payload image-b64 image-id)))
        (set! image-placeholder-rows
-             (kitty-placeholder-rows image-id image-cols image-rows))
+             (with-handler
+               (lambda (_) "")
+               (kitty-placeholder-rows image-id image-cols image-rows)))
        (cond
          [(string-starts-with? image-payload "ERROR:")
           (set! image-error-msg
@@ -180,7 +185,7 @@
          (helix.goto (number->string (+ anchor-line 2)))
          (helix.static.goto_line_start))
        (set! image-marker-line (current-line-number))
-       (define cache-path (save-image-to-cache! jl-path cell-index image-b64))
+       (define cache-path (save-image-to-cache! jl-path cell-index 0 image-b64))
        (if (string-starts-with? cache-path "ERROR:")
            (helix.static.insert_string "# @image [render only]\n")
            (helix.static.insert_string (string-append "# @image " cache-path "\n")))

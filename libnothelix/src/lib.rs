@@ -71,7 +71,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 21;
+pub const NOTHELIX_FFI_VERSION: u32 = 22;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -411,7 +411,12 @@ fn getenv(name: String) -> String {
 }
 
 #[cfg(feature = "native")]
-fn save_image_to_cache(jl_path: String, cell_index: isize, b64_data: String) -> String {
+fn save_image_to_cache(
+    jl_path: String,
+    cell_index: isize,
+    img_index: isize,
+    b64_data: String,
+) -> String {
     use std::path::Path;
 
     let jl = Path::new(&jl_path);
@@ -425,7 +430,7 @@ fn save_image_to_cache(jl_path: String, cell_index: isize, b64_data: String) -> 
         return format!("ERROR: Cannot create cache dir: {e}");
     }
 
-    let filename = format!("cell-{cell_index}.png");
+    let filename = format!("cell-{cell_index}-{img_index}.png");
     let full_path = cache_dir.join(&filename);
 
     let bytes = match BASE64.decode(b64_data.trim().as_bytes()) {

@@ -5,6 +5,7 @@
 (require "execution-flow-test.scm")
 (require "math-image-test.scm")
 (require "string-utils-test.scm")
+(require "image-cache-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -12,7 +13,8 @@
          run-kernel-persistence-tests
          run-execution-flow-tests
          run-math-image-tests
-         run-string-utils-tests)
+         run-string-utils-tests
+         run-image-cache-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -28,7 +30,8 @@
       (cons "kernel-persistence" (run-kernel-persistence-tests))
       (cons "execution-flow" (run-execution-flow-tests))
       (cons "math-image" (run-math-image-tests))
-      (cons "string-utils" (run-string-utils-tests))))
+      (cons "string-utils" (run-string-utils-tests))
+      (cons "image-cache" (run-image-cache-tests))))
 
   (define (suite-status passed?)
     (cond
