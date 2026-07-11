@@ -318,7 +318,7 @@
            (loop (cdr entries) #false))))
 
      (helix.static.collapse_selection)
-     (helix.static.commit-changes-to-history)
+     (try-commit-output-changes!)
 
      (define base-status
        (cond
