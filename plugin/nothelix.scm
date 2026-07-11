@@ -37,6 +37,7 @@
 (require "nothelix/scaffold.scm")
 (require "nothelix/math-format.scm")
 (require "nothelix/math-render.scm")
+(require "nothelix/output-render.scm")
 (require "nothelix/math-image.scm")
 (require "nothelix/table-image.scm")
 (require "nothelix/project-config.scm")
