@@ -132,6 +132,7 @@ function execute_cell(cell_idx::Int, code::String)
     cell.stdout = captured.stdout
     cell.stderr = captured.stderr
     cell.images = captured.images  # Store captured images (format, base64_data)
+    cell.text_plots = captured.text_plots  # Store UnicodePlots braille rows+spans
     cell.plot_data = captured.plot_data  # Store raw plot data for interactive charts
     cell.error = captured.error
     cell.status = captured.error === nothing ? :done : :error
@@ -203,6 +204,14 @@ function get_cell_result_json(cell_idx::Int)
     # Include raw plot data for interactive braille charts
     if cell.plot_data !== nothing && !isempty(cell.plot_data)
         result["plot_data"] = cell.plot_data
+    end
+
+    # Include UnicodePlots text-plots (braille rows + ANSI color spans),
+    # one entry per plot the cell produced. Ordered the same way `images`
+    # is, so multiple text-plots (and mixed raster+braille) stack.
+    # Format: [{"rows": [...], "spans": [[row, start, end, color], ...]}]
+    if !isempty(cell.text_plots)
+        result["text_plots"] = cell.text_plots
     end
 
     result

@@ -4,7 +4,7 @@ using Base64
 using Dates
 using ..CellRegistry
 
-export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, capture_animated_output, extract_plot_data, set_log_file, set_kernel_dir
+export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, capture_animated_output, extract_plot_data, is_unicode_plot, parse_ansi_rows, capture_unicode_plot_text, set_log_file, set_kernel_dir
 
 # Log to kernel directory if available (set by runner.jl)
 const CAPTURE_LOG_FILE = Ref{Union{String, Nothing}}(nothing)
@@ -36,13 +36,14 @@ mutable struct CapturedOutput
     stdout::String
     stderr::String
     images::Vector{Tuple{String, String}}
+    text_plots::Vector{Dict{String,Any}}  # UnicodePlots braille: {"rows"=>[...], "spans"=>[...]}
     plot_data::Union{Vector{Dict{String,Any}}, Nothing}
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
     structured_error::Union{Dict{String,Any}, Nothing}
 end
 
-CapturedOutput() = CapturedOutput(nothing, "", "", [], nothing, nothing, nothing, nothing)
+CapturedOutput() = CapturedOutput(nothing, "", "", [], [], nothing, nothing, nothing, nothing)
 
 """
 Extract line and column from a ParseError message.
@@ -293,6 +294,20 @@ function is_displayable_plot(x)
     any(p -> occursin(p, t), PLOT_TYPE_PATTERNS)
 end
 
+# Check if a value is a UnicodePlots plot (braille/Unicode terminal plot).
+# Guarded with try/catch + invokelatest for world-age safety — harmless
+# (returns false) when UnicodePlots isn't loaded in the session.
+function is_unicode_plot(x)
+    x === nothing && return false
+    try
+        T = Base.invokelatest(typeof, x)
+        mod = Base.invokelatest(parentmodule, T)
+        Base.invokelatest(nameof, mod) === :UnicodePlots
+    catch
+        false
+    end
+end
+
 # Capture a plot as PNG base64
 # Uses Base.invokelatest to handle world age issues when code is evaluated with Core.eval
 function capture_plot_png(p)
@@ -383,6 +398,119 @@ function capture_plot_png(p)
 
     capture_log("All methods failed for type: $(typeof(p))")
     nothing
+end
+
+# Parse an ANSI-SGR-colored string (as UnicodePlots emits for `show`) into
+# stripped rows + a list of non-default-color spans.
+#
+# A scanner, NOT regex: walks the string char-by-char. On `\e[` it enters
+# escape state, reads the numeric SGR params up to the terminating `m`,
+# and updates the current foreground color (30-37 -> 0-7, 90-97 -> 8-15;
+# reset on 0 or 39). Every other char is stripped of escapes and appended
+# to the current row; rows are split on '\n'. Positions are 0-based CHAR
+# offsets (not bytes) into the stripped row, counted via `collect(s)` so
+# multi-byte glyphs (braille dots) count as one position.
+#
+# Returns `(rows, spans)` where `spans` is a `Vector` of
+# `[row, start, end, color]` (end EXCLUSIVE) for each maximal run of a
+# single non-default color. A color left open at end-of-row (no reset
+# before the newline) closes there and reopens at column 0 of the next
+# row. Unknown/unsupported SGR codes (bg colors, 256-color, bold, etc.)
+# are ignored and leave the current fg color unchanged.
+function parse_ansi_rows(s::String)
+    chars = collect(s)
+    n = length(chars)
+
+    rows = String[]
+    spans = Vector{Int}[]
+    current_row = Char[]
+
+    row_idx = 0
+    col = 0
+    current_color = nothing   # Union{Int, Nothing} — active fg color, or default
+    span_start = nothing      # col where the open span began
+
+    function close_span!()
+        if current_color !== nothing && span_start !== nothing
+            push!(spans, [row_idx, span_start, col, current_color])
+        end
+    end
+
+    i = 1
+    while i <= n
+        c = chars[i]
+        if c == '\e' && i < n && chars[i + 1] == '['
+            i += 2
+            param_start = i
+            while i <= n && chars[i] != 'm'
+                i += 1
+            end
+            if i <= n && chars[i] == 'm'
+                param_str = String(chars[param_start:i - 1])
+                i += 1
+                params = isempty(param_str) ? ["0"] : split(param_str, ';')
+                for p in params
+                    code = tryparse(Int, p)
+                    code === nothing && continue
+                    if code == 0 || code == 39
+                        close_span!()
+                        current_color = nothing
+                        span_start = nothing
+                    elseif 30 <= code <= 37
+                        new_color = code - 30
+                        if current_color === nothing || current_color != new_color
+                            close_span!()
+                            span_start = col
+                        end
+                        current_color = new_color
+                    elseif 90 <= code <= 97
+                        new_color = code - 90 + 8
+                        if current_color === nothing || current_color != new_color
+                            close_span!()
+                            span_start = col
+                        end
+                        current_color = new_color
+                    end
+                    # unknown SGR codes are ignored — they don't change fg color
+                end
+            end
+        elseif c == '\n'
+            close_span!()
+            push!(rows, String(current_row))
+            current_row = Char[]
+            row_idx += 1
+            col = 0
+            span_start = current_color === nothing ? nothing : 0
+            i += 1
+        else
+            push!(current_row, c)
+            col += 1
+            i += 1
+        end
+    end
+
+    close_span!()
+    push!(rows, String(current_row))
+
+    (rows, spans)
+end
+
+# Capture a UnicodePlots plot as braille text + ANSI color spans.
+# Returns a Dict{"rows"=>[...], "spans"=>[...]} on success, or nothing.
+function capture_unicode_plot_text(p)
+    capture_log("capture_unicode_plot_text called with type: $(typeof(p))")
+    try
+        io = IOBuffer()
+        ioc = IOContext(io, :color => true)
+        Base.invokelatest(show, ioc, MIME("text/plain"), p)
+        ansi = String(take!(io))
+        rows, spans = parse_ansi_rows(ansi)
+        capture_log("capture_unicode_plot_text: $(length(rows)) rows, $(length(spans)) spans")
+        return Dict{String,Any}("rows" => rows, "spans" => spans)
+    catch e
+        capture_log("capture_unicode_plot_text failed: $e")
+        return nothing
+    end
 end
 
 const ANIMATED_MIMES = [
@@ -631,7 +759,16 @@ function capture_toplevel(mod::Module, code::String)
                     continue
                 end
                 last_result = Core.eval(mod, Expr(:toplevel, current_line, expr))
-                if last_result !== nothing && is_displayable_plot(last_result)
+                if last_result !== nothing && is_unicode_plot(last_result)
+                    # UnicodePlots renders as colored braille TEXT, not a
+                    # raster — checked before is_displayable_plot because
+                    # UnicodePlots's type name also matches the "Plot"
+                    # string-fallback pattern there.
+                    tp = capture_unicode_plot_text(last_result)
+                    if tp !== nothing
+                        push!(result.text_plots, tp)
+                    end
+                elseif last_result !== nothing && is_displayable_plot(last_result)
                     animated = capture_animated_output(last_result)
                     if animated !== nothing
                         ext = mime_to_extension(animated[1])

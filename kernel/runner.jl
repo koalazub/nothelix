@@ -3,10 +3,15 @@
 
 using Dates
 
+# `import`/`using` are only legal at true top level in Julia — never inside
+# a function body, even nested in try/catch. Pkg is imported once here, up
+# front, so every self-heal path below (JSON3, UnicodePlots, ...) can call
+# `Pkg.add(...)` from anywhere, including from inside functions.
+import Pkg
+
 try
     @eval using JSON3
 catch
-    import Pkg
     Pkg.add("JSON3")
     @eval using JSON3
 end
@@ -17,6 +22,38 @@ const HAS_MSGPACK = try
 catch
     false
 end
+
+# UnicodePlots is only needed when a cell actually renders a braille plot,
+# so — unlike JSON3/MsgPack above — we don't eagerly `using` it at kernel
+# start. `ensure_unicode_plots()` self-heals it (Pkg.add on missing) the
+# same way, but is only called when `handle_execute_cell`/
+# `handle_execute_reactive` see a cell whose code mentions it.
+#
+# Call sites invoke this outside their own try/catch, so it must never
+# throw: a Pkg.add failure (offline, unreachable registry, precompile
+# error) would otherwise escape the handler and skip write_response,
+# leaving the plugin hanging with no response file. Instead we swallow
+# the failure, log it, and return false; the cell still executes, and if
+# it actually calls into UnicodePlots that fails normally as a cell error
+# (captured and returned via write_response like any other exception).
+function ensure_unicode_plots()
+    isdefined(Main, :UnicodePlots) && return true
+    try
+        @eval using UnicodePlots
+        return true
+    catch
+        try
+            Pkg.add("UnicodePlots")
+            @eval using UnicodePlots
+            return true
+        catch e
+            log_error("ensure_unicode_plots: failed to install/load UnicodePlots: $e")
+            return false
+        end
+    end
+end
+
+requests_unicode_plots(code::String) = occursin("UnicodePlots", code)
 
 # Get kernel directory from command line
 const KERNEL_DIR = length(ARGS) >= 1 ? ARGS[1] : "/tmp/helix-kernel-test"
@@ -106,6 +143,8 @@ function handle_execute_cell(cmd::Dict)
     log_info("Executing cell $cell_idx ($(length(code)) bytes)")
     log_debug("Code preview: $(first(code, min(100, length(code))))...")
 
+    requests_unicode_plots(code) && ensure_unicode_plots()
+
     try
         # Execute the cell
         result = CellMacros.execute_cell(cell_idx, code)
@@ -148,6 +187,8 @@ function handle_execute_reactive(cmd::Dict)
 
     executed = Int[]
 
+    requests_unicode_plots(code) && ensure_unicode_plots()
+
     try
         # Execute the target cell first
         result = CellMacros.execute_cell(cell_idx, code)
@@ -171,6 +212,7 @@ function handle_execute_reactive(cmd::Dict)
             if haskey(CellRegistry.CELLS, dep_idx)
                 dep_cell = CellRegistry.CELLS[dep_idx]
                 log_info("Re-executing dependent cell $dep_idx")
+                requests_unicode_plots(dep_cell.code_string) && ensure_unicode_plots()
                 dep_result = CellMacros.execute_cell(dep_idx, dep_cell.code_string)
                 push!(executed, dep_idx)
 
