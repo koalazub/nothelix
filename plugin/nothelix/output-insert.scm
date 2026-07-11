@@ -11,6 +11,8 @@
 (require "conceal.scm")
 (require "chart-viewer.scm")
 (require "cell-boundaries.scm")
+(require "output-store.scm")
+(require "output-render.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -34,40 +36,29 @@
 
 (require "nothelix/animation.scm")
 
-(provide update-cell-output
-         commentify
-         find-output-header-for-cell)
+(provide update-cell-output)
 
 ;;@doc
-;; Prefix every line of `text` with `# ` so inserted output is inert Julia, with exactly one trailing newline.
-(define (commentify text)
+;; Strip a trailing newline and split `text` into a list of plain lines; "" yields '().
+(define (text->plain-lines text)
   (cond
-    [(= (string-length text) 0) ""]
+    [(or (not text) (= (string-length text) 0)) '()]
     [else
      (define trimmed
        (if (string-suffix? text "\n")
            (substring text 0 (- (string-length text) 1))
            text))
-     (string-append
-       (string-join
-         (map (lambda (line) (string-append "# " line))
-              (string-split trimmed "\n"))
-         "\n")
-       "\n")]))
+     (if (= (string-length trimmed) 0) '() (string-split trimmed "\n"))]))
 
 ;;@doc
-;; Return the 0-indexed output-header line for `cell-index`, or #false if none before the next cell boundary.
-(define (find-output-header-for-cell rope total-lines cell-index)
-  (define cell-line (find-cell-marker-by-index rope total-lines cell-index))
-  (cond
-    [(not cell-line) #false]
-    [else
-     (let scan ([idx (+ cell-line 1)])
-       (cond
-         [(>= idx total-lines) #false]
-         [(cell-marker-line? rope total-lines idx) #false]
-         [(string-contains? (doc-get-line rope total-lines idx) "─── Output ───") idx]
-         [else (scan (+ idx 1))]))]))
+;; Locates `cell-index`'s marker line and its code-end line, or #false . #false if the marker is gone.
+(define (cell-marker-and-code-end rope total-lines cell-index)
+  (define cell-marker-line (find-cell-marker-by-index rope total-lines cell-index))
+  (if cell-marker-line
+      (cons cell-marker-line
+            (find-cell-code-end (lambda (idx) (doc-get-line rope total-lines idx))
+                                 total-lines (+ cell-marker-line 1)))
+      (cons #false #false)))
 
 ;;@doc
 ;; Insert execution results (stdout, stderr, images, errors) into the buffer under the cell's output header.
@@ -87,10 +78,29 @@
   (define rope (editor->text doc-id))
   (define total-lines (text.rope-len-lines rope))
 
-  (define header-line (find-output-header-for-cell rope total-lines cell-index))
-  (when header-line
-    (helix.goto (number->string (+ header-line 2)))
+  (define marker+code-end (cell-marker-and-code-end rope total-lines cell-index))
+  (define cell-marker-line (car marker+code-end))
+  (define cell-code-end (cdr marker+code-end))
+  (define anchor-line (and cell-code-end (- cell-code-end 1)))
+
+  (when (and anchor-line (>= (+ anchor-line 1) total-lines))
+    (helix.goto (number->string (+ anchor-line 1)))
+    (helix.static.goto_line_end_newline)
+    (helix.static.insert_string "\n")
+    (set! total-lines (text.rope-len-lines (editor->text doc-id))))
+
+  (when anchor-line
+    (helix.goto (number->string (+ anchor-line 2)))
     (helix.static.goto_line_start))
+
+  (define cell-code
+    (if (and cell-marker-line cell-code-end)
+        (string-join (extract-cell-code (lambda (idx) (doc-get-line rope total-lines idx))
+                                         cell-marker-line cell-code-end)
+                      "\n")
+        ""))
+  (define store-cell-id (cell-id cell-index))
+  (define store-source-hash (cell-source-hash cell-code))
 
   (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
   (define field-list (string-split all-fields "\t"))
@@ -104,19 +114,18 @@
        (if (and jl-path (string-suffix? jl-path ".jl"))
            (format-julia-error-with-notebook (or structured "") err jl-path)
            (format-julia-error (or structured "") err)))
-     (helix.static.insert_string (commentify formatted))
-     (helix.static.insert_string "# ─────────────\n")
-     (helix.static.collapse_selection)
-     (helix.static.commit-changes-to-history)
+     (when anchor-line
+       (try-set-output-lines-below! anchor-line (text->plain-lines formatted)))
+     (store-put! store-cell-id store-source-hash
+                 (outputs-json-for-cell "" "" "" formatted))
      (set-status! (string-append "✗ " err))]
     [else
      (define output-repr (field-at 2))
      (define stdout-text (field-at 3))
      (define stderr-text (field-at 4))
      (define has-error (equal? (field-at 5) "true"))
-
-     (when (> (string-length stdout-text) 0)
-       (helix.static.insert_string (commentify stdout-text)))
+     (define text-lines
+       (if (> (string-length stdout-text) 0) (text->plain-lines stdout-text) '()))
 
      (define image-b64
        (if (and saved-kernel-dir (string? saved-kernel-dir))
@@ -165,31 +174,34 @@
        (helix.static.insert_string image-error-msg))
 
      (when (and (not image-ready) (> (string-length output-repr) 0))
-       (helix.static.insert_string (commentify output-repr)))
+       (set! text-lines (append text-lines (text->plain-lines output-repr))))
 
-     (when (> (string-length stderr-text) 0)
-       (define filtered-stderr
-         (let* ([lines (string-split stderr-text "\n")]
-                [keep (filter
-                        (lambda (line)
-                          (define trimmed (string-trim line))
-                          (not (or (= (string-length trimmed) 0)
-                                   (string-contains? trimmed "Resolving package versions")
-                                   (string-contains? trimmed "No packages added to or removed from")
-                                   (string-contains? trimmed "No packages added or removed from")
-                                   (string-contains? trimmed "Manifest No packages added")
-                                   (string-contains? trimmed "Project No packages added")
-                                   (and (string-contains? trimmed "Precompiling")
-                                        (not (string-contains? trimmed "error")))
-                                   (and (string-contains? trimmed "Progress")
-                                        (not (string-contains? trimmed "error"))))))
-                        lines)])
-           (string-join keep "\n")))
-       (when (> (string-length (string-trim filtered-stderr)) 0)
-         (helix.static.insert_string "# stderr:\n")
-         (helix.static.insert_string (commentify filtered-stderr))))
+     (define filtered-stderr
+       (if (> (string-length stderr-text) 0)
+           (let* ([lines (string-split stderr-text "\n")]
+                  [keep (filter
+                          (lambda (line)
+                            (define trimmed (string-trim line))
+                            (not (or (= (string-length trimmed) 0)
+                                     (string-contains? trimmed "Resolving package versions")
+                                     (string-contains? trimmed "No packages added to or removed from")
+                                     (string-contains? trimmed "No packages added or removed from")
+                                     (string-contains? trimmed "Manifest No packages added")
+                                     (string-contains? trimmed "Project No packages added")
+                                     (and (string-contains? trimmed "Precompiling")
+                                          (not (string-contains? trimmed "error")))
+                                     (and (string-contains? trimmed "Progress")
+                                          (not (string-contains? trimmed "error"))))))
+                          lines)])
+             (string-join keep "\n"))
+           ""))
+     (when (> (string-length (string-trim filtered-stderr)) 0)
+       (set! text-lines (append text-lines (cons "stderr:" (text->plain-lines filtered-stderr)))))
 
-     (helix.static.insert_string "# ─────────────\n")
+     (when anchor-line
+       (try-set-output-lines-below! anchor-line text-lines))
+     (store-put! store-cell-id store-source-hash
+                 (outputs-json-for-cell stdout-text filtered-stderr output-repr ""))
 
      (define animated-mime
        (json-get-animated-mime result-json))

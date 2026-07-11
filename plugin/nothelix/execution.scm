@@ -136,8 +136,6 @@
 
       (spinner-reset)
       (define spinner-frame (spinner-next-frame))
-      (helix.static.insert_string "\n\n# ─── Output ───\n")
-      (helix.static.commit-changes-to-history)
       (set-status! (string-append spinner-frame " Executing cell..."))
       (helix.redraw)
 
@@ -265,8 +263,6 @@
         (spinner-reset)
         (define spinner-frame (spinner-next-frame))
         (define executed-count (- total-count (length remaining-indices)))
-        (helix.static.insert_string "\n\n# ─── Output ───\n")
-        (helix.static.commit-changes-to-history)
         (set-status! (string-append spinner-frame " Executing cell " (number->string executed-count) "/" (number->string total-count) "..."))
         (helix.redraw)
 
