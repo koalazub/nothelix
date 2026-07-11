@@ -10,6 +10,7 @@
 
 (provide find-cell-start-line
          find-cell-code-end
+         find-cell-region-end
          find-output-start
          find-output-end-line
          extract-cell-code
@@ -30,15 +31,30 @@
             (find-cell-start-line get-line (- line-idx 1))))))
 
 ;;@doc
-;; Find where cell code ends: the next marker, output header, or EOF.
+;; Find where cell code ends: the next marker, output header, `# @image`
+;; marker, or EOF.
 (define (find-cell-code-end get-line total-lines line-idx)
+  (if (>= line-idx total-lines) total-lines
+      (let ([line (get-line line-idx)])
+        (if (or (cell-marker? line)
+                (string-starts-with? line "# ═══")
+                (string-starts-with? line "# ─── Output")
+                (string-starts-with? line "# @image "))
+            line-idx
+            (find-cell-code-end get-line total-lines (+ line-idx 1))))))
+
+;;@doc
+;; Find the end of a cell's full region — code plus any stale `# @image`
+;; marker/blank lines from a prior run — stopping at the next marker, output
+;; header, or EOF. Unlike find-cell-code-end, does not stop at `# @image `.
+(define (find-cell-region-end get-line total-lines line-idx)
   (if (>= line-idx total-lines) total-lines
       (let ([line (get-line line-idx)])
         (if (or (cell-marker? line)
                 (string-starts-with? line "# ═══")
                 (string-starts-with? line "# ─── Output"))
             line-idx
-            (find-cell-code-end get-line total-lines (+ line-idx 1))))))
+            (find-cell-region-end get-line total-lines (+ line-idx 1))))))
 
 ;;@doc
 ;; Find the "# ─── Output ───" header from line-idx, or #false.
@@ -108,8 +124,11 @@
 ;; Line range deletion
 
 ;;@doc
-;; Delete lines from start-line (inclusive) to end-line (exclusive).
-(define (delete-line-range start-line end-line)
+;; Delete lines from start-line (inclusive) to end-line (exclusive). Commits
+;; the change as a plain (undo-visible) revision unless `commit?` is passed
+;; and is #false, in which case the caller commits it.
+(define (delete-line-range start-line end-line . commit?)
+  (define should-commit? (if (null? commit?) #true (car commit?)))
   (when (> end-line start-line)
     (define focus (editor-focus))
     (define doc-id (editor->doc-id focus))
@@ -132,7 +151,7 @@
       (helix.static.set-current-selection-object! sel)
       (helix.static.delete_selection)
       (helix.static.collapse_selection)
-      (helix.static.commit-changes-to-history))))
+      (when should-commit? (helix.static.commit-changes-to-history)))))
 
 ;; Cell marker lookup by index
 

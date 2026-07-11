@@ -73,7 +73,9 @@
   (> raw-count cap))
 
 ;;@doc
-;; Clear a cell's prior output: virtual text rows at its anchor, its image id
+;; Clear a cell's prior output: virtual text rows at its anchor, any stale
+;; `# @image` marker/blank lines left in the buffer from a previous run
+;; (deleted and committed as a tagged, non-undo revision), its image id
 ;; band, and its stored output entry.
 (define (clear-cell-output! cell-index)
   (define focus (editor-focus))
@@ -85,6 +87,12 @@
   (define anchor-line (and cell-code-end (- cell-code-end 1)))
   (when anchor-line
     (try-clear-output-lines-at! anchor-line))
+  (when cell-code-end
+    (define (get-line idx) (doc-get-line rope total-lines idx))
+    (define region-end (find-cell-region-end get-line total-lines cell-code-end))
+    (when (> region-end cell-code-end)
+      (delete-line-range cell-code-end region-end #false)
+      (try-commit-output-changes!)))
   (define band-start (cell-img->image-id cell-index 0))
   (with-handler
     (lambda (_) #f)
