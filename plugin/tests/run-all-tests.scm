@@ -9,6 +9,7 @@
 (require "output-insert-test.scm")
 (require "output-render-test.scm")
 (require "param-tweak-test.scm")
+(require "picker-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -20,7 +21,8 @@
          run-image-cache-tests
          run-output-insert-tests
          run-output-render-tests
-         run-param-tweak-tests)
+         run-param-tweak-tests
+         run-picker-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -40,7 +42,8 @@
       (cons "image-cache" (run-image-cache-tests))
       (cons "output-insert" (run-output-insert-tests))
       (cons "output-render" (run-output-render-tests))
-      (cons "param-tweak" (run-param-tweak-tests))))
+      (cons "param-tweak" (run-param-tweak-tests))
+      (cons "picker" (run-picker-tests))))
 
   (define (suite-status passed?)
     (cond

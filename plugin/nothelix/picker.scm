@@ -8,7 +8,7 @@
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
-(provide cell-picker)
+(provide cell-picker cell-summary kind-tag)
 
 (struct CellPickerState (cells selected digits) #:mutable)
 
@@ -119,6 +119,52 @@
               (reverse lines)
               (loop (+ idx 1) (+ collected 1) (cons line lines)))))))
 
+(define (heading-strip s)
+  (let loop ([t (string-trim s)])
+    (if (and (> (string-length t) 0) (char=? (string-ref t 0) #\#))
+        (loop (string-trim (substring t 1 (string-length t))))
+        t)))
+
+;;@doc
+;; First meaningful content line of a cell, for the picker row: skips blanks,
+;; code comments, bare $$ fences, and @image refs; strips markdown heading
+;; markers and the `# ` comment prefix markdown cells carry in a .jl.
+(define (cell-summary kind lines)
+  (define code? (string-starts-with? kind "code"))
+  (let loop ([ls lines])
+    (if (null? ls)
+        ""
+        (let* ([raw (string-trim (car ls))]
+               [t (if code? raw (heading-strip raw))])
+          (cond
+            [(= (string-length t) 0) (loop (cdr ls))]
+            [(and code? (string-starts-with? t "#")) (loop (cdr ls))]
+            [(equal? t "$$") (loop (cdr ls))]
+            [(string-starts-with? t "@image") (loop (cdr ls))]
+            [else t])))))
+
+;;@doc
+;; Compact type tag for a picker row: markdown -> md, code (julia) -> jl.
+(define (kind-tag kind)
+  (cond
+    [(equal? kind "markdown") "md"]
+    [(string-starts-with? kind "code (")
+     (let ([inner (substring kind 6 (- (string-length kind) 1))])
+       (cond
+         [(equal? inner "julia") "jl"]
+         [(> (string-length inner) 5) (substring inner 0 5)]
+         [else inner]))]
+    [else kind]))
+
+(define (truncate-to s n)
+  (if (> (string-length s) n)
+      (string-append (substring s 0 (max 0 (- n 1))) "…")
+      s))
+
+(define (pad-idx n)
+  (define s (number->string n))
+  (if (< (string-length s) 2) (string-append " " s) s))
+
 (define (picker-theme-styles)
   (list
     (theme-scope *helix.cx* "ui.popup")
@@ -131,7 +177,7 @@
          [rect-width (area-width rect)]
          [rect-height (area-height rect)]
          [total-width (min 100 (- rect-width 4))]
-         [list-width 35]
+         [list-width 44]
          [preview-width (- total-width list-width 2)]
          [height (min (+ (max (length cells) 5) 2) (- rect-height 4))]
          [x (ceiling (max 0 (- (ceiling (/ rect-width 2)) (floor (/ total-width 2)))))]
@@ -162,11 +208,16 @@
         (let* ([cell (list-ref cells i)]
                [kind-label (list-ref cell 1)]
                [user-label (if (>= (length cell) 5) (list-ref cell 4) "")]
+               [summary (if (>= (length cell) 6) (list-ref cell 5) "")]
                [row-style (if (= i selected) selected-style text-style)]
+               [snippet (if (> (string-length user-label) 0) user-label summary)]
                [row-text
-                (if (> (string-length user-label) 0)
-                    user-label
-                    kind-label)])
+                (truncate-to
+                  (string-append (pad-idx (list-ref cell 2)) " "
+                                 (kind-tag kind-label)
+                                 (if (> (string-length snippet) 0) "  " "")
+                                 snippet)
+                  (- list-width 4))])
           (frame-set-string! buf (+ x 2) (+ y i 1) row-text row-style)
           (loop (+ i 1)))))
 
@@ -248,7 +299,10 @@
        event-result/consume])))
 
 (define (make-cell-picker-component)
-  (define cells (get-all-cells))
+  (define cells
+    (map (lambda (c)
+           (append c (list (cell-summary (list-ref c 1) (get-cell-preview (car c) 8)))))
+         (get-all-cells)))
   (new-component! "cell-picker"
     (CellPickerState cells (initial-selection cells) "")
     render-cell-picker
