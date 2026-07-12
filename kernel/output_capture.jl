@@ -302,7 +302,29 @@ function is_unicode_plot(x)
     try
         T = Base.invokelatest(typeof, x)
         mod = Base.invokelatest(parentmodule, T)
-        Base.invokelatest(nameof, mod) === :UnicodePlots
+        Base.invokelatest(nameof, mod) === :UnicodePlots && return true
+        is_unicodeplots_backend_plot(x)
+    catch
+        false
+    end
+end
+
+# A Plots.jl figure rendered with the UnicodePlots backend shows as an ANSI
+# text canvas, so it routes through the braille path like a native
+# UnicodePlots value (covers `plot(...; seriestype=:path3d)` under
+# `unicodeplots()`). Guarded — false when Plots isn't loaded.
+function is_unicodeplots_backend_plot(x)
+    x === nothing && return false
+    try
+        T = Base.invokelatest(typeof, x)
+        Base.invokelatest(nameof, T) === :Plot || return false
+        mod = Base.invokelatest(parentmodule, T)
+        Base.invokelatest(nameof, mod) === :Plots || return false
+        isdefined(Main, :Plots) || return false
+        plots_mod = getfield(Main, :Plots)
+        isdefined(plots_mod, :backend) || return false
+        b = Base.invokelatest(plots_mod.backend)
+        occursin("UnicodePlots", string(Base.invokelatest(typeof, b)))
     catch
         false
     end
