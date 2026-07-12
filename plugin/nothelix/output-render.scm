@@ -3,7 +3,7 @@
 
 (require "helix/editor.scm")
 (require "helix/misc.scm")
-(require (prefix-in helix.static. "helix/static.scm"))
+(require-builtin helix/core/static as helix.static.)
 
 (provide try-set-output-lines-below!
          try-clear-output-lines-at!
@@ -16,22 +16,29 @@
 (define (try-set-output-lines-below! line-idx lines)
   (with-handler
     (lambda (_) #false)
-    (eval `(helix.static.set-output-lines-below! ,line-idx ',lines))))
+    (eval `(begin (require-builtin helix/core/static as hs.)
+                  (hs.set-output-lines-below! *helix.cx* ,line-idx ',lines)))
+    #true))
 
 (define (try-clear-output-lines-at! line-idx)
   (with-handler
     (lambda (_) #false)
-    (eval `(helix.static.clear-output-lines-at! ,line-idx))))
+    (eval `(begin (require-builtin helix/core/static as hs.)
+                  (hs.clear-output-lines-at! *helix.cx* ,line-idx)))
+    #true))
 
 (define (try-clear-all-output-lines!)
   (with-handler
     (lambda (_) #false)
-    (eval '(helix.static.clear-all-output-lines!))))
+    (eval '(begin (require-builtin helix/core/static as hs.)
+                  (hs.clear-all-output-lines! *helix.cx*)))
+    #true))
 
 (define (output-lines-ffi-available?)
   (with-handler
     (lambda (_) #false)
-    (eval '(helix.static.clear-all-output-lines!))
+    (eval '(begin (require-builtin helix/core/static as hs.)
+                  hs.set-output-lines-below!))
     #true))
 
 ;;@doc
@@ -40,8 +47,10 @@
 ;; commit on an hx without it, so behavior matches today exactly.
 (define (try-commit-output-changes!)
   (with-handler
-    (lambda (_) (helix.static.commit-changes-to-history))
-    (eval '(helix.static.commit-output-changes-to-history!))))
+    (lambda (_) (helix.static.commit-changes-to-history *helix.cx*))
+    (eval '(begin (require-builtin helix/core/static as hs.)
+                  (hs.commit-output-changes-to-history! *helix.cx*)))
+    #true))
 
 (define *text-plot-series-scopes*
   (vector "ui.virtual.output.series0" "ui.virtual.output.series1"

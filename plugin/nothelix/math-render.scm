@@ -21,22 +21,29 @@
 (define (try-set-math-lines-above! line-idx lines)
   (with-handler
     (lambda (_) #false)
-    (eval `(helix.static.set-math-lines-above! ,line-idx ',lines))))
+    (eval `(begin (require-builtin helix/core/static as hs.)
+                  (hs.set-math-lines-above! *helix.cx* ,line-idx ',lines)))
+    #true))
 
 (define (try-set-math-lines-below! line-idx lines)
   (with-handler
     (lambda (_) #false)
-    (eval `(helix.static.set-math-lines-below! ,line-idx ',lines))))
+    (eval `(begin (require-builtin helix/core/static as hs.)
+                  (hs.set-math-lines-below! *helix.cx* ,line-idx ',lines)))
+    #true))
 
 (define (try-clear-all-math-lines!)
   (with-handler
     (lambda (_) #false)
-    (eval '(helix.static.clear-all-math-lines!))))
+    (eval '(begin (require-builtin helix/core/static as hs.)
+                  (hs.clear-all-math-lines! *helix.cx*)))
+    #true))
 
 (define (math-render-ffi-available?)
   (with-handler
     (lambda (_) #false)
-    (eval '(helix.static.clear-all-math-lines!))
+    (eval '(begin (require-builtin helix/core/static as hs.)
+                  hs.set-math-lines-above!))
     #true))
 
 (define (spaces n)
