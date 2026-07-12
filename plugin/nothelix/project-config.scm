@@ -18,6 +18,7 @@
 ;;;   conceal-on-open = true        ; auto-conceal LaTeX when a file opens
 ;;;   plots-per-cell  = 32          ; image-id slots reserved per cell
 ;;;   plot-mode       = auto        ; auto | raster | braille
+;;;   slm-summaries   = false       ; opt-in on-device SLM picker labels
 ;;;
 ;;; A line-based format (not s-expr) is deliberate: Steel's `read` leaves the
 ;;; reader wedged after a parse error, so one malformed config could silently
@@ -43,6 +44,8 @@
 (provide conceal-on-open?
          plot-mode
          set-plot-mode!
+         slm-summaries?
+         set-slm-summaries!
          maybe-apply-project-config!
          apply-project-config!
          find-project-config
@@ -62,6 +65,20 @@
 ;; conceal-on-open defaults to on; a project file may turn it off.
 (define *conceal-on-open* (box #true))
 (define (conceal-on-open?) (unbox *conceal-on-open*))
+
+;;@doc
+;; Opt-in on-device SLM cell summaries for the picker. Defaults off —
+;; a project file must explicitly set `slm-summaries = true`. Display-class
+;; config: the SLM helper is always compiled from the repo-vendored Swift
+;; source, never an arbitrary executable, so this needs no trust gate.
+(define *slm-summaries* (box #false))
+(define (slm-summaries?) (unbox *slm-summaries*))
+
+;;@doc
+;; Override the SLM-summaries opt-in. Ignores anything that isn't a
+;; boolean, same guard `apply-project-config!` applies to a config value.
+(define (set-slm-summaries! v)
+  (when (boolean? v) (set-box! *slm-summaries* v)))
 
 ;;@doc
 ;; How a UnicodePlots-capable cell should render: "auto" (kernel decides,
@@ -184,6 +201,8 @@
     (when (string? pm) (set-plot-mode! pm)))
   (let ([co (config-ref alist "conceal-on-open" 'unset)])
     (when (boolean? co) (set-box! *conceal-on-open* co)))
+  (let ([ss (config-ref alist "slm-summaries" 'unset)])
+    (when (boolean? ss) (set-slm-summaries! ss)))
   alist)
 
 ;; --- executable runtime (trust-gated) ---

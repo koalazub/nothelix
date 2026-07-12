@@ -112,6 +112,7 @@ Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a not
 | `render-width` | Pin image width | |
 | `plots-per-cell` | Cap on stacked plots rendered per cell (1..256) | `32` |
 | `plot-mode` | Force `raster` or `braille` plot rendering, or `auto` to decide from the plotting backend | `auto` |
+| `slm-summaries` | Label picker rows with Apple's on-device model (macOS 26+, needs Apple Intelligence; falls back to first-line heuristics) | `false` |
 | `julia-bin`, `julia-project` | Pin the interpreter or environment for cells | PATH `julia` |
 
 `julia-bin` and `julia-project` execute code, so they take effect only after you trust the directory.

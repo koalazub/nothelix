@@ -2,11 +2,20 @@
 
 (require "common.scm")
 (require "string-utils.scm")
+(require "image-cache.scm")
+(require "output-store.scm")
+(require "project-config.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/components)
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
+
+(#%require-dylib "libnothelix"
+                 (only-in nothelix
+                          slm-available
+                          slm-refresh-summaries
+                          slm-summary-for))
 
 (provide cell-picker cell-summary kind-tag)
 
@@ -142,6 +151,34 @@
             [(equal? t "$$") (loop (cdr ls))]
             [(string-starts-with? t "@image") (loop (cdr ls))]
             [else t])))))
+
+;; How many lines of a cell's preview participate in its SLM hash — must
+;; stay in lockstep between the hash-read and refresh-blob call sites so
+;; both agree on the same djb2 hash for the same cell.
+(define *slm-preview-lines* 8)
+
+;; ASCII record separator — must match libnothelix's slm.rs CELL_SEP.
+(define *slm-cell-sep* (make-string 1 (integer->char 30)))
+
+;;@doc
+;; The ONE definition of "cell text" the SLM hash is computed over — shared
+;; by the picker-row hash lookup and the refresh blob-builder so a cell's
+;; hash always agrees between the two call sites.
+(define (cell-text-for-hash line-num)
+  (string-join (get-cell-preview line-num *slm-preview-lines*) "\n"))
+
+;;@doc
+;; Picker-row snippet for one cell: cached SLM summary (opt-in, when
+;; present) over the heuristic first-meaningful-line summary. A stale or
+;; not-yet-refreshed hash simply misses the cache and falls through.
+(define (cell-picker-snippet kind line-num)
+  (define heuristic (cell-summary kind (get-cell-preview line-num *slm-preview-lines*)))
+  (cond
+    [(not (slm-summaries?)) heuristic]
+    [else
+     (define hash (number->string (djb2-hash (cell-text-for-hash line-num))))
+     (define slm (slm-summary-for (workspace-id) hash))
+     (if (> (string-length slm) 0) slm heuristic)]))
 
 ;;@doc
 ;; Compact type tag for a picker row: markdown -> md, code (julia) -> jl.
@@ -298,11 +335,25 @@
        (set-CellPickerState-digits! state "")
        event-result/consume])))
 
+;;@doc
+;; Fire-and-forget: kick off a background SLM refresh for every cell in the
+;; buffer, when opted in and the on-device model is detected. Cheap no-op
+;; otherwise. Never blocks — rows below read whatever's cached right now.
+(define (maybe-refresh-slm-summaries! raw-cells)
+  (define ws (workspace-id))
+  (when (and (slm-summaries?) (equal? (slm-available ws) "yes"))
+    (define blob
+      (string-join (map (lambda (c) (cell-text-for-hash (car c))) raw-cells)
+                   *slm-cell-sep*))
+    (slm-refresh-summaries ws blob)))
+
 (define (make-cell-picker-component)
+  (define raw-cells (get-all-cells))
+  (maybe-refresh-slm-summaries! raw-cells)
   (define cells
     (map (lambda (c)
-           (append c (list (cell-summary (list-ref c 1) (get-cell-preview (car c) 8)))))
-         (get-all-cells)))
+           (append c (list (cell-picker-snippet (list-ref c 1) (car c)))))
+         raw-cells))
   (new-component! "cell-picker"
     (CellPickerState cells (initial-selection cells) "")
     render-cell-picker

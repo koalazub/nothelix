@@ -5,6 +5,7 @@
 #   ~/.steel/native/libnothelix.{dylib,so}  — FFI dylib, codesigned on macOS
 #   ~/.steel/cogs/nothelix.scm              — plugin entry symlink
 #   ~/.steel/cogs/nothelix/                 — plugin module directory symlink
+#   ~/.local/share/nothelix/bin/nothelix-slm — SLM helper, best-effort (swiftc)
 #
 # `just setup-lsp` dev-installs the bundled NothelixMacros package and the
 # kernel's JSON3 dependency into Julia's default shared environment (@v#.#),
@@ -31,6 +32,7 @@ set shell := ["sh", "-euc"]
 steel_native := env("HOME") / ".steel" / "native"
 steel_cogs := env("HOME") / ".steel" / "cogs"
 local_bin := env("HOME") / ".local" / "bin"
+slm_bin := env("HOME") / ".local" / "share" / "nothelix" / "bin"
 nothelix_root := justfile_directory()
 
 # build + install the dylib and plugin symlinks (run after Rust changes)
@@ -94,6 +96,28 @@ install profile="release":
         echo "         rules that manage them) before restarting Helix:"
         [ -e "$config_helix/nothelix.scm" ] && echo "           rm $config_helix/nothelix.scm"
         [ -e "$config_helix/nothelix" ]     && echo "           rm -rf $config_helix/nothelix"
+    fi
+
+    # ── SLM helper (best-effort; opt-in on-device cell summaries) ───────────
+    # Compiles the vendored Swift source once, from the system swiftc. No
+    # swiftc on PATH (Linux, no Xcode CLT) just skips this step silently —
+    # `slm-summaries` in .nothelix.conf stays a no-op until it's present.
+    if command -v swiftc >/dev/null 2>&1; then
+        mkdir -p "{{ slm_bin }}"
+        slm_src="{{ nothelix_root }}/tools/nothelix-slm/main.swift"
+        slm_out="{{ slm_bin }}/nothelix-slm"
+        if swiftc "$slm_src" -o "$slm_out" >/dev/null 2>&1; then
+            echo "Installed: $slm_out"
+        else
+            sdk=$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk 2>/dev/null | LC_ALL=C sort | tail -1)
+            if [ -n "$sdk" ] && DEVELOPER_DIR=/Library/Developer/CommandLineTools swiftc -sdk "$sdk" "$slm_src" -o "$slm_out" >/dev/null 2>&1; then
+                echo "Installed: $slm_out (CommandLineTools SDK fallback)"
+            else
+                echo "swiftc could not compile the SLM helper — skipping (summaries stay off)"
+            fi
+        fi
+    else
+        echo "swiftc not found — skipping SLM helper (summaries stay off)"
     fi
 
 # Julia bootstrap: dev NothelixMacros + JSON3 into the default env (re-run after a Julia version change)

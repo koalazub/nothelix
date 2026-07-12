@@ -48,6 +48,8 @@ mod output_store;
 #[cfg(feature = "native")]
 mod resume;
 #[cfg(feature = "native")]
+mod slm;
+#[cfg(feature = "native")]
 mod trust;
 
 #[cfg(all(feature = "wasm", not(feature = "native")))]
@@ -71,7 +73,7 @@ steel::declare_module!(build_module);
 /// repo while the dylib is a copied artifact, so a forgotten `just
 /// install` used to skew the two silently; the handshake turns that
 /// into a loud, actionable failure.
-pub const NOTHELIX_FFI_VERSION: u32 = 24;
+pub const NOTHELIX_FFI_VERSION: u32 = 25;
 
 /// Compile-time `BUILD_ID` for this libnothelix. Used by
 /// `nothelix doctor` to verify the installed dylib matches the
@@ -204,6 +206,9 @@ fn build_module() -> FFIModule {
     m.register_fn("output-store-put", output_store::output_store_put);
     m.register_fn("output-store-get", output_store::output_store_get);
     m.register_fn("output-store-clear", output_store::output_store_clear);
+    m.register_fn("slm-available", slm::slm_available);
+    m.register_fn("slm-refresh-summaries", slm::slm_refresh_summaries);
+    m.register_fn("slm-summary-for", slm::slm_summary_for);
     m.register_fn("resolve-symlink-dir", resolve_symlink_dir);
     m.register_fn("sleep-ms", sleep_ms);
     m.register_fn("getenv", getenv);
