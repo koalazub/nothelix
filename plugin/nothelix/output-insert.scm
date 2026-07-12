@@ -102,6 +102,22 @@
   (store-clear! (cell-id cell-index)))
 
 ;;@doc
+;; In-buffer fallback for an hx without the output-lines annotation: insert
+;; the classic commented output block below the cell, committed through the
+;; tagged path (plain commit on the same old binary). Re-execution deletes it
+;; via find-cell-region-end's output-block consumption.
+(define (insert-legacy-output-block! anchor-line lines)
+  (when (and anchor-line (not (null? lines)))
+    (helix.goto (number->string (+ anchor-line 1)))
+    (helix.static.goto_line_end_newline)
+    (helix.static.insert_string
+      (string-append "\n# ─── Output ───\n"
+                     (string-join (map (lambda (l) (string-append "# " l)) lines) "\n")
+                     "\n# ─────────────\n"))
+    (helix.static.collapse_selection)
+    (try-commit-output-changes!)))
+
+;;@doc
 ;; Insert execution results (stdout, stderr, images, errors) into the buffer under the cell's output header.
 ;; Text-plot styled rows (span lists, not plain strings) are folded only into what's rendered — the store keeps the plain-string rows separately.
 (define (update-cell-output result-json jl-path cell-index . rest)
@@ -147,8 +163,9 @@
            (format-julia-error-with-notebook (or structured "") err jl-path)
            (format-julia-error (or structured "") err)))
      (define error-rows (text->plain-lines formatted))
-     (when anchor-line
-       (try-set-output-lines-below! anchor-line error-rows))
+     (when (and anchor-line
+                (not (try-set-output-lines-below! anchor-line error-rows)))
+       (insert-legacy-output-block! anchor-line error-rows))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows
                    (outputs-json-for-cell "" "" "" formatted) error-rows))
@@ -279,8 +296,10 @@
      (define render-lines
        (if text-plot-ready? (append text-lines text-plot-styled-rows) text-lines))
 
-     (when anchor-line
-       (try-set-output-lines-below! anchor-line render-lines))
+     (when (and anchor-line
+                (not (null? render-lines))
+                (not (try-set-output-lines-below! anchor-line render-lines)))
+       (insert-legacy-output-block! anchor-line stored-text-lines))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows+text-plots
                    (outputs-json-for-cell stdout-text filtered-stderr output-repr "")

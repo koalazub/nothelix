@@ -63,9 +63,11 @@
         (cond
           [(output-image-line? line)
            (find-cell-region-end get-line total-lines (+ line-idx 1))]
+          [(string-starts-with? line "# ─── Output")
+           (find-cell-region-end get-line total-lines
+                                 (find-output-end-line get-line total-lines (+ line-idx 1)))]
           [(or (cell-marker? line)
-               (string-starts-with? line "# ═══")
-               (string-starts-with? line "# ─── Output"))
+               (string-starts-with? line "# ═══"))
            line-idx]
           [else (find-cell-region-end get-line total-lines (+ line-idx 1))]))))
 
