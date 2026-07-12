@@ -45,4 +45,25 @@
   (assert-equal 40 (picker-scroll-offset 59 20 60) "scroll: last row clamps to end")
   (assert-equal 0 (picker-scroll-offset 3 20 5) "scroll: short list never scrolls")
 
+  (define (hay s) (string->list s))
+  (assert-true (number? (fuzzy-score (string->list "sec7") (hay "57 md section 7: pseudoinverse")))
+               "fuzzy: subsequence matches")
+  (assert-false (fuzzy-score (string->list "xyz") (hay "57 md section 7"))
+                "fuzzy: non-subsequence rejected")
+  (assert-true (number? (fuzzy-score (string->list "SEC") (hay "section")))
+               "fuzzy: query case-insensitive")
+  (assert-true (> (fuzzy-score (string->list "sec") (hay "section"))
+                  (fuzzy-score (string->list "sec") (hay "s-e-c-tion")))
+               "fuzzy: contiguous run outscores scattered")
+
+  (define cell-a (list 10 "markdown" 57 "line" "" "section 7: pseudoinverse"
+                       (hay "57 md section 7: pseudoinverse")))
+  (define cell-b (list 20 "code (julia)" 58 "line" "" "matrix 7: definition"
+                       (hay "58 jl matrix 7: definition")))
+  (define both (list cell-a cell-b))
+  (assert-equal both (car (fuzzy-filter both "")) "filter: empty query keeps all")
+  (assert-equal (list cell-a) (car (fuzzy-filter both "pseudo")) "filter: narrows to matches")
+  (assert-equal 0 (cdr (fuzzy-filter both "pseudo")) "filter: best row selected")
+  (assert-equal '() (car (fuzzy-filter both "zzz")) "filter: no matches yields empty view")
+
   (print-test-suite-footer "picker"))

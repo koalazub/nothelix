@@ -17,9 +17,10 @@
                           slm-refresh-summaries
                           slm-summary-for))
 
-(provide cell-picker cell-summary kind-tag picker-scroll-offset)
+(provide cell-picker cell-summary kind-tag picker-scroll-offset
+         fuzzy-score fuzzy-filter)
 
-(struct CellPickerState (cells selected digits) #:mutable)
+(struct CellPickerState (cells view selected digits query filtering?) #:mutable)
 
 ;; Marker parsing
 
@@ -200,6 +201,45 @@
   (min (max 0 (- total visible))
        (max 0 (- selected (quotient visible 2)))))
 
+(define (ch-down c)
+  (define n (char->integer c))
+  (if (and (>= n 65) (<= n 90)) (integer->char (+ n 32)) c))
+
+;;@doc
+;; Case-insensitive subsequence match of `query-chars` against `hay-chars`.
+;; Returns a score (contiguous runs and early hits rank higher) or #false
+;; when the query is not a subsequence of the haystack.
+(define (fuzzy-score query-chars hay-chars)
+  (let loop ([q query-chars] [h hay-chars] [pos 0] [prev -2] [score 0] [first -1])
+    (cond
+      [(null? q) (+ score (if (>= first 0) (max 0 (- 20 first)) 0))]
+      [(null? h) #false]
+      [(char=? (ch-down (car q)) (car h))
+       (loop (cdr q) (cdr h) (+ pos 1) pos
+             (+ score (if (= prev (- pos 1)) 3 1))
+             (if (< first 0) pos first))]
+      [else (loop q (cdr h) (+ pos 1) prev score first)])))
+
+;;@doc
+;; Filter `cells` (each carrying a downcased haystack char list as its 7th
+;; element) by fuzzy `query`, preserving document order. Returns
+;; `(matching-cells . best-row-index)` — the row of the highest score.
+(define (fuzzy-filter cells query)
+  (define qchars (map ch-down (string->list query)))
+  (if (null? qchars)
+      (cons cells 0)
+      (let loop ([cs cells] [kept '()] [row 0] [best-row 0] [best-score -1])
+        (if (null? cs)
+            (cons (reverse kept) best-row)
+            (let* ([c (car cs)]
+                   [hay (if (>= (length c) 7) (list-ref c 6) '())]
+                   [s (fuzzy-score qchars hay)])
+              (if s
+                  (loop (cdr cs) (cons c kept) (+ row 1)
+                        (if (> s best-score) row best-row)
+                        (max s best-score))
+                  (loop (cdr cs) kept row best-row best-score)))))))
+
 (define (truncate-to s n)
   (if (> (string-length s) n)
       (string-append (substring s 0 (max 0 (- n 1))) "…")
@@ -216,7 +256,7 @@
     (theme-scope *helix.cx* "ui.menu.selected")))
 
 (define (render-cell-picker state rect buf)
-  (let* ([cells (CellPickerState-cells state)]
+  (let* ([cells (CellPickerState-view state)]
          [selected (CellPickerState-selected state)]
          [rect-width (area-width rect)]
          [rect-height (area-height rect)]
@@ -242,9 +282,12 @@
           0))
     (define digits (CellPickerState-digits state))
     (define title
-      (if (> (string-length digits) 0)
-          (string-append "Jump to Cell: " digits "_")
-          (string-append "Jump to Cell: " (number->string selected-cell-idx))))
+      (cond
+        [(CellPickerState-filtering? state)
+         (string-append "Search: " (CellPickerState-query state) "_")]
+        [(> (string-length digits) 0)
+         (string-append "Jump to Cell: " digits "_")]
+        [else (string-append "Jump to Cell: " (number->string selected-cell-idx))]))
     (frame-set-string! buf (+ x 2) y title text-style)
 
     (define visible-rows (max 1 (- height 2)))
@@ -300,20 +343,74 @@
       ;; line-num is 0-indexed, helix.goto expects 1-indexed
       (helix.goto (number->string (+ line-num 1))))))
 
+(define (apply-picker-query! state query)
+  (define result (fuzzy-filter (CellPickerState-cells state) query))
+  (set-CellPickerState-query! state query)
+  (set-CellPickerState-view! state (car result))
+  (set-CellPickerState-selected! state (cdr result)))
+
+(define (exit-picker-filter! state)
+  (define view (CellPickerState-view state))
+  (define selected (CellPickerState-selected state))
+  (define keep-idx
+    (if (and (>= selected 0) (< selected (length view)))
+        (list-ref (list-ref view selected) 2)
+        #f))
+  (set-CellPickerState-filtering?! state #f)
+  (set-CellPickerState-query! state "")
+  (set-CellPickerState-view! state (CellPickerState-cells state))
+  (define row (and keep-idx (find-row-for-cell-index (CellPickerState-cells state) keep-idx)))
+  (set-CellPickerState-selected! state (if row row 0)))
+
 (define (handle-cell-picker-event state event)
-  (let* ([cells (CellPickerState-cells state)]
+  (let* ([view (CellPickerState-view state)]
          [selected (CellPickerState-selected state)]
          [digits (CellPickerState-digits state)]
          [char (key-event-char event)]
          [digit-value (and char (char->number char))])
     (cond
+      [(CellPickerState-filtering? state)
+       (cond
+         [(key-event-escape? event)
+          (exit-picker-filter! state)
+          event-result/consume]
+         [(key-event-enter? event)
+          (jump-to-row view selected)
+          (exit-picker-filter! state)
+          event-result/close]
+         [(key-event-backspace? event)
+          (define q (CellPickerState-query state))
+          (if (= (string-length q) 0)
+              (exit-picker-filter! state)
+              (apply-picker-query! state (substring q 0 (- (string-length q) 1))))
+          event-result/consume]
+         [(key-event-down? event)
+          (when (< selected (- (length view) 1))
+            (set-CellPickerState-selected! state (+ selected 1)))
+          event-result/consume]
+         [(key-event-up? event)
+          (when (> selected 0)
+            (set-CellPickerState-selected! state (- selected 1)))
+          event-result/consume]
+         [char
+          (apply-picker-query! state
+            (string-append (CellPickerState-query state) (list->string (list char))))
+          event-result/consume]
+         [else event-result/consume])]
+
       [(or (key-event-escape? event) (eqv? char #\q))
        (set-CellPickerState-digits! state "")
        event-result/close]
 
+      [(eqv? char #\/)
+       (set-CellPickerState-digits! state "")
+       (set-CellPickerState-filtering?! state #t)
+       (apply-picker-query! state "")
+       event-result/consume]
+
       [(or (eqv? char #\j) (key-event-down? event))
        (set-CellPickerState-digits! state "")
-       (when (< selected (- (length cells) 1))
+       (when (< selected (- (length view) 1))
          (set-CellPickerState-selected! state (+ selected 1)))
        event-result/consume]
       [(or (eqv? char #\k) (key-event-up? event))
@@ -325,7 +422,7 @@
       [digit-value
        (let* ([new-buf (string-append digits (list->string (list char)))]
               [num (string->number new-buf)]
-              [match-row (and num (find-row-for-cell-index cells num))])
+              [match-row (and num (find-row-for-cell-index view num))])
          (set-CellPickerState-digits! state new-buf)
          (when match-row
            (set-CellPickerState-selected! state match-row))
@@ -335,9 +432,9 @@
        (cond
          [(> (string-length digits) 0)
           (let* ([num (string->number digits)]
-                 [row (and num (find-row-for-cell-index cells num))])
-            (when row (jump-to-row cells row)))]
-         [else (jump-to-row cells selected)])
+                 [row (and num (find-row-for-cell-index view num))])
+            (when row (jump-to-row view row)))]
+         [else (jump-to-row view selected)])
        (set-CellPickerState-digits! state "")
        event-result/close]
 
@@ -362,10 +459,18 @@
   (maybe-refresh-slm-summaries! raw-cells)
   (define cells
     (map (lambda (c)
-           (append c (list (cell-picker-snippet (list-ref c 1) (car c)))))
+           (define snippet (cell-picker-snippet (list-ref c 1) (car c)))
+           (define user-label (list-ref c 4))
+           (define label (if (> (string-length user-label) 0) user-label snippet))
+           (define hay
+             (map ch-down
+                  (string->list
+                    (string-append (number->string (list-ref c 2)) " "
+                                   (kind-tag (list-ref c 1)) " " label))))
+           (append c (list snippet hay)))
          raw-cells))
   (new-component! "cell-picker"
-    (CellPickerState cells (initial-selection cells) "")
+    (CellPickerState cells cells (initial-selection cells) "" "" #f)
     render-cell-picker
     (hash "handle_event" handle-cell-picker-event)))
 

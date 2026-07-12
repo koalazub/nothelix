@@ -136,7 +136,7 @@ Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a not
 
 ## The cell navigator
 
-`<space>nj` opens a two-pane picker: every cell as `index · type · label`, with a live preview of the selected cell. Type a cell number to jump straight to it; `j`/`k` or arrows scroll, `Enter` goes there.
+`<space>nj` opens a two-pane picker: every cell as `index · type · label`, with a live preview of the selected cell. Type a cell number to jump straight to it, or press `/` and fuzzy-search the labels (`pseudo` narrows to the pseudoinverse cells); `j`/`k` or arrows scroll, `Enter` goes there.
 
 ![Cell navigator with on-device labels](assets/img/cell-picker-slm.png)
 
