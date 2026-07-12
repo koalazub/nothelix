@@ -54,6 +54,13 @@ monochrome.
 
 Inside `$ … $`, LaTeX is concealed as Unicode as you read: `\alpha` becomes α,
 `\leq` becomes ≤, superscripts and subscripts shift to their Unicode forms.
+The Fourier transform, as typed and as read:
+
+![Fourier transform LaTeX before and after conceal](assets/img/fourier-conceal.png)
+
+The concealed pane is the engine's exact output — those lines are pinned
+byte-for-byte by unit tests. For camera-ready typesetting, put the same
+formula in a `$$ … $$` block and it renders as a Typst image instead.
 
 | Command | What it does |
 |---|---|

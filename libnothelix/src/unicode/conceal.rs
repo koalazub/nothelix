@@ -296,6 +296,24 @@ mod tests {
     }
 
     #[test]
+    fn fourier_transform_lines_conceal() {
+        assert_eq!(
+            apply_overlays(
+                "# $\\hat{f}(\\xi) = \\int_{-\\infty}^{\\infty} f(x) \\, e^{-2\\pi i x \\xi} \\, dx$\n"
+            ),
+            "# f\u{302}(ξ) = ∫_-∞^∞ f(x) \u{2006} e^-2π i x ξ \u{2006} dx\n"
+        );
+    }
+
+    #[test]
+    fn parseval_line_conceals_cleanly() {
+        assert_eq!(
+            apply_overlays("# $\\int |f(x)|^2 \\, dx = \\int |\\hat{f}(\\xi)|^2 \\, d\\xi$\n"),
+            "# ∫ |f(x)|² \u{2006} dx = ∫ |f\u{302}(ξ)|² \u{2006} dξ\n"
+        );
+    }
+
+    #[test]
     fn combining_mark_scans_nested_content() {
         assert_eq!(apply_overlays("# $\\hat{\\mathbf{b}}$\n"), "# 𝐛\u{302}\n");
         assert_eq!(apply_overlays("# $\\vec{\\mathbf{v}}$\n"), "# 𝐯\u{20D7}\n");
