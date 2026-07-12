@@ -17,6 +17,13 @@ command turns the whole thing into Markdown, Typst, or a typeset PDF.
 
 **Full documentation: [koalazub.github.io/nothelix](https://koalazub.github.io/nothelix)**
 
+![The cell navigator: jump to any cell by number, with labels from Apple's on-device model](docs/assets/img/cell-picker-slm.png)
+
+The navigator above (`<space>nj`) labels every cell — here by Apple's on-device
+model (opt-in, macOS 26+), falling back to each cell's first meaningful line —
+so a 70-cell tutorial reads like a table of contents. Type a cell number to
+jump straight to it.
+
 ## Install
 
 On macOS (Apple Silicon) or x86_64 Linux:

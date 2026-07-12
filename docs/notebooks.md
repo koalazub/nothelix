@@ -134,6 +134,16 @@ Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a not
 | `:select-cell-code` | `<space>ni` | Select only the code |
 | `:select-output` | `<space>no` | Select the output block |
 
+## The cell navigator
+
+`<space>nj` opens a two-pane picker: every cell as `index · type · label`, with a live preview of the selected cell. Type a cell number to jump straight to it; `j`/`k` or arrows scroll, `Enter` goes there.
+
+![Cell navigator with on-device labels](assets/img/cell-picker-slm.png)
+
+Row labels come from, in order: an explicit `# comment` on the cell marker, an on-device model label (see below), or the cell's first meaningful line.
+
+With `slm-summaries = true` in `.nothelix.conf`, rows are labelled by Apple's on-device model (macOS 26+, requires Apple Intelligence). Labels like `section 7: pseudoinverse` or `verification 1: residuals` are generated in the background the first time a picker opens on a notebook, cached by cell content, and only recomputed for cells that changed — no network, no bundled model, near-zero steady-state cost. Without the config (or on machines without the model) the picker falls back to first-line labels.
+
 ## Cell indices
 
 On save, nothelix compacts cell indices to a contiguous `0, 1, 2, …`, cleaning holes from deleted or reordered cells. Run `:renumber-cells` to trigger it on demand.
