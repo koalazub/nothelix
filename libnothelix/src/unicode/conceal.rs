@@ -331,7 +331,10 @@ mod tests {
     fn font_command_digits_render() {
         assert_eq!(apply_overlays("# $\\mathbf{0}$\n"), "# 𝟎\n");
         assert_eq!(apply_overlays("# $\\mathbf{1}$\n"), "# 𝟏\n");
-        assert_eq!(apply_overlays("# $A\\mathbf{x} = \\mathbf{0}$\n"), "# A𝐱 = 𝟎\n");
+        assert_eq!(
+            apply_overlays("# $A\\mathbf{x} = \\mathbf{0}$\n"),
+            "# A𝐱 = 𝟎\n"
+        );
         assert_eq!(apply_overlays("# $\\mathbb{1}$\n"), "# 𝟙\n");
         assert_eq!(apply_overlays("# $\\mathtt{0}$\n"), "# 𝟶\n");
     }

@@ -227,7 +227,14 @@ fn braced_command(
     }
     if matches!(
         name,
-        "mathsf" | "mathrm" | "text" | "mathtt" | "mathbf" | "mathit" | "mathbb" | "mathcal"
+        "mathsf"
+            | "mathrm"
+            | "text"
+            | "mathtt"
+            | "mathbf"
+            | "mathit"
+            | "mathbb"
+            | "mathcal"
             | "boldsymbol"
     ) && after.starts_with('{')
         && after.ends_with('}')

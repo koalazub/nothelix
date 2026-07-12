@@ -22,12 +22,19 @@ fn store_root() -> PathBuf {
 
 fn sanitize(key: &str) -> String {
     key.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
 fn cell_path(root: &Path, workspace: &str, cell_id: &str) -> PathBuf {
-    root.join(sanitize(workspace)).join(format!("{}.json", sanitize(cell_id)))
+    root.join(sanitize(workspace))
+        .join(format!("{}.json", sanitize(cell_id)))
 }
 
 fn get_at(root: &Path, workspace: &str, cell_id: &str) -> String {
@@ -40,10 +47,17 @@ fn get_at(root: &Path, workspace: &str, cell_id: &str) -> String {
     }
 }
 
-fn set_at(root: &Path, workspace: &str, cell_id: &str, source_hash: &str, outputs_json: &str) -> Result<(), String> {
+fn set_at(
+    root: &Path,
+    workspace: &str,
+    cell_id: &str,
+    source_hash: &str,
+    outputs_json: &str,
+) -> Result<(), String> {
     let path = cell_path(root, workspace, cell_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("ERROR: cannot create {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("ERROR: cannot create {}: {e}", parent.display()))?;
     }
     fs::write(&path, format!("{source_hash}\n{outputs_json}"))
         .map_err(|e| format!("ERROR: cannot write {}: {e}", path.display()))
@@ -57,8 +71,19 @@ fn clear_at(root: &Path, workspace: &str, cell_id: &str) -> Result<(), String> {
     }
 }
 
-pub fn output_store_put(workspace: String, cell_id: String, source_hash: String, outputs_json: String) -> String {
-    match set_at(&store_root(), &workspace, &cell_id, &source_hash, &outputs_json) {
+pub fn output_store_put(
+    workspace: String,
+    cell_id: String,
+    source_hash: String,
+    outputs_json: String,
+) -> String {
+    match set_at(
+        &store_root(),
+        &workspace,
+        &cell_id,
+        &source_hash,
+        &outputs_json,
+    ) {
         Ok(()) => String::new(),
         Err(e) => e,
     }
