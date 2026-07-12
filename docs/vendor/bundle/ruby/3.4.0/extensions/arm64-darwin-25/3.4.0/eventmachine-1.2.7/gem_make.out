@@ -1,0 +1,140 @@
+current directory: /Users/koalazub/projects/nothelix/docs/vendor/bundle/ruby/3.4.0/gems/eventmachine-1.2.7/ext/fastfilereader
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/bin/ruby extconf.rb
+creating Makefile
+
+current directory: /Users/koalazub/projects/nothelix/docs/vendor/bundle/ruby/3.4.0/gems/eventmachine-1.2.7/ext/fastfilereader
+make DESTDIR\= sitearchdir\=./.gem.20260712-95846-dfain4 sitelibdir\=./.gem.20260712-95846-dfain4 clean
+
+current directory: /Users/koalazub/projects/nothelix/docs/vendor/bundle/ruby/3.4.0/gems/eventmachine-1.2.7/ext/fastfilereader
+make DESTDIR\= sitearchdir\=./.gem.20260712-95846-dfain4 sitelibdir\=./.gem.20260712-95846-dfain4
+compiling mapper.cpp
+compiling rubymain.cpp
+rubymain.cpp:53:12: warning: 'rb_data_object_wrap_warning' is deprecated: by TypedData [-Wdeprecated-declarations]
+   53 |         VALUE v = Data_Wrap_Struct (Mapper, 0, mapper_dt, (void*)m);
+      |                   ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:199:5: note: expanded from macro 'Data_Wrap_Struct'
+  199 |     rb_data_object_wrap(                          \
+      |     ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:363:31: note: expanded from macro 'rb_data_object_wrap'
+  363 | #define rb_data_object_wrap   RUBY_MACRO_SELECT(rb_data_object_wrap_2, RUBY_UNTYPED_DATA_WARNING)
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:50:35: note: expanded from macro 'RUBY_MACRO_SELECT'
+   50 | #define RUBY_MACRO_SELECT(x, y)   RBIMPL_MACRO_SELECT(x, y)
+      |                                   ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:49:35: note: expanded from macro 'RBIMPL_MACRO_SELECT'
+   49 | #define RBIMPL_MACRO_SELECT(x, y) x ## y
+      |                                   ^
+<scratch space>:107:1: note: expanded from here
+  107 | rb_data_object_wrap_1
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:361:31: note: expanded from macro 'rb_data_object_wrap_1'
+  361 | #define rb_data_object_wrap_1 rb_data_object_wrap_warning
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:277:1: note: 'rb_data_object_wrap_warning' has been explicitly marked deprecated here
+  277 | RBIMPL_ATTRSET_UNTYPED_DATA_FUNC()
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:47:5: note: expanded from macro 'RBIMPL_ATTRSET_UNTYPED_DATA_FUNC'
+   47 |     RBIMPL_ATTR_DEPRECATED(("by TypedData"))
+      |     ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/attr/deprecated.h:36:53: note: expanded from macro 'RBIMPL_ATTR_DEPRECATED'
+   36 | # define RBIMPL_ATTR_DEPRECATED(msg) __attribute__((__deprecated__ msg))
+      |                                                     ^
+rubymain.cpp:65:2: warning: 'rb_data_object_get_warning' is deprecated: by TypedData [-Wdeprecated-declarations]
+   65 |         Data_Get_Struct (self, Mapper_t, m);
+      |         ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:275:34: note: expanded from macro 'Data_Get_Struct'
+  275 |     ((sval) = RBIMPL_CAST((type*)rb_data_object_get(obj)))
+      |                                  ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:367:31: note: expanded from macro 'rb_data_object_get'
+  367 | #define rb_data_object_get    RUBY_MACRO_SELECT(rb_data_object_get_2, RUBY_UNTYPED_DATA_WARNING)
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:50:35: note: expanded from macro 'RUBY_MACRO_SELECT'
+   50 | #define RUBY_MACRO_SELECT(x, y)   RBIMPL_MACRO_SELECT(x, y)
+      |                                   ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:49:35: note: expanded from macro 'RBIMPL_MACRO_SELECT'
+   49 | #define RBIMPL_MACRO_SELECT(x, y) x ## y
+      |                                   ^
+<scratch space>:128:1: note: expanded from here
+  128 | rb_data_object_get_1
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:365:31: note: expanded from macro 'rb_data_object_get_1'
+  365 | #define rb_data_object_get_1  rb_data_object_get_warning
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:314:1: note: 'rb_data_object_get_warning' has been explicitly marked deprecated here
+  314 | RBIMPL_ATTRSET_UNTYPED_DATA_FUNC()
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:47:5: note: expanded from macro 'RBIMPL_ATTRSET_UNTYPED_DATA_FUNC'
+   47 |     RBIMPL_ATTR_DEPRECATED(("by TypedData"))
+      |     ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/attr/deprecated.h:36:53: note: expanded from macro 'RBIMPL_ATTR_DEPRECATED'
+   36 | # define RBIMPL_ATTR_DEPRECATED(msg) __attribute__((__deprecated__ msg))
+      |                                                     ^
+rubymain.cpp:88:2: warning: 'rb_data_object_get_warning' is deprecated: by TypedData [-Wdeprecated-declarations]
+   88 |         Data_Get_Struct (self, Mapper_t, m);
+      |         ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:275:34: note: expanded from macro 'Data_Get_Struct'
+  275 |     ((sval) = RBIMPL_CAST((type*)rb_data_object_get(obj)))
+      |                                  ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:367:31: note: expanded from macro 'rb_data_object_get'
+  367 | #define rb_data_object_get    RUBY_MACRO_SELECT(rb_data_object_get_2, RUBY_UNTYPED_DATA_WARNING)
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:50:35: note: expanded from macro 'RUBY_MACRO_SELECT'
+   50 | #define RUBY_MACRO_SELECT(x, y)   RBIMPL_MACRO_SELECT(x, y)
+      |                                   ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:49:35: note: expanded from macro 'RBIMPL_MACRO_SELECT'
+   49 | #define RBIMPL_MACRO_SELECT(x, y) x ## y
+      |                                   ^
+<scratch space>:139:1: note: expanded from here
+  139 | rb_data_object_get_1
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:365:31: note: expanded from macro 'rb_data_object_get_1'
+  365 | #define rb_data_object_get_1  rb_data_object_get_warning
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:314:1: note: 'rb_data_object_get_warning' has been explicitly marked deprecated here
+  314 | RBIMPL_ATTRSET_UNTYPED_DATA_FUNC()
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:47:5: note: expanded from macro 'RBIMPL_ATTRSET_UNTYPED_DATA_FUNC'
+   47 |     RBIMPL_ATTR_DEPRECATED(("by TypedData"))
+      |     ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/attr/deprecated.h:36:53: note: expanded from macro 'RBIMPL_ATTR_DEPRECATED'
+   36 | # define RBIMPL_ATTR_DEPRECATED(msg) __attribute__((__deprecated__ msg))
+      |                                                     ^
+rubymain.cpp:102:2: warning: 'rb_data_object_get_warning' is deprecated: by TypedData [-Wdeprecated-declarations]
+  102 |         Data_Get_Struct (self, Mapper_t, m);
+      |         ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:275:34: note: expanded from macro 'Data_Get_Struct'
+  275 |     ((sval) = RBIMPL_CAST((type*)rb_data_object_get(obj)))
+      |                                  ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:367:31: note: expanded from macro 'rb_data_object_get'
+  367 | #define rb_data_object_get    RUBY_MACRO_SELECT(rb_data_object_get_2, RUBY_UNTYPED_DATA_WARNING)
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:50:35: note: expanded from macro 'RUBY_MACRO_SELECT'
+   50 | #define RUBY_MACRO_SELECT(x, y)   RBIMPL_MACRO_SELECT(x, y)
+      |                                   ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:49:35: note: expanded from macro 'RBIMPL_MACRO_SELECT'
+   49 | #define RBIMPL_MACRO_SELECT(x, y) x ## y
+      |                                   ^
+<scratch space>:160:1: note: expanded from here
+  160 | rb_data_object_get_1
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:365:31: note: expanded from macro 'rb_data_object_get_1'
+  365 | #define rb_data_object_get_1  rb_data_object_get_warning
+      |                               ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:314:1: note: 'rb_data_object_get_warning' has been explicitly marked deprecated here
+  314 | RBIMPL_ATTRSET_UNTYPED_DATA_FUNC()
+      | ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/core/rdata.h:47:5: note: expanded from macro 'RBIMPL_ATTRSET_UNTYPED_DATA_FUNC'
+   47 |     RBIMPL_ATTR_DEPRECATED(("by TypedData"))
+      |     ^
+/nix/store/xrzvqg9ncbkp90fx5jwhwrzasbfq1p8c-ruby-3.4.9/include/ruby-3.4.0/ruby/internal/attr/deprecated.h:36:53: note: expanded from macro 'RBIMPL_ATTR_DEPRECATED'
+   36 | # define RBIMPL_ATTR_DEPRECATED(msg) __attribute__((__deprecated__ msg))
+      |                                                     ^
+4 warnings generated.
+linking shared-object fastfilereaderext.bundle
+
+current directory: /Users/koalazub/projects/nothelix/docs/vendor/bundle/ruby/3.4.0/gems/eventmachine-1.2.7/ext/fastfilereader
+make DESTDIR\= sitearchdir\=./.gem.20260712-95846-dfain4 sitelibdir\=./.gem.20260712-95846-dfain4 install
+install -c -p -m 755 fastfilereaderext.bundle ./.gem.20260712-95846-dfain4
+
+current directory: /Users/koalazub/projects/nothelix/docs/vendor/bundle/ruby/3.4.0/gems/eventmachine-1.2.7/ext/fastfilereader
+make DESTDIR\= sitearchdir\=./.gem.20260712-95846-dfain4 sitelibdir\=./.gem.20260712-95846-dfain4 clean

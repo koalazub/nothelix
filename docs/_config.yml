@@ -5,7 +5,7 @@ remote_theme: just-the-docs/just-the-docs
 url: https://koalazub.github.io
 baseurl: "/nothelix"
 
-color_scheme: light
+color_scheme: nothelix
 search_enabled: true
 heading_anchors: true
 
@@ -20,6 +20,7 @@ plugins:
   - jekyll-remote-theme
 
 exclude:
+  - vendor/
   - superpowers/
   - dev/
   - "*.original.md"

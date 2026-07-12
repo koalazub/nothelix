@@ -1,0 +1,23 @@
+@import "./color_schemes/dark";
+
+$color-scheme: nothelix-dark;
+
+$body-font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", menlo,
+  consolas, monospace;
+$mono-font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", menlo,
+  consolas, monospace;
+
+$body-background-color: #0f2435;
+$sidebar-color: #0c1d2c;
+$body-heading-color: #eef4fb;
+$body-text-color: #dbe7f1;
+$link-color: #7fabe2;
+$nav-child-link-color: #9fb6c9;
+$base-button-color: #112a3e;
+$btn-primary-color: #e09368;
+$feedback-color: #0a1826;
+$table-background-color: #112a3e;
+$search-background-color: #112a3e;
+$search-result-preview-color: #9fb6c9;
+$border-color: #24455e;
+$code-background-color: #0b1d2c;

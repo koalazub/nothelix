@@ -57,7 +57,7 @@
         + '<line x1="' + pl + '" y1="' + (H - pb) + '" x2="' + (W - pr) + '" y2="' + (H - pb) + '" style="stroke:var(--nx-line-strong);stroke-width:1"/>'
         + '<polyline points="' + poly + '" style="fill:none;stroke:var(--nx-helix);stroke-width:2;stroke-linejoin:round"/>'
         + dots
-        + '<text x="' + (W - pr) + '" y="' + (pt + 7) + '" text-anchor="end" style="font-family:var(--nx-mono);font-size:9px;fill:var(--nx-faint)">y = x2</text>'
+        + '<text x="' + (W - pr) + '" y="' + (pt + 7) + '" text-anchor="end" style="font-family:var(--nx-mono);font-size:9px;fill:var(--nx-faint)">y = x²</text>'
         + '</svg>';
     }
     function buildBuf(f) {
@@ -94,7 +94,7 @@
     var frameEls = Array.prototype.slice.call(stage.querySelectorAll('.nx-sim__frame'));
     var segEls = Array.prototype.slice.call(railEl.querySelectorAll('.nx-sim__seg'));
     var pipEls = Array.prototype.slice.call(dotsEl.querySelectorAll('.nx-sim__pip'));
-    var i = 0, timer = null;
+    var i = 0;
 
     function show(n) {
       i = n;
@@ -103,17 +103,8 @@
       segEls.forEach(function (el, k) { el.classList.toggle('is-on', k === frames[n].layer); });
       countEl.textContent = (n + 1) + ' / ' + frames.length;
     }
-    function stopAuto() { if (timer) { clearTimeout(timer); timer = null; } }
-    function tick() {
-      stopAuto();
-      if (i >= frames.length - 1) { return; }
-      timer = setTimeout(function () { show(i + 1); tick(); }, reduce ? 2600 : 3400);
-    }
-    function autoFrom(n) { show(n); tick(); }
-
     segEls.forEach(function (seg) {
       seg.addEventListener('click', function () {
-        stopAuto();
         var layer = +seg.getAttribute('data-seg');
         var group = [];
         frames.forEach(function (f, k) { if (f.layer === layer) { group.push(k); } });
@@ -122,17 +113,10 @@
         show(pos === -1 ? group[0] : group[(pos + 1) % group.length]);
       });
     });
-    pipEls.forEach(function (p, k) { p.addEventListener('click', function () { stopAuto(); show(k); }); });
-    replay.addEventListener('click', function () { autoFrom(0); });
+    pipEls.forEach(function (p, k) { p.addEventListener('click', function () { show(k); }); });
+    replay.addEventListener('click', function () { show(0); });
 
     show(0);
-    if ('IntersectionObserver' in window) {
-      var seen = false;
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (e) { if (e.isIntersecting && !seen) { seen = true; io.disconnect(); autoFrom(0); } });
-      }, { threshold: 0.4 });
-      io.observe(root);
-    }
   });
 })();
 

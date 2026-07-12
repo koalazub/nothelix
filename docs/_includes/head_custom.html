@@ -1,155 +1,31 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="{{ '/assets/css/just-the-docs-nothelix-dark.css' | relative_url }}">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* ===== nothelix site theme: paper (light) / blueprint (dark), by system ===== */
-:root {
-  --st-bg: #f2ead6;
-  --st-sidebar: #ece1c8;
-  --st-surface: #fbf6e9;
-  --st-fg: #2f3e4d;
-  --st-heading: #21303f;
-  --st-muted: #5c6b78;
-  --st-link: #4d7aa6;
-  --st-link-hover: #c1764f;
-  --st-border: rgba(47,62,77,.22);
-  --st-grid: rgba(57,86,116,.10);
-  --st-accent: #c1764f;
-
-  /* code blocks: a constant dark slate so syntax highlighting keeps contrast */
-  --st-code-bg: #112536;
-  --st-code-fg: #dbe7f1;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --st-bg: #0f2435;
-    --st-sidebar: #0c1d2c;
-    --st-surface: #112a3e;
-    --st-fg: #dbe7f1;
-    --st-heading: #eef4fb;
-    --st-muted: #9fb6c9;
-    --st-link: #7fabe2;
-    --st-link-hover: #e09368;
-    --st-border: rgba(190,215,235,.24);
-    --st-grid: rgba(150,190,225,.12);
-    --st-accent: #e09368;
-    --st-code-bg: #0b1d2c;
-  }
-}
-
-body {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
-  color: var(--st-fg);
-  background-color: var(--st-bg);
-  background-image:
-    linear-gradient(var(--st-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--st-grid) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
+/* Design layer only: display font, drafting-grid backdrop, prose measure.
+   All component colors come from the nothelix color schemes. */
 h1, h2, h3, h4, h5, h6,
 .site-title, .text-alpha, .text-beta, .text-gamma {
-  font-family: 'Architects Daughter', 'Comic Sans MS', cursive !important;
-  color: var(--st-heading) !important;
+  font-family: 'Architects Daughter', cursive;
   letter-spacing: .01em;
 }
 
-.side-bar { background-color: var(--st-sidebar); border-right: 1px solid var(--st-border); }
-.site-header { border-bottom: 1px solid var(--st-border); }
-.site-title { color: var(--st-heading) !important; }
-.site-button { color: var(--st-muted); }
-
-.main-content,
-.main-content p,
-.main-content li,
-.main-content td { color: var(--st-fg); }
-
-.main-content a, a, .nav-list .nav-list-item .nav-list-link:hover {
-  color: var(--st-link);
+body {
+  background-image:
+    linear-gradient(rgba(57, 86, 116, 0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(57, 86, 116, 0.10) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
-a:hover, .main-content a:hover { color: var(--st-link-hover); }
-
-.nav-list .nav-list-item .nav-list-link { color: var(--st-fg); }
-.nav-list .nav-list-item .nav-list-link.active,
-.nav-list .nav-list-item .nav-list-link.active:hover { color: var(--st-link); font-weight: 600; }
-
-hr { background-color: var(--st-border); }
-
-/* tables and quotes: pin every row to theme surfaces so no base-scheme
-   background bleeds through in either mode */
-.main-content .table-wrapper { background-color: transparent; box-shadow: 0 1px 3px var(--st-border); }
-.main-content table th, .main-content table td { border-color: var(--st-border); }
-.main-content table th { background-color: var(--st-surface); color: var(--st-heading); }
-.main-content table tr { background-color: var(--st-bg); }
-.main-content table tr:nth-child(2n) { background-color: var(--st-surface); }
-.main-content table td { background-color: transparent; color: var(--st-fg); }
-.main-content blockquote { border-left: 3px solid var(--st-accent); color: var(--st-muted); }
-
-/* inline code: a quiet chip that adapts to the page */
-.main-content code.language-plaintext,
-.main-content p > code, .main-content li > code, .main-content td > code {
-  background-color: color-mix(in srgb, var(--st-fg) 9%, transparent);
-  color: var(--st-fg);
-  border: 1px solid var(--st-border);
+@media (prefers-color-scheme: dark) {
+  body {
+    background-image:
+      linear-gradient(rgba(150, 190, 225, 0.10) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(150, 190, 225, 0.10) 1px, transparent 1px);
+  }
 }
 
-/* fenced code blocks: constant dark slate */
-.main-content pre.highlight,
-.main-content div.highlighter-rouge,
-.main-content figure.highlight,
-.highlight {
-  background-color: var(--st-code-bg) !important;
-  border: 1px solid var(--st-border);
-  border-radius: 8px;
-}
-.main-content pre.highlight, .main-content pre.highlight code,
-.highlight, .highlight code { color: var(--st-code-fg); }
-
-/* search: compact pill, not a full-width slab */
-.main-header { background-color: var(--st-bg); border-bottom: 1px solid var(--st-border); }
-.search { max-width: 21rem; height: auto; }
-.search-input-wrap { height: 2.3rem; box-shadow: none; border-radius: 999px; }
-.search-input {
-  background-color: var(--st-surface);
-  color: var(--st-fg);
-  border: 1px solid var(--st-border);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  padding-top: 0.35rem;
-  padding-bottom: 0.35rem;
-}
-.search-input:focus { border-color: var(--st-accent); }
-.search-label .search-icon { width: 0.9rem; height: 0.9rem; color: var(--st-muted); }
-.search-results { background-color: var(--st-surface); border: 1px solid var(--st-border); }
-.search-result-title { color: var(--st-fg); }
-.search-result:hover, .search-result.active { background-color: color-mix(in srgb, var(--st-accent) 12%, transparent); }
-.search-result-doc .search-result-icon { color: var(--st-link); }
-.search-result-previews { color: var(--st-muted); }
-
-/* aux nav ("Source on GitHub"): quiet link, not a dark slab */
-.aux-nav { background-color: transparent; }
-.aux-nav .site-button, .aux-nav-list-item .site-button {
-  background-color: transparent;
-  color: var(--st-muted);
-  font-size: 0.78rem;
-}
-.aux-nav .site-button:hover { color: var(--st-link-hover); background-color: transparent; }
-
-/* buttons */
-.btn {
-  color: var(--st-fg);
-  background-color: var(--st-surface);
-  border: 1px solid var(--st-border);
-  box-shadow: none;
-}
-.btn:hover { background-color: var(--st-bg); border-color: var(--st-accent); }
-
-/* footer */
-.site-footer { color: var(--st-muted); border-top: 1px solid var(--st-border); }
-
-/* Monospace prose runs large and edge-to-edge at the theme's base size.
-   Pull the reading column in, drop the body size, and keep code legible. */
 .main-content {
   font-size: 0.82rem;
   line-height: 1.72;
@@ -157,11 +33,12 @@ hr { background-color: var(--st-border); }
 }
 .main-content p,
 .main-content li { max-width: 42rem; }
-.main-content pre.highlight,
-.main-content pre.highlight code,
-.main-content code { font-size: 0.8rem; }
 .main-content h1 { font-size: 1.9rem; line-height: 1.2; }
 .main-content h2 { font-size: 1.4rem; }
 .main-content h3 { font-size: 1.15rem; }
+
+.search { max-width: 21rem; }
+.search-input, .search-input-wrap { border-radius: 999px; }
+.search-input { font-size: 0.78rem; }
 </style>
 <script defer src="{{ '/assets/js/search-hotkey.js' | relative_url }}"></script>
