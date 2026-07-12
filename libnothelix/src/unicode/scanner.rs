@@ -698,7 +698,7 @@ impl<'a> Scanner<'a> {
         // it where the `}` was means it attaches to the content's last
         // character rather than floating off the end.
         self.overlays.push(Overlay::at(close_brace, combining));
-        close_brace + 1
+        content_start
     }
 
     /// Simple `\name` lookup — falls back to the Julia symbol table.

@@ -296,6 +296,20 @@ mod tests {
     }
 
     #[test]
+    fn combining_mark_scans_nested_content() {
+        assert_eq!(apply_overlays("# $\\hat{\\mathbf{b}}$\n"), "# 𝐛\u{302}\n");
+        assert_eq!(apply_overlays("# $\\vec{\\mathbf{v}}$\n"), "# 𝐯\u{20D7}\n");
+        assert_eq!(apply_overlays("# $\\bar{\\mathbb{R}}$\n"), "# ℝ\u{304}\n");
+        assert_eq!(apply_overlays("# $\\hat{b}$\n"), "# b\u{302}\n");
+        assert_eq!(
+            apply_overlays(
+                "# \\(d\\) Plot $\\mathbf{b}$, $\\hat{\\mathbf{b}}$,  and $\\mathbf{r}$ as vectors in $\\mathbb{R}^3$\n"
+            ),
+            "# (d) Plot 𝐛, 𝐛\u{302},  and 𝐫 as vectors in ℝ³\n"
+        );
+    }
+
+    #[test]
     fn transpose_top_renders_superscript_t() {
         assert_eq!(apply_overlays("# $A^\\top$\n"), "# Aᵀ\n");
         assert_eq!(apply_overlays("# $A^{\\top}$\n"), "# Aᵀ\n");

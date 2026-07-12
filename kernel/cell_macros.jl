@@ -100,7 +100,10 @@ end
 
 # Execute a cell by index (for programmatic execution)
 # Uses include_string for TRUE top-level execution (like Jupyter does)
-function execute_cell(cell_idx::Int, code::String)
+# `plot_mode` ("auto"|"raster"|"braille", default "auto") is forwarded to
+# OutputCapture.capture_toplevel; see its docstring / plot_route for the
+# routing it drives.
+function execute_cell(cell_idx::Int, code::String; plot_mode::String="auto")
     # Create cell in registry
     cell = CellRegistry.Cell(cell_idx)
     cell.code_string = code
@@ -125,7 +128,7 @@ function execute_cell(cell_idx::Int, code::String)
 
     # Execute at TRUE top level with output capture
     # This is how Jupyter does it - include_string runs at module top level
-    captured = OutputCapture.capture_toplevel(Main, code)
+    captured = OutputCapture.capture_toplevel(Main, code; plot_mode=plot_mode)
 
     # Store results in cell
     cell.outputs = captured.return_value

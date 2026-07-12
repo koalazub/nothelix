@@ -139,15 +139,16 @@ end
 function handle_execute_cell(cmd::Dict)
     cell_idx = get(cmd, "cell_index", 0)
     code = get(cmd, "code", "")
+    plot_mode = get(cmd, "plot_mode", "auto")
 
-    log_info("Executing cell $cell_idx ($(length(code)) bytes)")
+    log_info("Executing cell $cell_idx ($(length(code)) bytes, plot_mode=$plot_mode)")
     log_debug("Code preview: $(first(code, min(100, length(code))))...")
 
-    requests_unicode_plots(code) && ensure_unicode_plots()
+    (plot_mode == "braille" || requests_unicode_plots(code)) && ensure_unicode_plots()
 
     try
         # Execute the cell
-        result = CellMacros.execute_cell(cell_idx, code)
+        result = CellMacros.execute_cell(cell_idx, code; plot_mode=plot_mode)
 
         if result.success
             log_info("Cell $cell_idx executed successfully")
@@ -182,16 +183,17 @@ end
 function handle_execute_reactive(cmd::Dict)
     cell_idx = get(cmd, "cell_index", 0)
     code = get(cmd, "code", "")
+    plot_mode = get(cmd, "plot_mode", "auto")
 
-    log_info("Reactive execution starting from cell $cell_idx")
+    log_info("Reactive execution starting from cell $cell_idx (plot_mode=$plot_mode)")
 
     executed = Int[]
 
-    requests_unicode_plots(code) && ensure_unicode_plots()
+    (plot_mode == "braille" || requests_unicode_plots(code)) && ensure_unicode_plots()
 
     try
         # Execute the target cell first
-        result = CellMacros.execute_cell(cell_idx, code)
+        result = CellMacros.execute_cell(cell_idx, code; plot_mode=plot_mode)
         push!(executed, cell_idx)
 
         if !result.success
@@ -212,8 +214,8 @@ function handle_execute_reactive(cmd::Dict)
             if haskey(CellRegistry.CELLS, dep_idx)
                 dep_cell = CellRegistry.CELLS[dep_idx]
                 log_info("Re-executing dependent cell $dep_idx")
-                requests_unicode_plots(dep_cell.code_string) && ensure_unicode_plots()
-                dep_result = CellMacros.execute_cell(dep_idx, dep_cell.code_string)
+                (plot_mode == "braille" || requests_unicode_plots(dep_cell.code_string)) && ensure_unicode_plots()
+                dep_result = CellMacros.execute_cell(dep_idx, dep_cell.code_string; plot_mode=plot_mode)
                 push!(executed, dep_idx)
 
                 if !dep_result.success

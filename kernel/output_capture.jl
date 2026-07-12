@@ -4,7 +4,7 @@ using Base64
 using Dates
 using ..CellRegistry
 
-export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, capture_animated_output, extract_plot_data, is_unicode_plot, parse_ansi_rows, capture_unicode_plot_text, set_log_file, set_kernel_dir
+export CapturedOutput, capture_execution, capture_toplevel, is_displayable_plot, capture_plot_png, capture_animated_output, extract_plot_data, is_unicode_plot, parse_ansi_rows, capture_unicode_plot_text, set_log_file, set_kernel_dir, plot_route
 
 # Log to kernel directory if available (set by runner.jl)
 const CAPTURE_LOG_FILE = Ref{Union{String, Nothing}}(nothing)
@@ -306,6 +306,34 @@ function is_unicode_plot(x)
     catch
         false
     end
+end
+
+# Decide how an already-produced top-level value should be routed for
+# display, given the request's `plot_mode` ("auto"|"raster"|"braille")
+# and whether the value itself is a UnicodePlots plot.
+#
+#   "auto"    — today's behaviour: a UnicodePlots value renders braille,
+#               anything else falls through to the raster/repr path.
+#   "braille" — a UnicodePlots value renders braille, same as "auto". A
+#               NON-UnicodePlots value (e.g. a Plots.jl figure) is never
+#               converted to braille — it still falls through to raster,
+#               same as "auto". The only observable difference "braille"
+#               makes is at the call site: it force-triggers the
+#               UnicodePlots self-heal even when the cell's source text
+#               doesn't mention "UnicodePlots".
+#   "raster"  — a UnicodePlots value is NOT routed to braille even
+#               though `is_unicode` is true. It falls through to
+#               :raster, where `is_displayable_plot`'s string-fallback
+#               still matches UnicodePlots' `Plot` type name, so
+#               `capture_plot_png` is attempted — and fails (UnicodePlots
+#               can't produce a PNG), leaving the value to render as
+#               plain text repr.
+#
+# Pure and total over the 3 modes x 2 `is_unicode` combinations — no I/O,
+# no globals — so it's unit-testable directly.
+function plot_route(mode::String, is_unicode::Bool)
+    is_unicode && mode != "raster" && return :braille
+    :raster
 end
 
 # Capture a plot as PNG base64
@@ -679,7 +707,11 @@ end
 
 # Capture output from code executed at TRUE top level via include_string
 # This is how Jupyter does it - code runs at module top level, not inside a function
-function capture_toplevel(mod::Module, code::String)
+#
+# `plot_mode` ("auto"|"raster"|"braille", default "auto") is the
+# project's plot-mode config forwarded from the execute request; see
+# `plot_route` above for the per-value routing it drives.
+function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
     result = CapturedOutput()
 
     # Create IO buffers for capturing output
@@ -759,31 +791,36 @@ function capture_toplevel(mod::Module, code::String)
                     continue
                 end
                 last_result = Core.eval(mod, Expr(:toplevel, current_line, expr))
-                if last_result !== nothing && is_unicode_plot(last_result)
-                    # UnicodePlots renders as colored braille TEXT, not a
-                    # raster — checked before is_displayable_plot because
-                    # UnicodePlots's type name also matches the "Plot"
-                    # string-fallback pattern there.
-                    tp = capture_unicode_plot_text(last_result)
-                    if tp !== nothing
-                        push!(result.text_plots, tp)
-                    end
-                elseif last_result !== nothing && is_displayable_plot(last_result)
-                    animated = capture_animated_output(last_result)
-                    if animated !== nothing
-                        ext = mime_to_extension(animated[1])
-                        push!(result.images, ("plot.$ext", animated[2]))
-                    else
-                        img = capture_plot_png(last_result)
-                        if img !== nothing
-                            push!(result.images, ("png", img))
+                if last_result !== nothing
+                    # `plot_route` decides braille vs raster from
+                    # plot_mode + is_unicode_plot; see its docstring for
+                    # the full "auto"/"raster"/"braille" table. Checked
+                    # before is_displayable_plot because UnicodePlots's
+                    # type name also matches the "Plot" string-fallback
+                    # pattern there.
+                    route = plot_route(plot_mode, is_unicode_plot(last_result))
+                    if route === :braille
+                        tp = capture_unicode_plot_text(last_result)
+                        if tp !== nothing
+                            push!(result.text_plots, tp)
                         end
-                    end
-                    # plot_data drives interactive chart overlays; we
-                    # only have one overlay slot per cell, so keep the
-                    # first plot's data.
-                    if result.plot_data === nothing
-                        result.plot_data = extract_plot_data(last_result)
+                    elseif is_displayable_plot(last_result)
+                        animated = capture_animated_output(last_result)
+                        if animated !== nothing
+                            ext = mime_to_extension(animated[1])
+                            push!(result.images, ("plot.$ext", animated[2]))
+                        else
+                            img = capture_plot_png(last_result)
+                            if img !== nothing
+                                push!(result.images, ("png", img))
+                            end
+                        end
+                        # plot_data drives interactive chart overlays; we
+                        # only have one overlay slot per cell, so keep the
+                        # first plot's data.
+                        if result.plot_data === nothing
+                            result.plot_data = extract_plot_data(last_result)
+                        end
                     end
                 end
             end
