@@ -39,4 +39,10 @@
   (assert-equal "pytho" (kind-tag "code (python)") "other lang truncated to 5")
   (assert-equal "raw" (kind-tag "raw") "raw passes through")
 
+  (assert-equal 0 (picker-scroll-offset 0 20 60) "scroll: top stays 0")
+  (assert-equal 0 (picker-scroll-offset 5 20 60) "scroll: early selection no scroll")
+  (assert-equal 20 (picker-scroll-offset 30 20 60) "scroll: mid selection centers")
+  (assert-equal 40 (picker-scroll-offset 59 20 60) "scroll: last row clamps to end")
+  (assert-equal 0 (picker-scroll-offset 3 20 5) "scroll: short list never scrolls")
+
   (print-test-suite-footer "picker"))

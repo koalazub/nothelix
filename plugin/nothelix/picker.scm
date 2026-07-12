@@ -17,7 +17,7 @@
                           slm-refresh-summaries
                           slm-summary-for))
 
-(provide cell-picker cell-summary kind-tag)
+(provide cell-picker cell-summary kind-tag picker-scroll-offset)
 
 (struct CellPickerState (cells selected digits) #:mutable)
 
@@ -193,6 +193,13 @@
          [else inner]))]
     [else kind]))
 
+;;@doc
+;; Scroll offset that keeps `selected` centered in a `visible`-row window,
+;; clamped to the list bounds.
+(define (picker-scroll-offset selected visible total)
+  (min (max 0 (- total visible))
+       (max 0 (- selected (quotient visible 2)))))
+
 (define (truncate-to s n)
   (if (> (string-length s) n)
       (string-append (substring s 0 (max 0 (- n 1))) "…")
@@ -240,8 +247,11 @@
           (string-append "Jump to Cell: " (number->string selected-cell-idx))))
     (frame-set-string! buf (+ x 2) y title text-style)
 
-    (let loop ([i 0])
-      (when (< i (length cells))
+    (define visible-rows (max 1 (- height 2)))
+    (define scroll-offset (picker-scroll-offset selected visible-rows (length cells)))
+
+    (let loop ([i scroll-offset])
+      (when (and (< i (length cells)) (< (- i scroll-offset) visible-rows))
         (let* ([cell (list-ref cells i)]
                [kind-label (list-ref cell 1)]
                [user-label (if (>= (length cell) 5) (list-ref cell 4) "")]
@@ -255,7 +265,7 @@
                                  (if (> (string-length snippet) 0) "  " "")
                                  snippet)
                   (- list-width 4))])
-          (frame-set-string! buf (+ x 2) (+ y i 1) row-text row-style)
+          (frame-set-string! buf (+ x 2) (+ y (- i scroll-offset) 1) row-text row-style)
           (loop (+ i 1)))))
 
     (buffer/clear buf preview-area)
