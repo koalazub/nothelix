@@ -5,7 +5,6 @@
     var dotsEl = root.querySelector('[data-nx-dots]');
     var countEl = root.querySelector('[data-nx-count]');
     var replay = root.querySelector('[data-nx-replay]');
-    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     var ACCENT = ['helix', 'steel', 'rust', 'julia'];
     var RAIL = ['Helix', 'plugin', 'libnothelix', 'kernel'];
