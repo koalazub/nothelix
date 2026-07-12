@@ -290,6 +290,12 @@
         [else (string-append "Jump to Cell: " (number->string selected-cell-idx))]))
     (frame-set-string! buf (+ x 2) y title text-style)
 
+    (define hint
+      (if (CellPickerState-filtering? state)
+          " esc list · enter go "
+          " / search · # jump · enter go "))
+    (frame-set-string! buf (+ x 2) (+ y height -1) hint text-style)
+
     (define visible-rows (max 1 (- height 2)))
     (define scroll-offset (picker-scroll-offset selected visible-rows (length cells)))
 
