@@ -74,6 +74,21 @@ You never type a cell index or `:julia` by hand.
 
 See [Rendering](rendering.md) for how figures and math reach the buffer.
 
+## Output and undo
+
+Text output renders as virtual rows below the cell: it is not buffer text, never
+enters undo, and is never written into the `.jl` file. Editing a cell and running
+it is one `u` away from a clean slate — the run itself leaves nothing to undo.
+
+Output persists per-cell in `~/.local/share/nothelix/`, keyed to the cell and a
+hash of its source. Reopening a notebook shows each cell's last output unless
+you've edited the source since, in which case it's treated as stale and left
+blank until you run the cell again.
+
+Plots still reserve real buffer lines for their height. On a fork build with
+tagged-undo support, those reserve-line edits are skipped by undo too, same as
+text; on an older build they still cost one undo step.
+
 ## Kernel persistence
 
 One kernel runs per notebook, keyed to the file path, not the buffer.
@@ -95,6 +110,8 @@ Drop a `.nothelix.conf` at a project root. Nothelix reads it when you open a not
 | `math-font-pt`, `math-color` | Size and colour math images | |
 | `table-font-pt` | Size table images | |
 | `render-width` | Pin image width | |
+| `plots-per-cell` | Cap on stacked plots rendered per cell (1..256) | `32` |
+| `plot-mode` | Force `raster` or `braille` plot rendering, or `auto` to decide from the plotting backend | `auto` |
 | `julia-bin`, `julia-project` | Pin the interpreter or environment for cells | PATH `julia` |
 
 `julia-bin` and `julia-project` execute code, so they take effect only after you trust the directory.

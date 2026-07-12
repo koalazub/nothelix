@@ -7,7 +7,7 @@ nav_order: 4
 
 | Content | Renders as | When |
 |---|---|---|
-| Plots | Inline image below the cell | On cell run |
+| Plots | Inline image(s) below the cell, stacked | On cell run |
 | Inline math `$…$` | Unicode overlay | On open, or `:conceal-math` |
 | Display math `$$…$$` | Typeset image | On open and save, or `:render-math-at-cursor` |
 | Pipe tables | Typeset image | On save, or `:render-all-tables` |
@@ -17,7 +17,11 @@ it, and what your terminal needs.
 
 ## Plots
 
-A cell that produces a figure renders it inline, below the cell.
+A cell that produces a figure renders it inline, below the cell. If a cell
+produces several plots, every one renders, stacked in order — not just the
+first. Re-running a cell replaces its plots. The stack is capped at
+`plots-per-cell` (`.nothelix.conf`, default `32`, range `1..256`); a cell that
+exceeds it logs a note instead of silently dropping the rest.
 
 | Command | Key | What it does |
 |---|---|---|
@@ -34,6 +38,17 @@ A `# @param` annotation turns a numeric literal into a live knob — nudge it wi
 `]p` / `[p` and the figure re-renders in place. Write `freq = 440   # @param 220:880 step 10`
 on the same line as the parameter, and the plugin handles the instant literal edit
 and debounced cell re-run.
+
+## Braille plots
+
+A cell using the UnicodePlots.jl backend (`using UnicodePlots; lineplot(...)`)
+renders as colored braille text inline instead of a raster image — selectable,
+no image protocol needed. Activation is implicit: nothelix detects a
+UnicodePlots value and switches automatically. `.nothelix.conf` `plot-mode =
+auto|raster|braille` (default `auto`) forces a mode regardless of backend.
+Braille and raster plots can stack in the same cell. Per-series color needs a
+current fork build; on an older one the braille glyphs still render, just
+monochrome.
 
 ## Inline math becomes Unicode
 
