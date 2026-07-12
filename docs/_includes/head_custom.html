@@ -76,10 +76,14 @@ a:hover, .main-content a:hover { color: var(--st-link-hover); }
 
 hr { background-color: var(--st-border); }
 
-/* tables and quotes */
+/* tables and quotes: pin every row to theme surfaces so no base-scheme
+   background bleeds through in either mode */
+.main-content .table-wrapper { background-color: transparent; box-shadow: 0 1px 3px var(--st-border); }
 .main-content table th, .main-content table td { border-color: var(--st-border); }
-.main-content table th { background-color: var(--st-surface); }
-.main-content tr:nth-child(2n) td { background-color: color-mix(in srgb, var(--st-surface) 55%, transparent); }
+.main-content table th { background-color: var(--st-surface); color: var(--st-heading); }
+.main-content table tr { background-color: var(--st-bg); }
+.main-content table tr:nth-child(2n) { background-color: var(--st-surface); }
+.main-content table td { background-color: transparent; color: var(--st-fg); }
 .main-content blockquote { border-left: 3px solid var(--st-accent); color: var(--st-muted); }
 
 /* inline code: a quiet chip that adapts to the page */
@@ -102,9 +106,35 @@ hr { background-color: var(--st-border); }
 .main-content pre.highlight, .main-content pre.highlight code,
 .highlight, .highlight code { color: var(--st-code-fg); }
 
-/* search */
-.search-input { background-color: var(--st-surface); color: var(--st-fg); }
+/* search: compact pill, not a full-width slab */
+.main-header { background-color: var(--st-bg); border-bottom: 1px solid var(--st-border); }
+.search { max-width: 21rem; height: auto; }
+.search-input-wrap { height: 2.3rem; box-shadow: none; border-radius: 999px; }
+.search-input {
+  background-color: var(--st-surface);
+  color: var(--st-fg);
+  border: 1px solid var(--st-border);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+.search-input:focus { border-color: var(--st-accent); }
+.search-label .search-icon { width: 0.9rem; height: 0.9rem; color: var(--st-muted); }
+.search-results { background-color: var(--st-surface); border: 1px solid var(--st-border); }
 .search-result-title { color: var(--st-fg); }
+.search-result:hover, .search-result.active { background-color: color-mix(in srgb, var(--st-accent) 12%, transparent); }
+.search-result-doc .search-result-icon { color: var(--st-link); }
+.search-result-previews { color: var(--st-muted); }
+
+/* aux nav ("Source on GitHub"): quiet link, not a dark slab */
+.aux-nav { background-color: transparent; }
+.aux-nav .site-button, .aux-nav-list-item .site-button {
+  background-color: transparent;
+  color: var(--st-muted);
+  font-size: 0.78rem;
+}
+.aux-nav .site-button:hover { color: var(--st-link-hover); background-color: transparent; }
 
 /* buttons */
 .btn {
