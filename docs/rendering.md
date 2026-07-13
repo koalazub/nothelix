@@ -68,6 +68,8 @@ formula in a `$$ … $$` block and it renders as a Typst image instead.
 | `:clear-conceal` | Remove the concealment overlays |
 | `:julia-tab-complete` | Expand a `\<name>` shortcut at the cursor (`Tab`, insert mode, `.jl`) |
 
+- Beyond the Julia REPL names, unicode-math `\Bbb*` names (`\BbbR`, `\Bbbzero`, …)
+  and friendly set aliases (`\Reals`, `\Integers`, …) also expand.
 - The raw LaTeX stays in the file and reappears on the cursor's line while you edit.
 - The result is plain text, so it flows with prose and works under a multiplexer.
 - Applied automatically on open, unless a project sets `conceal-on-open = false` in

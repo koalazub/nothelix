@@ -13,7 +13,9 @@
 //!
 //! Internal module layout:
 //!
-//!   - [`symbol_table`] — the 2544-entry Julia stdlib symbol table.
+//!   - [`symbol_table`] — the 2553-entry Julia stdlib symbol table.
+//!   - [`symbol_aliases`] — unicode-math `\Bbb*` and friendly set-name
+//!     aliases, consulted only when the exact symbol lookup misses.
 //!   - [`sub_super`] — sub/superscript maps + `\mathbf` font helper.
 //!   - [`fence`] — environment fence glyph lookup (⎧⎨⎩, ⎛⎜⎞, …).
 //!   - [`math_regions`] — finds `$...$` / `\(...\)` boundaries.
@@ -29,6 +31,7 @@ pub(crate) mod math_spans;
 mod overlay;
 mod scanner;
 mod sub_super;
+mod symbol_aliases;
 mod symbol_table;
 pub(crate) mod typst_conceal;
 
@@ -39,6 +42,7 @@ pub use symbol_table::{unicode_completions_for_prefix, unicode_lookup};
 
 #[cfg(test)]
 mod tests {
+    use super::symbol_aliases::ALIASES;
     use super::symbol_table::SYMBOLS;
     use super::*;
 
@@ -60,6 +64,80 @@ mod tests {
     #[test]
     fn lookup_missing() {
         assert_eq!(unicode_lookup("notareal symbol".into()), "");
+    }
+
+    #[test]
+    fn lookup_alias_reals() {
+        assert_eq!(unicode_lookup("Reals".into()), "ℝ");
+    }
+
+    #[test]
+    fn lookup_alias_bbb_r() {
+        assert_eq!(unicode_lookup("BbbR".into()), "ℝ");
+    }
+
+    #[test]
+    fn lookup_alias_bbb_c() {
+        assert_eq!(unicode_lookup("BbbC".into()), "ℂ");
+    }
+
+    #[test]
+    fn lookup_alias_bbb_a() {
+        assert_eq!(unicode_lookup("BbbA".into()), "𝔸");
+    }
+
+    #[test]
+    fn lookup_alias_bbb_zero() {
+        assert_eq!(unicode_lookup("Bbbzero".into()), "𝟘");
+    }
+
+    #[test]
+    fn lookup_exact_bb_r_resolves_from_symbols() {
+        assert!(ALIASES.binary_search_by_key(&"bbR", |&(k, _)| k).is_err());
+        assert_eq!(unicode_lookup("bbR".into()), "ℝ");
+    }
+
+    #[test]
+    fn alias_table_is_sorted() {
+        for i in 1..ALIASES.len() {
+            assert!(
+                ALIASES[i - 1].0 < ALIASES[i].0,
+                "Alias table not sorted at index {i}: {:?} >= {:?}",
+                ALIASES[i - 1].0,
+                ALIASES[i].0
+            );
+        }
+    }
+
+    #[test]
+    fn alias_keys_disjoint_from_symbols() {
+        for &(alias, _) in ALIASES {
+            assert!(
+                SYMBOLS.binary_search_by_key(&alias, |&(k, _)| k).is_err(),
+                "Alias {alias:?} shadows a SYMBOLS entry"
+            );
+        }
+    }
+
+    #[test]
+    fn bbb_aliases_derive_from_symbols() {
+        let letters = ('A'..='Z').chain('a'..='z').map(String::from);
+        let digits = [
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        ]
+        .into_iter()
+        .map(String::from);
+        for suffix in letters.chain(digits) {
+            let bb_key = format!("bb{suffix}");
+            let i = SYMBOLS
+                .binary_search_by_key(&bb_key.as_str(), |&(k, _)| k)
+                .unwrap_or_else(|_| panic!("SYMBOLS lacks {bb_key:?}"));
+            assert_eq!(
+                unicode_lookup(format!("Bbb{suffix}")),
+                SYMBOLS[i].1,
+                "Bbb{suffix} diverges from SYMBOLS {bb_key:?}"
+            );
+        }
     }
 
     #[test]

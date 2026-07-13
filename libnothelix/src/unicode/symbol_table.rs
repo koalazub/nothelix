@@ -21,7 +21,7 @@
 
 use serde_json::json;
 
-// 2544 entries
+// 2553 entries
 pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("0/3", "↉"),
     ("1/", "⅟"),
@@ -209,8 +209,10 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("^=", "⁼"),
     ("^A", "ᴬ"),
     ("^B", "ᴮ"),
+    ("^C", "ꟲ"),
     ("^D", "ᴰ"),
     ("^E", "ᴱ"),
+    ("^F", "ꟳ"),
     ("^G", "ᴳ"),
     ("^H", "ᴴ"),
     ("^I", "ᴵ"),
@@ -221,6 +223,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("^N", "ᴺ"),
     ("^O", "ᴼ"),
     ("^P", "ᴾ"),
+    ("^Q", "ꟴ"),
     ("^R", "ᴿ"),
     ("^T", "ᵀ"),
     ("^U", "ᵁ"),
@@ -252,6 +255,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("^o", "ᵒ"),
     ("^p", "ᵖ"),
     ("^phi", "ᵠ"),
+    ("^q", "𐞥"),
     ("^r", "ʳ"),
     ("^s", "ˢ"),
     ("^t", "ᵗ"),
@@ -434,6 +438,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("bfChi", "𝚾"),
     ("bfD", "𝐃"),
     ("bfDelta", "𝚫"),
+    ("bfDigamma", "𝟊"),
     ("bfE", "𝐄"),
     ("bfEpsilon", "𝚬"),
     ("bfEta", "𝚮"),
@@ -484,6 +489,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("bfchi", "𝛘"),
     ("bfd", "𝐝"),
     ("bfdelta", "𝛅"),
+    ("bfdigamma", "𝟋"),
     ("bfe", "𝐞"),
     ("bfeight", "𝟖"),
     ("bfepsilon", "𝛜"),
@@ -1557,8 +1563,10 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("itgamma", "𝛾"),
     ("ith", "ℎ"),
     ("iti", "𝑖"),
+    ("itimath", "𝚤"),
     ("itiota", "𝜄"),
     ("itj", "𝑗"),
+    ("itjmath", "𝚥"),
     ("itk", "𝑘"),
     ("itkappa", "𝜅"),
     ("itl", "𝑙"),
@@ -2179,6 +2187,7 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
     ("scri", "𝒾"),
     ("scrj", "𝒿"),
     ("scrk", "𝓀"),
+    ("scrl", "𝓁"),
     ("scrm", "𝓂"),
     ("scrn", "𝓃"),
     ("scro", "ℴ"),
@@ -2578,13 +2587,17 @@ pub(crate) static SYMBOLS: &[(&str, &str)] = &[
 // ─── FFI functions ────────────────────────────────────────────────────────────
 
 /// Look up a Julia LaTeX symbol name (without the leading backslash).
-/// Returns the Unicode string on success, or an empty string if not found.
+/// Falls back to [`super::symbol_aliases::ALIASES`] when the exact
+/// Julia REPL name misses. Returns the Unicode string on success, or an
+/// empty string if not found.
 ///
 /// Example: `unicode_lookup("alpha")` → `"α"`.
 pub fn unicode_lookup(name: String) -> String {
     match SYMBOLS.binary_search_by_key(&name.as_str(), |&(k, _)| k) {
         Ok(i) => SYMBOLS[i].1.to_string(),
-        Err(_) => String::new(),
+        Err(_) => super::symbol_aliases::alias_lookup(&name)
+            .unwrap_or_default()
+            .to_string(),
     }
 }
 
