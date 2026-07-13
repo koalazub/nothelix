@@ -154,12 +154,19 @@
       row
       (string-append row (make-string (- width len) #\space))))
 
-;; Block detection
+;; Block detection — trailing `#`/space/tab junk after the closing `$$` is
+;; ignored, in lockstep with math_format.rs's single_line_block_body.
 (define (single-line-block-body body)
-  (and (string-starts-with? body "$$")
-       (string-suffix? body "$$")
-       (> (string-length body) 4)
-       (string-trim (substring body 2 (- (string-length body) 2)))))
+  (define (junk? c) (or (char=? c #\#) (char=? c #\space) (char=? c #\tab)))
+  (define t
+    (let loop ([e (string-length body)])
+      (if (and (> e 0) (junk? (string-ref body (- e 1))))
+          (loop (- e 1))
+          (substring body 0 e))))
+  (and (string-starts-with? t "$$")
+       (string-suffix? t "$$")
+       (> (string-length t) 4)
+       (string-trim (substring t 2 (- (string-length t) 2)))))
 
 ;; Body after a Julia "# " marker, or #false. A bare "#" is an empty body.
 (define (md-comment-body line)

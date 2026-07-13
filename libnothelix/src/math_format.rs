@@ -119,6 +119,7 @@ fn cr_suffix(line: &str) -> &'static str {
 /// blocks in the same order.
 fn single_line_block_body(line: &str) -> Option<String> {
     let body = comment_body(line)?;
+    let body = body.trim_end_matches(['#', ' ', '\t']);
     if body.len() > 4 && body.starts_with("$$") && body.ends_with("$$") {
         Some(body[2..body.len() - 2].trim().to_string())
     } else {
@@ -726,6 +727,31 @@ mod tests {
         assert!(out.contains("# b \\\\\n"), "out:\n{out}");
         // Last row has no trailing `\\`.
         assert!(out.contains("# c\n"), "out:\n{out}");
+    }
+
+    #[test]
+    fn single_line_block_tolerates_trailing_comment_junk() {
+        let input = "# $$ P = A A^+ = A (A^\\top A)^{-1} A^\\top.$$ #";
+        let batch = math_block_latex_batch(input.to_string());
+        assert!(
+            batch.contains("A^\\top."),
+            "image batch sees the block:\n{batch}"
+        );
+        let out = reserve_math_lines(input.to_string(), "5".to_string());
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines.first().copied(), Some("# $$"));
+        assert_eq!(
+            lines.get(1).copied(),
+            Some("# P = A A^+ = A (A^\\top A)^{-1} A^\\top.")
+        );
+        assert_eq!(lines.last().copied(), Some("# $$"));
+    }
+
+    #[test]
+    fn single_line_block_with_trailing_prose_stays_strict() {
+        let input = "# $$ x $$ some real words";
+        let out = format_math(input.to_string());
+        assert_eq!(out, input, "prose after the block must not be reflowed");
     }
 
     #[test]
