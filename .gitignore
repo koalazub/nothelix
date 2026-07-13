@@ -36,3 +36,5 @@ lsp/depot/
 # Home-manager leaves .hm-bak files when it rebuilds over a symlinked
 # tree. These are recoverable — not something we ever want to commit.
 *.hm-bak
+docs/vendor/
+docs/Gemfile.lock
