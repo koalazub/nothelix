@@ -329,6 +329,32 @@
       (execute-cells-up-to doc-id path current-line current-cell-idx))))
 
 ;;@doc
+;; Strip stale legacy `# ─── Output ───` blocks (written as buffer text by an
+;; older binary's in-buffer fallback) so the virtual-row anchor lands on the
+;; true end of each cell's code. Ranges are collected from one rope snapshot
+;; and deleted bottom-up (highest line first): deleting a higher block never
+;; shifts a lower block's line numbers, so every collected range stays valid
+;; without a re-scan. The deletions are committed through the tagged,
+;; non-undo path so they never pollute the user's undo history, and no commit
+;; fires when there is nothing to strip (idempotent — a second open is a
+;; no-op).
+(define (strip-legacy-output-blocks! doc-id cell-indices)
+  (define rope (editor->text doc-id))
+  (define total-lines (text.rope-len-lines rope))
+  (define (get-line idx) (doc-get-line rope total-lines idx))
+  (define ranges
+    (filter (lambda (r) r)
+            (map (lambda (cell-idx)
+                   (define marker-line (find-cell-marker-by-index rope total-lines cell-idx))
+                   (and marker-line
+                        (legacy-output-block-range get-line total-lines (+ marker-line 1))))
+                 cell-indices)))
+  (define bottom-up (sort ranges (lambda (a b) (> (car a) (car b)))))
+  (unless (null? bottom-up)
+    (for-each (lambda (r) (delete-line-range (car r) (cdr r) #false)) bottom-up)
+    (try-commit-output-changes!)))
+
+;;@doc
 ;; Re-render every cell's output from the output store on document open,
 ;; skipping cells whose stored hash no longer matches their current source
 ;; (stale — edited since last run).
@@ -339,6 +365,7 @@
     (when (equal? (string-length cells-err) 0)
       (define indices-str (json-get cells-json "indices"))
       (define cell-indices (parse-indices-string indices-str))
+      (strip-legacy-output-blocks! doc-id cell-indices)
       (define rope (editor->text doc-id))
       (define total-lines (text.rope-len-lines rope))
       (define (get-line idx) (doc-get-line rope total-lines idx))

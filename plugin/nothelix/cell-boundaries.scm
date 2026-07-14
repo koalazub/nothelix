@@ -13,6 +13,7 @@
          find-cell-region-end
          find-output-start
          find-output-end-line
+         legacy-output-block-range
          extract-cell-code
          line-blank?
          find-last-non-blank-line-before
@@ -92,6 +93,30 @@
           [(or (cell-marker? line)
                (string-starts-with? line "# ═══")) line-idx]
           [else (find-output-end-line get-line total-lines (+ line-idx 1))]))))
+
+;;@doc
+;; Line range [start . end) of a stale legacy `# ─── Output ───` block that
+;; belongs to the cell whose code begins at `search-start` (marker + 1), or
+;; #false when the cell has none. Only a genuine cell-output block — a
+;; `# ─── Output ───` header terminated by a `# ─────────────` footer before
+;; the next marker — qualifies; a user's own `# ─── … ───` prose (which never
+;; matches the exact Output header) or an unterminated header is rejected.
+;; When the block sits between two blank lines the trailing blank is folded
+;; into the range so deletion never leaves a double blank.
+(define (legacy-output-block-range get-line total-lines search-start)
+  (define code-end (find-cell-code-end get-line total-lines search-start))
+  (define output-start (find-output-start get-line total-lines code-end))
+  (and output-start
+       (let ([output-end (find-output-end-line get-line total-lines (+ output-start 1))])
+         (and (> output-end (+ output-start 1))
+              (string-starts-with? (get-line (- output-end 1)) "# ─────────────")
+              (cons output-start
+                    (if (and (< output-end total-lines)
+                             (line-blank? (get-line output-end))
+                             (> output-start 0)
+                             (line-blank? (get-line (- output-start 1))))
+                        (+ output-end 1)
+                        output-end))))))
 
 ;;@doc
 ;; Extract code lines from a cell, skipping markers and separator lines.

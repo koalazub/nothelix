@@ -10,6 +10,7 @@
 (require "output-render-test.scm")
 (require "param-tweak-test.scm")
 (require "picker-test.scm")
+(require "legacy-migration-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -22,7 +23,8 @@
          run-output-insert-tests
          run-output-render-tests
          run-param-tweak-tests
-         run-picker-tests)
+         run-picker-tests
+         run-legacy-migration-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -43,7 +45,8 @@
       (cons "output-insert" (run-output-insert-tests))
       (cons "output-render" (run-output-render-tests))
       (cons "param-tweak" (run-param-tweak-tests))
-      (cons "picker" (run-picker-tests))))
+      (cons "picker" (run-picker-tests))
+      (cons "legacy-migration" (run-legacy-migration-tests))))
 
   (define (suite-status passed?)
     (cond
