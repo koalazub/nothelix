@@ -150,6 +150,8 @@
   (define store-cell-id (cell-id cell-index))
   (define store-source-hash (cell-source-hash cell-code))
 
+  (define render-ok? #false)
+  (define (render-body)
   (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
   (define field-list (string-split all-fields "\t"))
   (define (field-at n) (if (< n (length field-list)) (list-ref field-list n) ""))
@@ -374,10 +376,15 @@
            (string-append base-status
                           " (showing " (number->string plot-cap) " of "
                           (number->string image-count) " plots — plots-per-cell cap)")
-           base-status))])
+           base-status))]))
 
-  (restore-cursor-for! doc-id)
-
-  (helix.redraw)
+  (with-cursor-restore doc-id
+    (lambda ()
+      (helix.redraw)
+      (when (not render-ok?)
+        (set-status! "✗ Cell output render failed")))
+    (lambda ()
+      (render-body)
+      (set! render-ok? #true)))
 
   (schedule-reconceal 50))

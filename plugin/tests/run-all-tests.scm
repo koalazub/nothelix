@@ -11,6 +11,7 @@
 (require "param-tweak-test.scm")
 (require "picker-test.scm")
 (require "legacy-migration-test.scm")
+(require "cursor-restore-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -24,7 +25,8 @@
          run-output-render-tests
          run-param-tweak-tests
          run-picker-tests
-         run-legacy-migration-tests)
+         run-legacy-migration-tests
+         run-cursor-restore-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -46,7 +48,8 @@
       (cons "output-render" (run-output-render-tests))
       (cons "param-tweak" (run-param-tweak-tests))
       (cons "picker" (run-picker-tests))
-      (cons "legacy-migration" (run-legacy-migration-tests))))
+      (cons "legacy-migration" (run-legacy-migration-tests))
+      (cons "cursor-restore" (run-cursor-restore-tests))))
 
   (define (suite-status passed?)
     (cond

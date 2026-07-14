@@ -9,6 +9,7 @@
 
 (provide save-cursor-for-restore!
          restore-cursor-for!
+         with-cursor-restore
          clear-cursor-restore!
          move-to-line-start-no-center!
          compute-cursor-anchor
@@ -101,6 +102,19 @@
   (when (hash-contains? *pending-cursor-restore* doc-id)
     (define entry (hash-get *pending-cursor-restore* doc-id))
     (move-cursor-to-anchor! doc-id (list-ref entry 0) (list-ref entry 1) (list-ref entry 2))))
+
+;;@doc
+;; Unwind-protect around a buffer-mutating render `thunk`: after `thunk` returns
+;; OR throws, always restore `doc-id`'s cursor and then run `after`. Any error
+;; raised by `thunk` propagates once the restore has run, so a mid-render throw
+;; can never strand the cursor at the output-insertion point.
+(define (with-cursor-restore doc-id after thunk)
+  (dynamic-wind
+    (lambda () #f)
+    thunk
+    (lambda ()
+      (restore-cursor-for! doc-id)
+      (after))))
 
 ;;@doc
 ;; Discard the pending cursor-restore entry for `doc-id`.
