@@ -5,9 +5,10 @@ nav_order: 7
 
 # Commands and keys
 
-The authoritative reference. Every command is invoked from command mode
-(`:command-name`); the keybindings and autofill shortcuts below are registered
-only for `.jl` and `.ipynb` files.
+This is the authoritative reference. Every command runs from command mode, so you
+type `:command-name` and press Enter. The keybindings, shorthands, and autofill
+expansions below are registered only for `.jl` and `.ipynb` files, so they stay
+out of your way in ordinary buffers.
 
 ## Notebook lifecycle
 
@@ -16,7 +17,7 @@ only for `.jl` and `.ipynb` files.
 | `:new-notebook [path]` | Create a new `.jl` notebook from a starter template and open it |
 | `:convert-notebook` | Convert a raw `.ipynb` into the editable cell format |
 | `:sync-to-ipynb` | Sync edits in the `.jl` file back to the source `.ipynb` |
-| `:renumber-cells` | Renumber `@cell` and `@markdown` markers to a contiguous `0, 1, 2, …` |
+| `:renumber-cells` | Renumber the cell markers to a contiguous `0, 1, 2, …` |
 | `:export-markdown` | Export the notebook to Markdown (`.md`) |
 | `:export-typst` | Export the notebook to Typst (`.typ`) |
 | `:export-pdf` | Export the notebook to a typeset PDF (`.pdf`) |
@@ -37,8 +38,8 @@ only for `.jl` and `.ipynb` files.
 | `:next-cell` | Jump to the next cell |
 | `:previous-cell` | Jump to the previous cell |
 | `:cell-picker` | Open the interactive cell navigator |
-| `:new-cell` | Insert a new cell at the cursor (opens the code/markdown picker) |
-| `:select-cell` | Select the whole cell (header, code, output) |
+| `:new-cell` | Insert a new cell at the cursor and open the code or markdown picker |
+| `:select-cell` | Select the whole cell, meaning the header, the code, and the output |
 | `:select-cell-code` | Select only the code |
 | `:select-output` | Select the output block |
 
@@ -53,7 +54,16 @@ only for `.jl` and `.ipynb` files.
 | `:param-up` | Increase the numeric literal on a `# @param` line and re-run the cell |
 | `:param-down` | Decrease the numeric literal on a `# @param` line and re-run the cell |
 
-A `# @param` annotation marks a numeric literal as a live knob: `freq = 440   # @param 220:880 step 10`. The grammar is `<lo>:<hi>` (clamp range, required) and `step <s>` (increment, optional; defaults to `1` for integers, `(hi − lo) / 100` for floats). Nudging with `]p` or `[p` rewrites the literal instantly in the buffer, debounces a re-run of the same cell (no downstream side effects), and flags cells below as stale if they reference the changed variable. The stale detection is a name-based heuristic (tokenized word-match, no dataflow); reassignment or shadowing can cause over- or under-flagging, so treat it as an alert, not a guarantee.
+A `# @param` annotation marks a numeric literal as a live knob, as in
+`freq = 440   # @param 220:880 step 10`. The grammar has two parts. The clamp
+range `<lo>:<hi>` is required, and the optional `step <s>` sets the increment. A
+missing step defaults to `1` for integers and to `(hi - lo) / 100` for floats.
+Nudging with `]p` or `[p` rewrites the literal instantly in the buffer, then
+debounces a re-run of the same cell with no downstream side effects, and it flags
+cells below as stale when they reference the changed variable. That staleness
+check is a name-based heuristic that matches tokenized words and never traces
+dataflow. Reassignment or shadowing can over-flag or under-flag, so read the
+staleness marker as an alert rather than a guarantee.
 
 ## Mathematics and tables
 
@@ -70,7 +80,7 @@ A `# @param` annotation marks a numeric literal as a live knob: `freq = 440   # 
 | `:clear-conceal` | Remove the concealment overlays |
 | `:julia-tab-complete` | Expand a `\<name>` Julia LaTeX shortcut at the cursor |
 
-## Kernel and status
+## Kernel, status, and project trust
 
 | Command | Description |
 |---|---|
@@ -78,7 +88,13 @@ A `# @param` annotation marks a numeric literal as a live knob: `freq = 440   # 
 | `:kernel-shutdown-all` | Stop every running kernel |
 | `:graphics-protocol` | Show which graphics protocol was detected |
 | `:graphics-check` | Run a quick graphics diagnostic |
-| `:nothelix-status` | Show full status (kernels, graphics, language server, and more) |
+| `:nothelix-status` | Show full status, covering kernels, graphics, the language server, and more |
+| `:nothelix-trust-project` | Trust this project's `.nothelix.conf` to launch a custom Julia binary or environment, then restart the kernel |
+| `:nothelix-untrust-project` | Revoke that trust and revert to PATH Julia, then restart the kernel |
+| `:nothelix-project-trust-status` | Report whether the current project is trusted and the runtime it would use |
+
+Trust gates only the executable settings in a project's `.nothelix.conf`, which
+are `julia-bin` and `julia-project`. The display settings apply without trust.
 
 ## Animation
 
@@ -102,7 +118,7 @@ See [Troubleshooting](troubleshooting.md) for what to do with the debug log.
 
 ## Keybindings
 
-Registered in normal mode for `.jl` and `.ipynb` files.
+These are registered in normal mode for `.jl` and `.ipynb` files.
 
 | Key | Command |
 |---|---|
@@ -123,7 +139,7 @@ Registered in normal mode for `.jl` and `.ipynb` files.
 
 ## Shorthands
 
-A few aliases for the commands you reach for most.
+A few aliases stand in for the commands you reach for most.
 
 | Shorthand | Expands to |
 |---|---|
@@ -138,6 +154,11 @@ press space.
 
 | You type | You get |
 |---|---|
-| `@cell<space>` | The code/markdown picker, then `@cell N :julia` stamped with the next index |
-| `@md<space>`, `@mark<space>`, `@markdown<space>` | `@markdown N`, cursor parked after `# ` on the next line |
+| `@cell<space>` | The code or markdown picker, then `@cell N :julia` stamped with the next index |
+| `@md<space>`, `@mark<space>`, `@markdown<space>` | `@markdown N`, with the cursor parked after `# ` on the next line |
+| `@typst<space>` | `@typst N`, with the cursor parked after `# ` on the next line |
 | `@<anything><space>` | The same picker as `@cell`, forgiving of typos like `@code` or `@c` |
+
+For the source-level anatomy of these markers, including the persistent label you
+can pin to a marker line, see [Notebooks](notebooks.md). When a command misbehaves,
+[Troubleshooting](troubleshooting.md) covers the debug log and the common breakages.
