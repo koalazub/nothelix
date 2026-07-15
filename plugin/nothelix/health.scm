@@ -59,9 +59,14 @@
 (define (format-issue-line issue)
   (string-append "⚠ " (list-ref issue 1) " — " (list-ref issue 2)))
 
+(define (focused-doc-is-notebook?)
+  (define path (editor-document->path (editor->doc-id (editor-focus))))
+  (and path (string-suffix? path ".jl")))
+
 (define (surface-first-issue!)
   (when (and (not *health-hint-shown?*)
-             (not (null? *health-issues*)))
+             (not (null? *health-issues*))
+             (focused-doc-is-notebook?))
     (set! *health-hint-shown?* #t)
     (define first (car *health-issues*))
     (define base (format-issue-line first))
@@ -101,3 +106,6 @@
 
 (run-health-check!)
 (install-first-focus-hint!)
+
+(register-hook! "document-focus-gained"
+  (lambda (_doc-id) (surface-first-issue!)))
