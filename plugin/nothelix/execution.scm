@@ -370,6 +370,8 @@
       (define total-lines (text.rope-len-lines rope))
       (define (get-line idx) (doc-get-line rope total-lines idx))
 
+      (try-clear-all-output-lines!)
+
       (for-each
         (lambda (cell-idx)
           (define marker-line (find-cell-marker-by-index rope total-lines cell-idx))
