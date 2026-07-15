@@ -126,4 +126,42 @@
   (assert-equal #false (decode-stored-rows raw-with-plots "stale-hash")
                 "decode-stored-rows: #false on a stale (mismatched) hash")
 
+  (assert-equal "ui.virtual.output.series0" (series-scope 0)
+                "series-scope 0 -> series0")
+  (assert-equal "ui.virtual.output.series7" (series-scope 7)
+                "series-scope 7 -> series7")
+  (assert-equal "ui.virtual.output.series0" (series-scope 8)
+                "series-scope wraps after 8 -> series0")
+  (assert-equal "ui.virtual.output.series2" (series-scope 10)
+                "series-scope 10 wraps -> series2")
+
+  (assert-equal '()
+                (assign-cycling-bars '())
+                "assign-cycling-bars: no groups -> no rows")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series0" "only"))
+    (assign-cycling-bars (list (list "only")))
+    "assign-cycling-bars: single group -> series0 bar")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series0" "a0")
+          (list "bar" "ui.virtual.output.series0" "a1")
+          (list "bar" "ui.virtual.output.series1" "b0"))
+    (assign-cycling-bars (list (list "a0" "a1") (list "b0")))
+    "assign-cycling-bars: rows in one group share a scope; next group cycles")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series0" "g0")
+          (list "bar" "ui.virtual.output.series1" "g1"))
+    (assign-cycling-bars (list (list "g0") '() (list "g1")))
+    "assign-cycling-bars: empty groups are dropped and do not consume a color")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series1"
+                (list (list "AA" "ui.virtual.output.series2"))))
+    (assign-cycling-bars
+      (list '() (list (list (list "AA" "ui.virtual.output.series2")))))
+    "assign-cycling-bars: a styled span-list row is wrapped intact")
+
   (print-test-suite-footer "output-render"))

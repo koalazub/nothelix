@@ -166,7 +166,8 @@
            (format-julia-error (or structured "") err)))
      (define error-rows (text->plain-lines formatted))
      (when (and anchor-line
-                (not (try-set-output-lines-below! anchor-line error-rows)))
+                (not (try-set-output-lines-below! anchor-line
+                       (assign-cycling-bars (list error-rows)))))
        (insert-legacy-output-block! anchor-line error-rows))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows
@@ -183,11 +184,10 @@
      (define text-plots-blob (json-get-text-plots result-json))
      (define text-plot-groups (decode-text-plots-blob text-plots-blob))
      (define text-plot-ready? (not (null? text-plot-groups)))
-     (define text-plot-styled-rows
+     (define text-plot-styled-groups
        (if text-plot-ready?
-           (apply append
-                  (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
-                       text-plot-groups))
+           (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
+                text-plot-groups)
            '()))
 
      (define all-images-str
@@ -295,8 +295,19 @@
        (set! text-lines (append text-lines (cons "stderr:" (text->plain-lines filtered-stderr)))))
 
      (define stored-text-lines text-lines)
+     (define stdout-group
+       (if (> (string-length stdout-text) 0) (text->plain-lines stdout-text) '()))
+     (define repr-group
+       (if (and (not image-ready) (not text-plot-ready?) (> (string-length output-repr) 0))
+           (text->plain-lines output-repr)
+           '()))
+     (define stderr-group
+       (if (> (string-length (string-trim filtered-stderr)) 0)
+           (cons "stderr:" (text->plain-lines filtered-stderr))
+           '()))
      (define render-lines
-       (if text-plot-ready? (append text-lines text-plot-styled-rows) text-lines))
+       (assign-cycling-bars
+         (append (list stdout-group repr-group stderr-group) text-plot-styled-groups)))
 
      (when (and anchor-line
                 (not (null? render-lines))

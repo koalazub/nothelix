@@ -382,11 +382,11 @@
             (define stored (store-get-for path (cell-id cell-idx)))
             (define hash (cell-source-hash code))
             (define rows (decode-stored-rows stored hash))
-            (define text-plot-rows
-              (apply append
-                     (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
-                          (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash) "")))))
-            (when (or (list? rows) (not (null? text-plot-rows)))
+            (define text-plot-groups
+              (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
+                   (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash) ""))))
+            (when (or (list? rows) (not (null? text-plot-groups)))
               (try-set-output-lines-below! anchor-line
-                (append (if (list? rows) rows '()) text-plot-rows)))))
+                (assign-cycling-bars
+                  (cons (if (list? rows) rows '()) text-plot-groups))))))
         cell-indices))))

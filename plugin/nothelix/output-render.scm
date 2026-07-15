@@ -73,26 +73,12 @@
 
 (define *series-scope-count* 8)
 
-;;@doc
-;; The bar/series theme scope for cycle index `i`, wrapping every
-;; `*series-scope-count*` (series0 .. series7 .. series0 ...).
 (define (series-scope i)
   (vector-ref *text-plot-series-scopes* (modulo i *series-scope-count*)))
 
-;;@doc
-;; Wrap one output row (a plain string or a list of `(text scope)` span pairs)
-;; as a bar-tagged row for `set-output-lines-below!`: `("bar" bar-scope row)`.
-;; The fork disambiguates on the leading marker string; an untagged row keeps
-;; rendering with no gutter bar.
 (define (bar-row bar-scope row)
   (list "bar" bar-scope row))
 
-;;@doc
-;; Flatten a list of output groups (each a list of rows) into one row list,
-;; tagging every row in group N with series-scope N so distinct outputs get a
-;; cycling gutter-bar color. Empty groups are dropped and do not consume a
-;; color index, so a matrix (one multi-row group) is one bar color and three
-;; separate outputs get series0/series1/series2.
 (define (assign-cycling-bars groups)
   (let loop ([gs (filter (lambda (g) (not (null? g))) groups)] [i 0] [acc '()])
     (if (null? gs)
