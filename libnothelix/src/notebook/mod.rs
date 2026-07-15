@@ -40,7 +40,7 @@ pub use ffi::{
     get_cell_at_line, get_cell_code_from_jl, list_jl_code_cells, notebook_cell_count,
     notebook_get_cell_code, notebook_validate,
 };
-pub use scan::scan_variable_definition;
+pub use scan::{ScanCell, scan_code_cells, scan_variable_definition};
 
 // The remaining integration tests in this module address the public
 // FFI surface end-to-end. The cells / parse internals they reach into

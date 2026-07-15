@@ -15,6 +15,10 @@ use super::util::{build_call_chain, clean_message, truncate, wrap};
 // ─── Structured formatting ───────────────────────────────────────────────────
 
 pub(super) fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
+    if err.error_type == "UndefVarError" && !err.undef_guidance.is_empty() {
+        return format_undef(err);
+    }
+
     let clean_msg = clean_message(&err.message).to_string();
     let tokens = tokenize_error(&err.error_type, &clean_msg);
     let matched = find_hint(hints, &tokens);
@@ -174,6 +178,54 @@ fn format_var_context(out: &mut String, var: &str, ctx: &VarContext, error_cell:
             );
         }
     }
+}
+
+/// Redesigned `UndefVarError` block: lead with the one-line problem
+/// naming every undefined symbol, pin the source line, then one guiding
+/// action per symbol — the cell to run or the import to add. No generic
+/// "check spelling" help, no repeated gutter noise.
+fn format_undef(err: &StructuredError) -> String {
+    let mut out = String::new();
+
+    let symbols = if err.undef_symbols.is_empty() {
+        "a variable".to_string()
+    } else {
+        err.undef_symbols
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let verb = if err.undef_symbols.len() > 1 {
+        "are not defined"
+    } else {
+        "is not defined"
+    };
+    let _ = writeln!(out, "error[E004]: {symbols} {verb}");
+
+    if err.cell_index >= 0 && err.cell_line > 0 {
+        let _ = writeln!(out, "  --> cell {}, line {}", err.cell_index, err.cell_line);
+    } else if err.cell_index >= 0 {
+        let _ = writeln!(out, "  --> cell {}", err.cell_index);
+    }
+
+    if !err.source_line.is_empty() && err.cell_line > 0 {
+        let src = err.source_line.trim_end();
+        out.push_str("   |\n");
+        let _ = writeln!(out, "{:>3} | {}", err.cell_line, src);
+        let leading = err.source_line.len() - err.source_line.trim_start().len();
+        let width = src.trim().len();
+        if width > 0 {
+            let _ = writeln!(out, "   | {}{}", " ".repeat(leading), "^".repeat(width));
+        }
+    }
+
+    out.push_str("   |\n");
+    for line in &err.undef_guidance {
+        let _ = writeln!(out, "   = {line}");
+    }
+
+    out
 }
 
 // ─── Raw formatting ──────────────────────────────────────────────────────────

@@ -13,6 +13,32 @@
 
 use super::cells::{CellKind, parse_jl_file};
 
+/// A code cell reduced to what the error-formatter's cross-cell scan
+/// needs: its index, its source, and any marker-line label.
+pub struct ScanCell {
+    pub index: i64,
+    pub code: String,
+    pub label: String,
+}
+
+/// Load every code cell of a notebook `.jl` for static cross-cell
+/// analysis. Returns an empty vector when the file can't be parsed —
+/// callers treat "no cells" and "unreadable" identically (no guidance).
+pub fn scan_code_cells(jl_path: &str) -> Vec<ScanCell> {
+    let Ok((cells, _)) = parse_jl_file(jl_path) else {
+        return Vec::new();
+    };
+    cells
+        .into_iter()
+        .filter(|c| c.kind == CellKind::Code)
+        .map(|c| ScanCell {
+            index: c.index as i64,
+            code: c.code,
+            label: c.marker_comment,
+        })
+        .collect()
+}
+
 pub fn scan_variable_definition(jl_path: String, var_name: String) -> String {
     let Ok((cells, _)) = parse_jl_file(&jl_path) else {
         return "null".to_string();

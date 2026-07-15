@@ -37,6 +37,14 @@ pub struct StructuredError {
     /// a method for. Populated for single-arg `MethodErrors`.
     #[serde(default)]
     pub method_candidates: Vec<MethodCandidate>,
+    /// The undefined symbols an `UndefVarError` named, in error order.
+    /// Populated by the static cross-cell enricher, never by the kernel.
+    #[serde(skip)]
+    pub undef_symbols: Vec<String>,
+    /// One cross-cell guidance line per entry in `undef_symbols`, aligned
+    /// by index — "`S` is defined in @cell K …", "`S` comes from `PKG` …".
+    #[serde(skip)]
+    pub undef_guidance: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

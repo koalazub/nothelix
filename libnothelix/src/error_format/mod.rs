@@ -17,6 +17,8 @@ mod render;
 mod scanners;
 mod tokenize;
 mod types;
+#[cfg(feature = "native")]
+mod undef;
 mod util;
 
 use hints::hints;
@@ -83,9 +85,10 @@ pub fn format_error(ctx: &FormatContext<'_>) -> String {
     "error: unknown\n".to_string()
 }
 
-/// Populates `cell_context` for `UndefVarError` by scanning the notebook
-/// `.jl` source for an assignment to the missing variable. Only fires
-/// when the kernel supplied no context of its own.
+/// Locates every symbol an `UndefVarError` named in the notebook's other
+/// cells and attaches a per-symbol guidance line telling the user which
+/// cell to run (or which `using` to add). Only fires when the kernel
+/// supplied no cross-cell context of its own.
 #[cfg(feature = "native")]
 struct StaticCellScanEnricher;
 
@@ -101,58 +104,15 @@ impl Enricher for StaticCellScanEnricher {
         if path.is_empty() {
             return;
         }
-        let var = extract_undef_var(&err.message);
-        if var.is_empty() {
+
+        let cells = crate::notebook::scan_code_cells(path);
+        let guidance = undef::build(&cells, err.cell_index, &err.message);
+        if guidance.lines.is_empty() {
             return;
         }
-
-        let json = crate::notebook::scan_variable_definition(path.to_string(), var.clone());
-        if json == "null" {
-            return;
-        }
-
-        #[derive(serde::Deserialize)]
-        struct Scanned {
-            cell_index: i64,
-            #[serde(default)]
-            line_in_cell: i64,
-            #[serde(default)]
-            line_text: String,
-        }
-        if let Ok(hit) = serde_json::from_str::<Scanned>(&json) {
-            if hit.cell_index == err.cell_index {
-                return;
-            }
-            err.cell_context.insert(
-                var,
-                VarContext::StaticSource {
-                    defined_in_cell: hit.cell_index,
-                    line_in_cell: hit.line_in_cell,
-                    line_text: hit.line_text,
-                },
-            );
-        }
+        err.undef_symbols = guidance.symbols;
+        err.undef_guidance = guidance.lines;
     }
-}
-
-#[cfg(feature = "native")]
-fn extract_undef_var(msg: &str) -> String {
-    // Prefer a backticked identifier.
-    if let Some(start) = msg.find('`')
-        && let Some(end) = msg[start + 1..].find('`')
-    {
-        let cand = &msg[start + 1..start + 1 + end];
-        if scanners::is_identifier(cand) {
-            return cand.to_string();
-        }
-    }
-    // Fallback: first whitespace-delimited word that looks like an ident.
-    for word in msg.split_whitespace() {
-        if scanners::is_identifier(word) {
-            return word.to_string();
-        }
-    }
-    String::new()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -435,6 +395,53 @@ mod tests {
             "should have no cell context, got:\n{out}"
         );
         assert!(!out.contains("haven't been executed"), "got:\n{out}");
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn undef_guidance_end_to_end_from_notebook() {
+        use std::io::Write;
+        let mut f = tempfile::Builder::new().suffix(".jl").tempfile().unwrap();
+        write!(
+            f,
+            "# ═══ Nothelix Notebook: nb.ipynb ═══\n# Cells: 3\n\n\
+             @cell 3 :julia\nusing LinearAlgebra\n\n\
+             @cell 65 :julia\nA = rand(3, 3)\n\n\
+             @cell 70 :julia\neigen(A)\n"
+        )
+        .unwrap();
+        let path = f.path().to_string_lossy().into_owned();
+
+        let json = r#"{
+            "error_type": "UndefVarError",
+            "message": "UndefVarError: `eigen` not defined in `Main`. `A` not defined. a global variable of this name also exists in LinearAlgebra",
+            "frames": [],
+            "source_line": "eigen(A)",
+            "cell_index": 70,
+            "cell_line": 1
+        }"#;
+        let out = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: Some(&path),
+        });
+
+        assert!(
+            out.contains("`eigen`, `A` are not defined"),
+            "header should name both symbols, got:\n{out}"
+        );
+        assert!(
+            out.contains("`eigen` comes from `LinearAlgebra`") && out.contains("@cell 3"),
+            "package guidance missing, got:\n{out}"
+        );
+        assert!(
+            out.contains("`A` is defined in @cell 65"),
+            "user-binding guidance missing, got:\n{out}"
+        );
+        assert!(
+            !out.contains("check spelling") && !out.contains("Check spelling"),
+            "generic E004 help should be dropped, got:\n{out}"
+        );
     }
 
     // ── Source context enrichment ──
