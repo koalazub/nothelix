@@ -197,7 +197,9 @@ with a live preview of the selected cell.
 
 Type a cell number to jump straight to it. Press `/` and fuzzy-search the labels,
 where typing `pseudo` narrows to the pseudoinverse cells. Use `j` or `k` or the
-arrows to scroll, then press `Enter` to go there.
+arrows to scroll one row, and `h` or `l` to jump several rows at once. Press
+`Enter` to go there. The jump distance defaults to ten rows and is set with
+`picker-jump` in `.nothelix.conf`.
 
 Row labels come from three sources in order. A marker label wins first, then an
 on-device model label, and finally the cell's first meaningful line.

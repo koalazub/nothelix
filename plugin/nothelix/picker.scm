@@ -293,7 +293,7 @@
     (define hint
       (if (CellPickerState-filtering? state)
           " esc list · enter go "
-          " / search · # jump · enter go "))
+          " h/l jump · / search · # cell · enter go "))
     (frame-set-string! buf (+ x 2) (+ y height -1) hint text-style)
 
     (define visible-rows (max 1 (- height 2)))
@@ -423,6 +423,17 @@
        (set-CellPickerState-digits! state "")
        (when (> selected 0)
          (set-CellPickerState-selected! state (- selected 1)))
+       event-result/consume]
+      [(eqv? char #\l)
+       (set-CellPickerState-digits! state "")
+       (when (> (length view) 0)
+         (set-CellPickerState-selected! state
+           (min (- (length view) 1) (+ selected (picker-jump)))))
+       event-result/consume]
+      [(eqv? char #\h)
+       (set-CellPickerState-digits! state "")
+       (when (> (length view) 0)
+         (set-CellPickerState-selected! state (max 0 (- selected (picker-jump)))))
        event-result/consume]
 
       [digit-value

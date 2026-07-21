@@ -44,6 +44,8 @@
 (provide conceal-on-open?
          plot-mode
          set-plot-mode!
+         picker-jump
+         set-picker-jump!
          slm-summaries?
          set-slm-summaries!
          maybe-apply-project-config!
@@ -100,6 +102,11 @@
 ;; leaves the current mode (default "auto") in place.
 (define (set-plot-mode! v)
   (when (and (string? v) (valid-plot-mode? v)) (set-box! *plot-mode* v)))
+
+(define *picker-jump* (box 10))
+(define (picker-jump) (unbox *picker-jump*))
+(define (set-picker-jump! v)
+  (when (and (exact-integer? v) (> v 0) (<= v 100)) (set-box! *picker-jump* v)))
 
 ;; --- path helpers (string-only; no new primitives) ---
 
@@ -199,6 +206,8 @@
     (when (and (exact-integer? ppc) (> ppc 0)) (set-plots-per-cell! ppc)))
   (let ([pm (config-ref alist "plot-mode" #false)])
     (when (string? pm) (set-plot-mode! pm)))
+  (let ([pj (config-ref alist "picker-jump" #false)])
+    (when (exact-integer? pj) (set-picker-jump! pj)))
   (let ([co (config-ref alist "conceal-on-open" 'unset)])
     (when (boolean? co) (set-box! *conceal-on-open* co)))
   (let ([ss (config-ref alist "slm-summaries" 'unset)])
