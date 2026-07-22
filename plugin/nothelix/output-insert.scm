@@ -128,7 +128,8 @@
   (set! *executing-kernel-dir* #false)
 
   (define plot-data-str (json-get-plot-data result-json))
-  (when (> (string-length plot-data-str) 0)
+  (when (and (> (string-length plot-data-str) 0)
+             (not (string-starts-with? plot-data-str "ERROR:")))
     (set! *last-plot-data* plot-data-str))
 
   (define focus (editor-focus))
@@ -153,9 +154,10 @@
   (define render-ok? #false)
   (define (render-body)
   (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
-  (define field-list (string-split all-fields "\t"))
+  (define unreadable-reply? (string-starts-with? all-fields "ERROR:"))
+  (define field-list (if unreadable-reply? '() (string-split all-fields "\t")))
   (define (field-at n) (if (< n (length field-list)) (list-ref field-list n) ""))
-  (define err (field-at 0))
+  (define err (if unreadable-reply? all-fields (field-at 0)))
   (cond
     [(> (string-length err) 0)
      (define structured (field-at 1))

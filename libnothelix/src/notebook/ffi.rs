@@ -3,7 +3,7 @@ use serde_json::json;
 use super::cells::parse_jl_file;
 use super::ipynb::{cells_of, read_notebook, source_to_string};
 use super::marker::CellKind;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ffi};
 
 const NO_CELLS: isize = 0;
 const REQUIRED_FIELDS: [&str; 2] = ["cells", "nbformat"];
@@ -38,7 +38,7 @@ fn cell_count(path: &str) -> Result<isize> {
 }
 
 pub fn notebook_get_cell_code(path: String, cell_index: isize) -> String {
-    cell_code(&path, cell_index).unwrap_or_default()
+    ffi(cell_code(&path, cell_index))
 }
 
 fn cell_code(path: &str, cell_index: isize) -> Result<String> {
@@ -171,9 +171,18 @@ mod tests {
     }
 
     #[test]
-    fn get_cell_code_out_of_range() {
+    fn get_cell_code_out_of_range_names_the_cell_instead_of_reading_as_empty() {
         let code = notebook_get_cell_code(fixture::path("simple.ipynb"), 99);
-        assert_eq!(code, "");
+        assert_eq!(code, "ERROR: notebook: Cell 99 not found");
+    }
+
+    #[test]
+    fn get_cell_code_from_an_unreadable_notebook_names_the_path() {
+        let code = notebook_get_cell_code("/nonexistent/file.ipynb".into(), 0);
+        assert!(
+            code.starts_with("ERROR: cannot read /nonexistent/file.ipynb"),
+            "{code}"
+        );
     }
 
     #[test]

@@ -116,7 +116,10 @@ mod tests {
         let absent = json_get(r#"{"name": "hello"}"#.into(), "key".into());
         let malformed = json_get("not json".into(), "key".into());
         assert_eq!(absent, "");
-        assert!(malformed.starts_with("ERROR: json-get: invalid JSON: "), "{malformed}");
+        assert!(
+            malformed.starts_with("ERROR: json-get: invalid JSON: "),
+            "{malformed}"
+        );
     }
 
     #[test]

@@ -130,9 +130,7 @@
 
   (define cell-info-json (get-cell-at-line path current-line))
   (define cell-index-str (json-get cell-info-json "cell_index"))
-  (define cell-index (if (> (string-length cell-index-str) 0)
-                          (string->number cell-index-str)
-                          0))
+  (define cell-index (or (string->number cell-index-str) 0))
   (clear-cell-output! cell-index)
 
   (define insert-at-line

@@ -10,8 +10,6 @@ use super::reflow::format_math;
 
 const MAX_RESERVE_LINES: usize = 64;
 
-/// Rewrite each display block to reserve `spec`-many natural rows of blank
-/// lines; `spec` is one row count per block in enumeration order.
 pub fn reserve_math_lines(text: String, spec: String) -> String {
     let formatted = format_math(text);
     let specs: Vec<usize> = spec

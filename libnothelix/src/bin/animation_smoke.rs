@@ -22,7 +22,7 @@ fn main() {
 }
 
 fn smoke() -> Result<usize, String> {
-    let bytes = build_tiny_gif();
+    let bytes = build_tiny_gif()?;
     let mime = CString::new("image/gif").map_err(|e| e.to_string())?;
     let mut id: u64 = 0;
 
@@ -78,13 +78,13 @@ fn smoke() -> Result<usize, String> {
     Ok(distinct.len())
 }
 
-fn build_tiny_gif() -> Vec<u8> {
+fn build_tiny_gif() -> Result<Vec<u8>, String> {
     use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
     let mut buf = Vec::new();
     {
         let mut enc = GifEncoder::new(&mut buf);
         enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
-            .unwrap();
+            .map_err(|e| format!("gif fixture: cannot set repeat: {e}"))?;
         for k in 0..4u8 {
             let mut img = RgbaImage::new(32, 32);
             for p in img.pixels_mut() {
@@ -96,8 +96,9 @@ fn build_tiny_gif() -> Vec<u8> {
                 0,
                 Delay::from_saturating_duration(Duration::from_millis(100)),
             );
-            enc.encode_frame(frame).unwrap();
+            enc.encode_frame(frame)
+                .map_err(|e| format!("gif fixture: cannot encode frame {k}: {e}"))?;
         }
     }
-    buf
+    Ok(buf)
 }

@@ -8,8 +8,6 @@ use super::comment::comment_body;
 use super::reflow::format_math;
 use crate::math_image::BATCH_SEP;
 
-/// The LaTeX of every display-math block, `BATCH_SEP`-joined in document order;
-/// `""` when the document has no display math.
 pub fn math_block_latex_batch(text: String) -> String {
     let formatted = format_math(text);
     let lines: Vec<&str> = formatted.split('\n').collect();
