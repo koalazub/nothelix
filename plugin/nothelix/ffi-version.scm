@@ -13,11 +13,13 @@
 ;; Probe at runtime: %#maybe-module-get returns #false for a missing
 ;; symbol (unlike %module-get%, which panics); any other failure → v0.
 (define (installed-ffi-version)
-  (with-handler
-    (lambda (_) 0)
-    (eval '(let ((probe (%#maybe-module-get (#%get-dylib "libnothelix")
-                                            (quote nothelix-ffi-version))))
-             (if probe (probe) 0)))))
+  (define raw
+    (with-handler
+      (lambda (_) 0)
+      (eval '(let ((probe (%#maybe-module-get (#%get-dylib "libnothelix")
+                                              (quote nothelix-ffi-version))))
+               (if probe (probe) 0)))))
+  (if (number? raw) raw 0))
 
 (define (assert-ffi-version!)
   (define got (installed-ffi-version))
