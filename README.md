@@ -1,133 +1,82 @@
 # Nothelix
 
-Jupyter-style notebooks, inside the Helix editor.
+Nothelix puts notebooks inside Helix. Cells run against a live Julia kernel, plots and typeset equations render inline in the buffer, and the notebook on disk stays a plain `.jl` file that diffs like source.
 
-Nothelix runs notebooks in Helix. You execute cells, watch their output land in
-place, and see plots render right in the buffer — all from the modal editor you
-already use, and without ever opening a browser. It is built for researchers and
-scientists who would rather stay in their terminal and focus on the work than
-detour into a browser tab to do the computational part of it.
+![The Fourier transform written as LaTeX, and the same lines shown as Unicode after concealment](docs/assets/img/fourier-conceal.png)
 
-A notebook here is a plain Julia file with explicit cell markers, not an opaque
-`.ipynb` blob. It diffs cleanly, edits at the speed of modal motions, runs against
-a live kernel that keeps its state between cells, and still converts back to
-`.ipynb` when a collaborator needs it. Mathematics renders as you read it, figures
-appear under the cells that produced them, and when you are finished a single
-command turns the whole thing into Markdown, Typst, or a typeset PDF.
+One buffer, twice. The top pane is the LaTeX you typed. The bottom is what you read a moment later, once concealment has swapped each construct for its Unicode form. The file on disk still holds the LaTeX, and it comes back on the line you are editing.
 
-**Full documentation: [koalazub.github.io/nothelix](https://koalazub.github.io/nothelix)**
+## What you get
 
-![The cell navigator: jump to any cell by number, with labels from Apple's on-device model](docs/assets/img/cell-picker-slm.png)
+- **Notebooks that behave like source.** A notebook is Julia with `@cell` markers. It diffs, greps, and edits with the motions you already use, and `:convert-notebook` and `:sync-to-ipynb` move it to and from `.ipynb` when a collaborator needs that.
+- **Results where the cell is.** Text output, plots, Markdown tables, and display equations render in the buffer. No browser and no second pane.
+- **A kernel that stays warm.** One kernel per notebook, keyed to the file path. State persists across cells the way it does in a REPL, survives closing the buffer and restarting Helix, and runs in the notebook's own directory so relative paths to your data resolve.
+- **Math that reads like math.** Inline `$…$` LaTeX conceals to Unicode as you read. Display `$$…$$` blocks and pipe tables compile through Typst and draw as typeset images.
+- **One command to hand it over.** `:export-markdown`, `:export-typst`, and `:export-pdf` produce Markdown, a Typst source file, or a finished PDF. No LaTeX distribution required.
 
-The navigator above (`<space>nj`) labels every cell — here by Apple's on-device
-model (opt-in, macOS 26+), falling back to each cell's first meaningful line —
-so a 70-cell tutorial reads like a table of contents. Type a cell number to
-jump straight to it.
+## A notebook is a Julia file
+
+```julia
+using Plots
+
+@cell 0 :julia
+x = 1:10
+y = x.^2
+
+@markdown 1 # Results
+
+@cell 2 :julia
+plot(x, y)
+```
+
+The markers are no-op macros the kernel defines, so `julia notebook.jl` still runs the file. Type `@cell` and press space and the marker is stamped with the next index for you. On save, indices compact back to a contiguous run.
 
 ## Install
 
-On macOS (Apple Silicon) or x86_64 Linux:
+macOS on Apple Silicon, or Linux on x86_64.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/koalazub/nothelix/main/install.sh | sh
 ```
 
-Then open the bundled demo:
+Then open the bundled demo.
 
 ```bash
 nothelix
 ```
 
-You will also need a Kitty-protocol terminal for inline plots and typeset math,
-and Julia 1.9 or newer on your PATH (install [juliaup](https://julialang.org/install/)
-if you do not have it). The [installation guide](https://koalazub.github.io/nothelix/install)
-covers the full requirements, the `nothelix` CLI, and building from source.
+You also need Julia 1.9 or newer on your PATH, via [juliaup](https://julialang.org/install/) if you do not have it, and a Kitty-protocol terminal for inline plots and typeset math. Run `nothelix doctor` if anything looks wrong.
 
-## What the documentation covers
+## When notebooks get big
 
-**[Notebooks.](https://koalazub.github.io/nothelix/notebooks)** The reason a
-notebook is a decorated source file rather than JSON, and the whole workflow that
-follows: converting and syncing `.ipynb` files, scaffolding cells by typing
-`@cell` and pressing space, executing against a persistent Julia kernel, and the
-quiet renumber pass that keeps cell indices tidy. The kernel runs in the
-notebook's own directory, so relative paths to data files and includes resolve
-the way they would if you ran the script by hand.
+![The cell navigator listing every cell by index, kind, and label, with a live preview pane](docs/assets/img/cell-picker-slm.png)
 
-**[Rendering.](https://koalazub.github.io/nothelix/rendering)** How results get
-into the buffer. Inline `$ … $` math becomes Unicode as you read it; display
-`$$ … $$` blocks and Markdown tables render as properly typeset images; plots
-arrive inline through the terminal's graphics protocol. A plot's canvas is yours
-to resize in place — `:plot-grow` and `:plot-shrink`, bound to `=` and `-`, expand
-or contract the image block under the cursor and re-render without leaving the
-buffer, and a `# @param` annotation makes a numeric literal a live knob — nudge it
-with `]p` / `[p` to re-compute the figure in place. Includes the graphics matrix and the honest caveat about multiplexers stripping Kitty sequences.
+`<space>nj` opens the navigator. Every cell shows as index, kind, and label, with a live preview. Type a number to jump, or press `/` to fuzzy-search the labels. Labels come from a marker comment first, then Apple's on-device model if you opt in on macOS 26 or newer, then the cell's first meaningful line. A seventy-cell tutorial reads like a table of contents.
 
-**[Export.](https://koalazub.github.io/nothelix/export)** Turning a notebook into
-something to hand over — Markdown, Typst, or a typeset PDF — and why the
-mathematics survives the trip intact rather than being flattened, because the same
-LaTeX-to-Typst machinery drives both the in-buffer rendering and the export.
-
-**[Language server.](https://koalazub.github.io/nothelix/lsp)** Nothelix offers the
-LSP interface, not a built-in server: Helix already speaks the protocol, so you
-connect the Julia language server you prefer — the page covers both JETLS and
-LanguageServer.jl. To make either one comfortable in a notebook, nothelix ships a
-small `NothelixMacros` stub so the `@cell` and `@markdown` markers resolve as real
-symbols instead of drawing "missing reference" noise on every cell header, and a
-statusline indicator reports which server is currently driving the buffer.
-
-**[Commands and keys.](https://koalazub.github.io/nothelix/commands)** The
-authoritative reference — every `:command`, every keybinding, and the autofill
-shortcuts — kept in sync with the plugin.
-
-**[Architecture.](https://koalazub.github.io/nothelix/architecture)** For the
-curious and for contributors: the four cooperating layers (the forked Helix, the
-Steel plugin, the Rust library, and the Julia kernel), the file-based kernel
-protocol, the error enrichment that rewrites a bare stack trace to name your
-variables, and the math-rendering strategy. The page illustrates the system with
-an interactive walkthrough.
-
-**[Troubleshooting.](https://koalazub.github.io/nothelix/troubleshooting)** Start
-with `nothelix doctor`, then debug logging and the image repro harness, plus the
-breakages people actually hit and the current, plainly stated limitations.
+Cell errors get the same treatment. When a cell fails on an undefined symbol, nothelix scans the sibling cells, finds where that symbol is assigned, and tells you which `@cell` to run first. `MethodError` gets the in-scope variables whose types match the failing signature.
 
 ## Status
 
-Julia is the only supported kernel today; Python is planned. Inline rendering needs
-the [Helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering)
-and a Kitty-protocol terminal — on stock Helix or under a multiplexer it falls back
-to placeholders. Prebuilt binaries ship for macOS arm64 and Linux x86_64. Where
-something is unfinished, the docs say so rather than implying otherwise.
+Julia is the only supported kernel today. Python is planned. Inline rendering needs the [Helix fork](https://github.com/koalazub/helix/tree/feature/inline-image-rendering) and a Kitty-protocol terminal. On stock Helix, or under tmux or Zellij, images fall back to text placeholders while Unicode math keeps working. Sixel is not implemented. Prebuilt binaries ship for macOS arm64 and Linux x86_64. Where something is unfinished, the docs say so.
+
+## Documentation
+
+Everything lives at [koalazub.github.io/nothelix](https://koalazub.github.io/nothelix). [Installation](https://koalazub.github.io/nothelix/install) covers requirements, the `nothelix` CLI, and building from source. [Notebooks](https://koalazub.github.io/nothelix/notebooks) walks the write, run, and navigate loop. [Rendering](https://koalazub.github.io/nothelix/rendering) explains how figures, math, and exports reach you, and the [Playground](https://koalazub.github.io/nothelix/playground) lets you try the rendering in a browser first. [Commands and keys](https://koalazub.github.io/nothelix/commands) is the reference, [Language server](https://koalazub.github.io/nothelix/lsp) wires up Julia code intelligence, [Architecture](https://koalazub.github.io/nothelix/architecture) explains how the four layers fit together, and [Troubleshooting](https://koalazub.github.io/nothelix/troubleshooting) starts with `nothelix doctor`.
 
 ## Credits
 
-Nothelix is a thin layer of glue over a great deal of excellent open-source work,
-and would not exist without any of it.
+Nothelix is a thin layer of glue over a great deal of excellent open-source work, and would not exist without any of it.
 
-- **[Helix](https://helix-editor.com/)** and its [Steel](https://github.com/mattwparas/steel)
-  plugin system — the editor it lives in and the embedded Scheme the plugin is
-  written in. A [small fork of Helix](https://github.com/koalazub/helix/tree/feature/inline-image-rendering)
-  adds the inline-image rendering everything visual depends on.
-- **[Julia](https://julialang.org/)** and **[juliaup](https://github.com/JuliaLang/juliaup)**
-  — the kernel language and the supported way to install it.
-- **[Typst](https://typst.app/)** with **[MiTeX](https://github.com/mitex-rs/mitex)**
-  — the typesetting system behind math rendering and Markdown/Typst/PDF export, and
-  the LaTeX-to-Typst conversion that feeds it. No LaTeX distribution required.
-- **[resvg](https://github.com/RazrFalcon/resvg)** and **[tiny-skia](https://github.com/RazrFalcon/tiny-skia)**
-  rasterise the typeset output; the **[image](https://github.com/image-rs/image)**
-  crate, **[serde](https://serde.rs/)**, and **[rayon](https://github.com/rayon-rs/rayon)**
-  do the rest of the system-shaped work in the Rust library.
-- The **[Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)**
-  carries images into the buffer.
-- **[JETLS](https://github.com/aviatesk/JETLS)** and
-  **[LanguageServer.jl](https://github.com/julia-vscode/LanguageServer.jl)** provide
-  optional Julia code intelligence.
-- These docs are built with **[just-the-docs](https://just-the-docs.com/)**.
-- Prior art that shaped the approach: **[Marimo](https://marimo.io/)** (notebooks as
-  source files), and **[euporie](https://github.com/joouha/euporie)** and SymPy's
-  pretty-printer (mathematics in a terminal).
+- [Helix](https://helix-editor.com/) and [Steel](https://github.com/mattwparas/steel), the editor it lives in and the embedded Scheme the plugin is written in. A [small fork of Helix](https://github.com/koalazub/helix/tree/feature/inline-image-rendering) adds the inline-image rendering everything visual depends on.
+- [Julia](https://julialang.org/) and [juliaup](https://github.com/JuliaLang/juliaup), the kernel language and the supported way to install it.
+- [Typst](https://typst.app/) and [MiTeX](https://github.com/mitex-rs/mitex), the typesetting system behind math rendering and export, and the LaTeX-to-Typst conversion that feeds it.
+- [resvg](https://github.com/RazrFalcon/resvg) and [tiny-skia](https://github.com/RazrFalcon/tiny-skia) rasterise the typeset output. The [image](https://github.com/image-rs/image) crate, [serde](https://serde.rs/), [comrak](https://github.com/kivikakk/comrak), and [rayon](https://github.com/rayon-rs/rayon) do the rest of the system-shaped work in the Rust library.
+- The [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) carries images into the buffer.
+- [JETLS](https://github.com/aviatesk/JETLS), [LanguageServer.jl](https://github.com/julia-vscode/LanguageServer.jl), and [Runic](https://github.com/fredrikekre/Runic.jl) provide optional Julia code intelligence and formatting.
+- These docs are built with [just-the-docs](https://just-the-docs.com/).
+- Prior art that shaped the approach. [Marimo](https://marimo.io/) for notebooks as source files, and [euporie](https://github.com/joouha/euporie) and SymPy's pretty-printer for mathematics in a terminal.
 
-The [credits page](https://koalazub.github.io/nothelix/credits) names each project
-and explains, in full, why it is used.
+The [credits page](https://koalazub.github.io/nothelix/credits) names each project and explains in full why it is used.
 
 ## Licence
 
