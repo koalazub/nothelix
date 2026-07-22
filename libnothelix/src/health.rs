@@ -1,49 +1,6 @@
-//! Static health checks for the nothelix plugin runtime.
-//!
-//! Mirrors a cheap subset of `nothelix doctor`'s static checks so the
-//! plugin can self-diagnose at load time and surface missing components
-//! to the user in-editor (via `set-status!`) instead of degrading
-//! silently.
-//!
-//! Design choices:
-//! - Pure Rust, no shell-out, no kernel spawn — runs in microseconds.
-//! - All paths derived from environment variables (`STEEL_HOME`,
-//!   `NOTHELIX_SHARE`, `NOTHELIX_BIN`, `HOME`) with the same defaults
-//!   the shell wrapper at `dist/nothelix` uses, so a healthy install
-//!   reports clean and a broken one reports the same issue the shell
-//!   doctor would.
-//! - Returns TSV (one issue per line, fields tab-separated) so Steel
-//!   can parse it with the existing `string-split` utility — no JSON
-//!   parser required at startup.
-//!
-//! Checks implemented:
-//! 1. `libnothelix.{dylib,so}` exists in `$STEEL_HOME/native/`.
-//! 2. `BUILD_ID` in `libnothelix.meta` matches the one in
-//!    `$NOTHELIX_SHARE/VERSION` (catches the case where the dylib was
-//!    rebuilt but the wrapper script wasn't, or vice versa).
-//! 3. `$STEEL_HOME/cogs/nothelix.scm` + `$STEEL_HOME/cogs/nothelix/`
-//!    exist (the symlinks `just install` puts down).
-//! 4. `EXPECTED-FFI-VERSION` declared in the installed plugin's
-//!    `nothelix/ffi-version.scm` matches this dylib's compiled-in
-//!    `NOTHELIX_FFI_VERSION` (the plugin is live-linked from the repo
-//!    while the dylib is a copied artifact, so the two skew when
-//!    `just install` is forgotten).
-//! 5. The installed `hx-nothelix` (or `hx` fallback) contains the four
-//!    fork-only Steel symbols — animation FFI + focus + viewport — so
-//!    the user gets a hard pointer at "your binary predates the fork
-//!    patches" rather than silent no-ops.
-
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-/// Indicators that reliably survive release-mode LTO (helix-fork's
-/// `[profile.release] lto = "thin"`). The Steel kebab-case match-arm
-/// strings (e.g. `document-focus-gained`) get inlined as immediate
-/// byte comparisons and dead-stripped from rodata, so probing those
-/// produces false positives on healthy builds. These three are forced
-/// to survive: the FFI binding name is held by the `register_fn`
-/// dispatch table, and the two `events!`-macro struct names are kept
-/// as debug type info.
 const FORK_INDICATORS: &[&str] = &[
     "add-or-replace-animating-raw-content",
     "DocumentFocusGained",
@@ -59,8 +16,6 @@ pub struct HealthIssue {
 }
 
 impl HealthIssue {
-    /// Construct an issue from string slices that all live for the call
-    /// — saves the caller having to spell out three `.into()`s.
     fn new(id: &str, message: impl Into<String>, fix_hint: impl Into<String>) -> Self {
         Self {
             id: id.to_owned(),
@@ -71,165 +26,177 @@ impl HealthIssue {
 }
 
 impl fmt::Display for HealthIssue {
-    /// One-line TSV row: `id\tmessage\tfix_hint`. The plugin parses
-    /// this with `(string-split tsv "\n")` then `(string-split row
-    /// "\t")` — keeping the format constructive avoids open-coding the
-    /// join in every call site.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}\t{}\t{}", self.id, self.message, self.fix_hint)
     }
 }
 
-/// Run all health checks against the supplied resolved paths.
-/// Exposed (not just the env-driven wrapper) so tests can drive it with
-/// `tempfile::TempDir` and don't have to mutate the process environment.
-pub fn run_health_check(
-    steel_home: &Path,
-    nothelix_share: &Path,
-    hx_nothelix: &Path,
-) -> Vec<HealthIssue> {
-    let mut issues = Vec::new();
-    check_dylib(steel_home, &mut issues);
-    check_build_id(steel_home, nothelix_share, &mut issues);
-    check_plugin_cogs(steel_home, &mut issues);
-    check_ffi_version(steel_home, &mut issues);
-    check_fork_symbols(hx_nothelix, &mut issues);
-    issues
+struct Install {
+    steel_home: PathBuf,
+    nothelix_share: PathBuf,
+    hx: PathBuf,
 }
 
-fn check_dylib(steel_home: &Path, issues: &mut Vec<HealthIssue>) {
-    let native = steel_home.join("native");
-    let any_dylib = ["libnothelix.dylib", "libnothelix.so"]
-        .iter()
-        .any(|name| native.join(name).exists());
-    if !any_dylib {
-        issues.push(HealthIssue::new(
-            "dylib-missing",
-            "libnothelix dylib not found in STEEL_HOME/native/",
-            "run 'just install' in the nothelix repo (or 'nothelix upgrade')",
-        ));
+impl Install {
+    fn at(
+        steel_home: impl Into<PathBuf>,
+        nothelix_share: impl Into<PathBuf>,
+        hx: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            steel_home: steel_home.into(),
+            nothelix_share: nothelix_share.into(),
+            hx: hx.into(),
+        }
     }
-}
 
-fn check_build_id(steel_home: &Path, nothelix_share: &Path, issues: &mut Vec<HealthIssue>) {
-    let meta = steel_home.join("native/libnothelix.meta");
-    let version = nothelix_share.join("VERSION");
-    // If either file is missing, dylib-missing or VERSION-missing covers it;
-    // mismatch only makes sense when both files exist.
-    if !meta.exists() || !version.exists() {
-        return;
-    }
-    let (Some(meta_id), Some(version_id)) =
-        (read_kv(&meta, "BUILD_ID"), read_kv(&version, "BUILD_ID"))
-    else {
-        return;
-    };
-    if meta_id != version_id {
-        issues.push(HealthIssue::new(
-            "build-id-mismatch",
-            format!("libnothelix and nothelix BUILD_IDs differ ({meta_id} vs {version_id})"),
-            "run 'nothelix upgrade' to rebuild both halves in lockstep",
-        ));
-    }
-}
+    fn from_env() -> Self {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let nothelix_bin =
+            env_nonempty("NOTHELIX_BIN").unwrap_or_else(|| format!("{home}/.local/bin"));
+        let hx_nothelix = PathBuf::from(&nothelix_bin).join("hx-nothelix");
 
-fn check_plugin_cogs(steel_home: &Path, issues: &mut Vec<HealthIssue>) {
-    let cogs = steel_home.join("cogs");
-    let any_missing = ["nothelix.scm", "nothelix"]
-        .iter()
-        .any(|name| !cogs.join(name).exists());
-    if any_missing {
-        issues.push(HealthIssue::new(
-            "cogs-missing",
-            "plugin cogs not found in STEEL_HOME/cogs/",
-            "run 'just install' to relink the plugin into STEEL_HOME",
-        ));
-    }
-}
-
-fn check_ffi_version(steel_home: &Path, issues: &mut Vec<HealthIssue>) {
-    let cogs = steel_home.join("cogs");
-    // cogs-missing covers a wholesale-absent plugin; a version
-    // comparison only makes sense against an installed one.
-    if !cogs.join("nothelix.scm").exists() || !cogs.join("nothelix").exists() {
-        return;
-    }
-    // A plugin copy that predates the handshake has no ffi-version.scm
-    // (hence no declaration) — it was written against FFI surface v0.
-    // Same convention as the plugin side, which maps a dylib lacking
-    // `nothelix-ffi-version` to v0.
-    let expected = std::fs::read_to_string(cogs.join("nothelix/ffi-version.scm"))
-        .ok()
-        .and_then(|text| scan_expected_ffi_version(&text))
-        .unwrap_or(0);
-    if expected != crate::NOTHELIX_FFI_VERSION {
-        issues.push(HealthIssue::new(
-            "ffi-version-mismatch",
-            // Same sentence the plugin-side load assert builds in
-            // Scheme (plugin/nothelix/ffi-version.scm), minus the fix
-            // suffix that lives in fix_hint here — keep the two in
-            // lockstep.
-            format!(
-                "libnothelix FFI v{}, plugin expects v{expected}",
-                crate::NOTHELIX_FFI_VERSION
+        Self::at(
+            env_nonempty("STEEL_HOME")
+                .map_or_else(|| PathBuf::from(&home).join(".steel"), PathBuf::from),
+            env_nonempty("NOTHELIX_SHARE").map_or_else(
+                || {
+                    let xdg = env_nonempty("XDG_DATA_HOME")
+                        .unwrap_or_else(|| format!("{home}/.local/share"));
+                    PathBuf::from(xdg).join("nothelix")
+                },
+                PathBuf::from,
             ),
-            "run 'just install' to rebuild the dylib against the live-linked plugin",
-        ));
+            if hx_nothelix.exists() {
+                hx_nothelix
+            } else {
+                locate_on_path("hx").unwrap_or(hx_nothelix)
+            },
+        )
+    }
+
+    fn issues(&self) -> Vec<HealthIssue> {
+        [
+            self.dylib_present(),
+            self.build_ids_agree(),
+            self.plugin_cogs_present(),
+            self.ffi_versions_agree(),
+            self.fork_symbols_present(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    fn dylib_present(&self) -> Option<HealthIssue> {
+        let native = self.steel_home.join("native");
+        let found = ["libnothelix.dylib", "libnothelix.so"]
+            .iter()
+            .any(|name| native.join(name).exists());
+        (!found).then(|| {
+            HealthIssue::new(
+                "dylib-missing",
+                "libnothelix dylib not found in STEEL_HOME/native/",
+                "run 'just install' in the nothelix repo (or 'nothelix upgrade')",
+            )
+        })
+    }
+
+    fn build_ids_agree(&self) -> Option<HealthIssue> {
+        let meta = self.steel_home.join("native/libnothelix.meta");
+        let version = self.nothelix_share.join("VERSION");
+        if !meta.exists() || !version.exists() {
+            return None;
+        }
+        let dylib_id = read_kv(&meta, "BUILD_ID")?;
+        let wrapper_id = read_kv(&version, "BUILD_ID")?;
+        (dylib_id != wrapper_id).then(|| {
+            HealthIssue::new(
+                "build-id-mismatch",
+                format!("libnothelix and nothelix BUILD_IDs differ ({dylib_id} vs {wrapper_id})"),
+                "run 'nothelix upgrade' to rebuild both halves in lockstep",
+            )
+        })
+    }
+
+    fn plugin_installed(&self) -> bool {
+        let cogs = self.steel_home.join("cogs");
+        ["nothelix.scm", "nothelix"]
+            .iter()
+            .all(|name| cogs.join(name).exists())
+    }
+
+    fn plugin_cogs_present(&self) -> Option<HealthIssue> {
+        (!self.plugin_installed()).then(|| {
+            HealthIssue::new(
+                "cogs-missing",
+                "plugin cogs not found in STEEL_HOME/cogs/",
+                "run 'just install' to relink the plugin into STEEL_HOME",
+            )
+        })
+    }
+
+    fn ffi_versions_agree(&self) -> Option<HealthIssue> {
+        if !self.plugin_installed() {
+            return None;
+        }
+        let declared =
+            std::fs::read_to_string(self.steel_home.join("cogs/nothelix/ffi-version.scm"))
+                .ok()
+                .and_then(|text| scan_expected_ffi_version(&text))
+                .unwrap_or(0);
+        (declared != crate::NOTHELIX_FFI_VERSION).then(|| {
+            HealthIssue::new(
+                "ffi-version-mismatch",
+                format!(
+                    "libnothelix FFI v{}, plugin expects v{declared}",
+                    crate::NOTHELIX_FFI_VERSION
+                ),
+                "run 'just install' to rebuild the dylib against the live-linked plugin",
+            )
+        })
+    }
+
+    fn fork_symbols_present(&self) -> Option<HealthIssue> {
+        if !self.hx.exists() {
+            return None;
+        }
+        let bytes = std::fs::read(&self.hx).ok()?;
+        let missing: Vec<&str> = FORK_INDICATORS
+            .iter()
+            .copied()
+            .filter(|symbol| !contains_ascii(&bytes, symbol.as_bytes()))
+            .collect();
+        (!missing.is_empty()).then(|| {
+            HealthIssue::new(
+                "fork-symbols-missing",
+                format!(
+                    "hx-nothelix predates fork patches (missing: {})",
+                    missing.join(", ")
+                ),
+                "run 'darwin-rebuild switch' (or rebuild ~/projects/helix and copy to ~/.local/bin/hx-nothelix)",
+            )
+        })
     }
 }
 
-/// Extract `<n>` from the handshake module's `(define EXPECTED-FFI-VERSION
-/// <n>)`. Line-wise token scan: comments are cut at `;`, then the
-/// remainder is split on whitespace/parens and matched as a `define
-/// EXPECTED-FFI-VERSION <integer>` token triple, so mentions of the
-/// identifier in comments or in the comparison expression don't
-/// false-match.
 fn scan_expected_ffi_version(text: &str) -> Option<u32> {
     for line in text.lines() {
-        let code = line.split(';').next().unwrap_or("");
+        let code = line.split_once(';').map_or(line, |(code, _)| code);
         let tokens: Vec<&str> = code
             .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
             .filter(|t| !t.is_empty())
             .collect();
-        for w in tokens.windows(3) {
-            if w[0] == "define"
-                && w[1] == "EXPECTED-FFI-VERSION"
-                && let Ok(v) = w[2].parse()
+        for window in tokens.windows(3) {
+            if window[0] == "define"
+                && window[1] == "EXPECTED-FFI-VERSION"
+                && let Ok(version) = window[2].parse()
             {
-                return Some(v);
+                return Some(version);
             }
         }
     }
     None
-}
-
-fn check_fork_symbols(hx_nothelix: &Path, issues: &mut Vec<HealthIssue>) {
-    // No binary at all is a different failure mode (covered upstream of
-    // here if the plugin require chain even gets this far). Producing a
-    // "missing symbols" report against a non-existent path would
-    // misleadingly accuse a perfectly healthy upstream-helix install
-    // that just hasn't been pointed at the fork yet.
-    if !hx_nothelix.exists() {
-        return;
-    }
-    let Ok(bytes) = std::fs::read(hx_nothelix) else {
-        return;
-    };
-    let missing: Vec<&str> = FORK_INDICATORS
-        .iter()
-        .copied()
-        .filter(|sym| !contains_ascii(&bytes, sym.as_bytes()))
-        .collect();
-    if !missing.is_empty() {
-        issues.push(HealthIssue::new(
-            "fork-symbols-missing",
-            format!(
-                "hx-nothelix predates fork patches (missing: {})",
-                missing.join(", ")
-            ),
-            "run 'darwin-rebuild switch' (or rebuild ~/projects/helix and copy to ~/.local/bin/hx-nothelix)",
-        ));
-    }
 }
 
 fn read_kv(path: &Path, key: &str) -> Option<String> {
@@ -237,11 +204,9 @@ fn read_kv(path: &Path, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     text.lines()
         .find_map(|line| line.strip_prefix(&prefix))
-        .map(|v| v.trim().to_owned())
+        .map(|value| value.trim().to_owned())
 }
 
-// Naive substring scan; sufficient for the symbol-probe use case and
-// avoids pulling in memchr just for this.
 fn contains_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || needle.len() > haystack.len() {
         return false;
@@ -249,57 +214,10 @@ fn contains_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Read an env var, trimming an empty-string set as if it weren't set.
-/// An empty `STEEL_HOME=` (common when shell scripts pass through env
-/// without value-set checks) shouldn't be treated as "use the empty
-/// path" — it should fall through to the default.
 fn env_nonempty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
-/// Resolve the environment-driven defaults the shell wrapper uses.
-/// Returns `(steel_home, nothelix_share, hx_path)`.
-///
-/// `hx_path` resolution: prefer `$NOTHELIX_BIN/hx-nothelix` (the
-/// tarball-install layout where the fork binary is shipped under its
-/// own name), then fall back to whatever `hx` is first on `$PATH` (the
-/// nixoala/home-manager layout where the fork hx is the system hx).
-/// If neither exists, return the `hx-nothelix` path so the
-/// fork-symbols check can fail-silent against a non-existent path
-/// — that's the correct behaviour for an upstream-only install.
-fn resolve_paths() -> (PathBuf, PathBuf, PathBuf) {
-    let home = std::env::var("HOME").unwrap_or_default();
-
-    let steel_home = env_nonempty("STEEL_HOME")
-        .map_or_else(|| PathBuf::from(&home).join(".steel"), PathBuf::from);
-
-    let nothelix_share = env_nonempty("NOTHELIX_SHARE").map_or_else(
-        || {
-            let xdg =
-                env_nonempty("XDG_DATA_HOME").unwrap_or_else(|| format!("{home}/.local/share"));
-            PathBuf::from(xdg).join("nothelix")
-        },
-        PathBuf::from,
-    );
-
-    let nothelix_bin = env_nonempty("NOTHELIX_BIN").unwrap_or_else(|| format!("{home}/.local/bin"));
-    let hx_nothelix = PathBuf::from(&nothelix_bin).join("hx-nothelix");
-    let hx_path = if hx_nothelix.exists() {
-        hx_nothelix
-    } else {
-        // No `hx-nothelix` named binary — fall back to whatever `hx` is
-        // first on PATH. If even that's absent, keep the canonical
-        // path; check_fork_symbols' existence guard then skips the
-        // probe entirely (which is correct for an upstream-only install).
-        locate_on_path("hx").unwrap_or(hx_nothelix)
-    };
-
-    (steel_home, nothelix_share, hx_path)
-}
-
-/// First `name` found by walking `$PATH`. Symlinks are resolved so the
-/// symbol probe runs against the real binary, not a wrapper that
-/// re-execs.
 fn locate_on_path(name: &str) -> Option<PathBuf> {
     std::env::var("PATH").ok()?.split(':').find_map(|dir| {
         if dir.is_empty() {
@@ -312,51 +230,40 @@ fn locate_on_path(name: &str) -> Option<PathBuf> {
     })
 }
 
-/// Steel-callable wrapper. Resolves paths from environment + defaults,
-/// runs the static checks, and returns a TSV blob the plugin parses.
-/// Empty string means "all checks pass".
-///
-/// TSV format: one line per issue, three tab-separated columns —
-/// `<id>\t<message>\t<fix_hint>` — produced by `HealthIssue`'s
-/// `Display` impl.
-pub fn nothelix_health_check_tsv() -> String {
-    let (steel_home, nothelix_share, hx_nothelix) = resolve_paths();
-    let mut issues = run_health_check(&steel_home, &nothelix_share, &hx_nothelix);
-    check_julia(&mut issues);
-    check_terminal(&mut issues);
-    issues
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-// Runtime prerequisites, checked only at the FFI boundary (not in
-// `run_health_check`, which stays deterministic for unit tests).
-fn check_julia(issues: &mut Vec<HealthIssue>) {
-    if which::which("julia").is_err() {
-        issues.push(HealthIssue::new(
+fn julia_missing() -> Option<HealthIssue> {
+    which::which("julia").err().map(|_| {
+        HealthIssue::new(
             "julia-missing",
             "julia not found on PATH — cells cannot run",
             "install Julia (https://julialang.org/install), then restart Helix",
-        ));
-    }
+        )
+    })
 }
 
-fn check_terminal(issues: &mut Vec<HealthIssue>) {
-    if std::env::var_os("TMUX").is_some() {
-        issues.push(HealthIssue::new(
-            "terminal-multiplexer",
-            "running inside tmux — inline plots, math, and tables may not render",
-            "run Helix directly in a Kitty-protocol terminal, not inside tmux",
-        ));
+fn terminal_multiplexer() -> Option<HealthIssue> {
+    let multiplexer = if std::env::var_os("TMUX").is_some() {
+        "tmux"
     } else if std::env::var_os("ZELLIJ").is_some() {
-        issues.push(HealthIssue::new(
-            "terminal-multiplexer",
-            "running inside Zellij — inline plots, math, and tables may not render",
-            "run Helix directly in a Kitty-protocol terminal, not inside Zellij",
-        ));
-    }
+        "Zellij"
+    } else {
+        return None;
+    };
+    Some(HealthIssue::new(
+        "terminal-multiplexer",
+        format!("running inside {multiplexer} — inline plots, math, and tables may not render"),
+        format!("run Helix directly in a Kitty-protocol terminal, not inside {multiplexer}"),
+    ))
+}
+
+pub fn nothelix_health_check_tsv() -> String {
+    Install::from_env()
+        .issues()
+        .into_iter()
+        .chain(julia_missing())
+        .chain(terminal_multiplexer())
+        .map(|issue| issue.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -365,8 +272,6 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    // Build a tempdir containing a fully-healthy install layout.
-    // Returns (steel_home, nothelix_share, hx_nothelix).
     fn healthy_layout(td: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
         let steel_home = td.path().join("steel");
         let share = td.path().join("share");
@@ -394,10 +299,6 @@ mod tests {
         let hx = bin_dir.join("hx-nothelix");
         fs::write(
             &hx,
-            // LTO-stable fork indicators: the FFI binding name plus the
-            // Rust struct names emitted by the events! macro. These
-            // survive release-mode LTO that strips the Steel kebab-case
-            // match-arm strings.
             "add-or-replace-animating-raw-content \
              DocumentFocusGained \
              ViewportChanged \
@@ -411,7 +312,7 @@ mod tests {
     fn healthy_install_reports_no_issues() {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
-        assert!(run_health_check(&steel, &share, &hx).is_empty());
+        assert!(Install::at(&steel, &share, &hx).issues().is_empty());
     }
 
     #[test]
@@ -419,7 +320,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("native/libnothelix.dylib")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].id, "dylib-missing");
         assert!(issues[0].fix_hint.contains("just install"));
@@ -427,12 +328,11 @@ mod tests {
 
     #[test]
     fn missing_dylib_accepts_so_fallback() {
-        // Linux installs land .so, macOS lands .dylib. Either should satisfy.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("native/libnothelix.dylib")).unwrap();
         fs::write(steel.join("native/libnothelix.so"), b"\x00").unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().all(|i| i.id != "dylib-missing"));
     }
 
@@ -441,7 +341,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(share.join("VERSION"), "BUILD_ID=zzz999\n").unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().any(|i| i.id == "build-id-mismatch"));
         let issue = issues.iter().find(|i| i.id == "build-id-mismatch").unwrap();
         assert!(issue.message.contains("abc123"));
@@ -450,13 +350,10 @@ mod tests {
 
     #[test]
     fn build_id_mismatch_silent_when_files_missing() {
-        // If meta.toml or VERSION is missing, dylib-missing reports it
-        // first; we don't fabricate a mismatch report. This keeps the
-        // surfaced message specific and actionable.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("native/libnothelix.meta")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().all(|i| i.id != "build-id-mismatch"));
     }
 
@@ -465,7 +362,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("cogs/nothelix.scm")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().any(|i| i.id == "cogs-missing"));
     }
 
@@ -474,7 +371,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_dir_all(steel.join("cogs/nothelix")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().any(|i| i.id == "cogs-missing"));
     }
 
@@ -487,15 +384,11 @@ mod tests {
             "(define EXPECTED-FFI-VERSION 999)\n",
         )
         .unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         let issue = issues
             .iter()
             .find(|i| i.id == "ffi-version-mismatch")
             .expect("expected ffi-version-mismatch");
-        // Pin the exact template — the plugin-side load assert builds
-        // the same sentence in Scheme ("libnothelix FFI v<got>, plugin
-        // expects v<want> — run just install"), so drift here breaks
-        // the user-facing message contract.
         assert_eq!(
             issue.message,
             format!(
@@ -511,13 +404,10 @@ mod tests {
 
     #[test]
     fn plugin_without_version_declaration_is_flagged_as_v0() {
-        // A plugin copy that predates the handshake has no
-        // ffi-version.scm at all — that's a pre-v1 plugin paired with a
-        // v1+ dylib, which is exactly the skew the check exists to catch.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("cogs/nothelix/ffi-version.scm")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         let issue = issues
             .iter()
             .find(|i| i.id == "ffi-version-mismatch")
@@ -527,9 +417,6 @@ mod tests {
 
     #[test]
     fn ffi_version_in_comment_does_not_mask_declaration() {
-        // The real handshake module mentions EXPECTED-FFI-VERSION in
-        // comments above the define; the scan must skip those and read
-        // the actual declaration.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(
@@ -542,19 +429,16 @@ mod tests {
             ),
         )
         .unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().all(|i| i.id != "ffi-version-mismatch"));
     }
 
     #[test]
     fn ffi_version_silent_when_plugin_missing() {
-        // cogs-missing already covers an absent plugin install; a
-        // fabricated version mismatch on top would muddy the surfaced
-        // diagnosis.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("cogs/nothelix.scm")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().all(|i| i.id != "ffi-version-mismatch"));
         assert!(issues.iter().any(|i| i.id == "cogs-missing"));
     }
@@ -564,12 +448,11 @@ mod tests {
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(&hx, "stub binary contents only — none of the fork symbols").unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         let issue = issues
             .iter()
             .find(|i| i.id == "fork-symbols-missing")
             .expect("expected fork-symbols-missing");
-        // The message should name at least one specific missing symbol.
         assert!(
             issue
                 .message
@@ -582,14 +465,10 @@ mod tests {
 
     #[test]
     fn partial_fork_symbols_lists_only_missing_ones() {
-        // Simulate a binary that has the animation FFI registered but
-        // lacks the focus/viewport event types entirely (e.g. upstream
-        // Helix patched only halfway). The report should name the
-        // missing struct identifiers, not the animation binding.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(&hx, "add-or-replace-animating-raw-content only — no events").unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         let issue = issues
             .iter()
             .find(|i| i.id == "fork-symbols-missing")
@@ -606,12 +485,6 @@ mod tests {
 
     #[test]
     fn lto_friendly_binary_with_only_indicator_strings_passes() {
-        // Regression: a freshly-built fork binary contains the
-        // register_fn-anchored animation literal and the Rust struct
-        // names, but LTO strips the Steel kebab-case match-arm strings
-        // (`document-focus-gained`, `viewport-changed`). The earlier
-        // probe wrongly flagged these as missing on a healthy build.
-        // The current probe must accept the LTO shape.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::write(
@@ -622,7 +495,7 @@ mod tests {
              — the kebab-case strings are inlined and absent",
         )
         .unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(
             issues.iter().all(|i| i.id != "fork-symbols-missing"),
             "LTO-shaped fresh binary must not be flagged: {issues:#?}"
@@ -631,32 +504,25 @@ mod tests {
 
     #[test]
     fn missing_hx_binary_skips_symbol_check() {
-        // An upstream-helix install (no hx-nothelix at all) shouldn't
-        // produce a misleading "missing symbols" message.
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(&hx).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         assert!(issues.iter().all(|i| i.id != "fork-symbols-missing"));
     }
 
     #[test]
     fn display_emits_tab_separated_row() {
-        // Pin the TSV contract — the plugin parses by `(string-split row
-        // "\t")`, so any extra tab or shape change is a wire break.
         let issue = HealthIssue::new("the-id", "the message", "the fix");
         assert_eq!(issue.to_string(), "the-id\tthe message\tthe fix");
     }
 
     #[test]
     fn tsv_format_round_trips_one_issue() {
-        // Drive an unhealthy install through the public TSV wrapper and
-        // confirm the format Steel parses (one line, three \t-separated
-        // fields, fields free of literal tabs).
         let td = TempDir::new().unwrap();
         let (steel, share, hx) = healthy_layout(&td);
         fs::remove_file(steel.join("native/libnothelix.dylib")).unwrap();
-        let issues = run_health_check(&steel, &share, &hx);
+        let issues = Install::at(&steel, &share, &hx).issues();
         let tsv = issues
             .iter()
             .map(ToString::to_string)
@@ -671,8 +537,6 @@ mod tests {
 
     #[test]
     fn locate_on_path_finds_existing_binary_via_path() {
-        // Drop a binary into a tempdir, point PATH at the dir, and
-        // confirm locate_on_path returns the canonicalised path.
         let td = TempDir::new().unwrap();
         let bin_dir = td.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -686,12 +550,7 @@ mod tests {
             fs::set_permissions(&bin_path, perms).unwrap();
         }
 
-        // Save + restore PATH so we don't pollute the test process for
-        // sibling tests running in the same binary.
         let prev_path = std::env::var("PATH").ok();
-        // SAFETY: tests run single-threaded inside this `cfg(test)`
-        // module by default; nextest spawns a fresh process per test
-        // group, so env mutation is local.
         unsafe {
             std::env::set_var("PATH", bin_dir.to_string_lossy().as_ref());
         }
@@ -722,11 +581,7 @@ mod tests {
 
     #[test]
     fn ffi_wrapper_returns_string() {
-        // The FFI wrapper exists and doesn't panic when called with the
-        // ambient environment (whatever happens to be set in the test
-        // shell). We just verify it's callable and returns a String.
         let out = nothelix_health_check_tsv();
-        // Either empty (healthy) or a TSV blob. Empty is fine.
         if !out.is_empty() {
             for line in out.lines() {
                 assert_eq!(

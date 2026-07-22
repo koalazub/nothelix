@@ -1,8 +1,8 @@
 use crate::animation::decoder::DecodedFrame;
-use crate::animation::renderer::{
-    AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
-};
-use crate::animation::renderers::encode_rgba_to_png;
+use crate::animation::renderer::{AnimationRenderer, RendererEntry, TerminalCaps};
+use crate::animation::renderers::png;
+use crate::error::{Error, FFI_ERROR_PREFIX, RenderStage, Result};
+use crate::kitty_placeholder::kitty_placeholder_payload_bytes;
 
 pub struct KittyReplayRenderer {
     last_id: Option<u64>,
@@ -10,11 +10,8 @@ pub struct KittyReplayRenderer {
 
 impl KittyReplayRenderer {
     pub fn try_new(caps: &TerminalCaps) -> Option<Box<dyn AnimationRenderer>> {
-        if caps.kitty_graphics {
-            Some(Box::new(KittyReplayRenderer { last_id: None }))
-        } else {
-            None
-        }
+        caps.kitty_graphics
+            .then(|| Box::new(KittyReplayRenderer { last_id: None }) as Box<dyn AnimationRenderer>)
     }
 }
 
@@ -27,25 +24,21 @@ impl AnimationRenderer for KittyReplayRenderer {
         "kitty-replay"
     }
 
-    fn capabilities(&self) -> RendererCapabilities {
-        RendererCapabilities {
-            supports_native_animation: false,
-            supports_diff_frames: false,
-            max_dimensions: None,
-        }
-    }
-
-    fn transmit_frame(&mut self, frame: &DecodedFrame, ctx: &RenderContext) -> Vec<u8> {
+    fn transmit_frame(&mut self, frame: &DecodedFrame, engine_id: u64) -> Result<Vec<u8>> {
         if Some(frame.content_id) == self.last_id {
-            return Vec::new();
+            return Ok(Vec::new());
+        }
+        let png = png::encode_rgba(frame.rgba.as_ref(), frame.width, frame.height)?;
+        let payload = kitty_placeholder_payload_bytes(png.into(), engine_id as isize);
+        if let Some(detail) = payload.strip_prefix(FFI_ERROR_PREFIX) {
+            return Err(Error::Render {
+                stage: RenderStage::Rasterize,
+                subject: format!("animation engine {engine_id} frame {}", frame.frame_index),
+                detail: detail.to_string(),
+            });
         }
         self.last_id = Some(frame.content_id);
-        let png = encode_rgba_to_png(frame.rgba.as_ref(), frame.width, frame.height);
-        let escape = crate::kitty_placeholder::kitty_placeholder_payload_bytes(
-            png.into(),
-            ctx.engine_id as isize,
-        );
-        escape.into_bytes()
+        Ok(payload.into_bytes())
     }
 }
 
@@ -66,6 +59,13 @@ mod tests {
         }
     }
 
+    fn kitty_caps() -> TerminalCaps {
+        TerminalCaps {
+            kitty_graphics: true,
+            kitty_animation_protocol: false,
+        }
+    }
+
     #[test]
     fn try_new_returns_none_without_kitty() {
         assert!(KittyReplayRenderer::try_new(&TerminalCaps::default()).is_none());
@@ -73,55 +73,21 @@ mod tests {
 
     #[test]
     fn try_new_returns_some_with_kitty() {
-        let caps = TerminalCaps {
-            kitty_graphics: true,
-            ..Default::default()
-        };
-        assert!(KittyReplayRenderer::try_new(&caps).is_some());
+        assert!(KittyReplayRenderer::try_new(&kitty_caps()).is_some());
     }
 
     #[test]
     fn transmit_skips_same_content() {
-        let caps = TerminalCaps {
-            kitty_graphics: true,
-            ..Default::default()
-        };
-        let mut r = KittyReplayRenderer::try_new(&caps).unwrap();
-        let _ = r.transmit_frame(
-            &make_frame(1),
-            &RenderContext {
-                engine_id: 1,
-                cell_position: (0, 0),
-                previous_content_id: None,
-            },
-        );
-        let bytes = r.transmit_frame(
-            &make_frame(1),
-            &RenderContext {
-                engine_id: 1,
-                cell_position: (0, 0),
-                previous_content_id: Some(1),
-            },
-        );
+        let mut renderer = KittyReplayRenderer::try_new(&kitty_caps()).unwrap();
+        let _ = renderer.transmit_frame(&make_frame(1), 1).unwrap();
+        let bytes = renderer.transmit_frame(&make_frame(1), 1).unwrap();
         assert!(bytes.is_empty());
     }
 
     #[test]
     fn transmit_emits_apc_kitty_escape() {
-        let caps = TerminalCaps {
-            kitty_graphics: true,
-            ..Default::default()
-        };
-        let mut r = KittyReplayRenderer::try_new(&caps).unwrap();
-        let bytes = r.transmit_frame(
-            &make_frame(2),
-            &RenderContext {
-                engine_id: 7,
-                cell_position: (0, 0),
-                previous_content_id: None,
-            },
-        );
-        // Kitty APC begins with ESC _G
+        let mut renderer = KittyReplayRenderer::try_new(&kitty_caps()).unwrap();
+        let bytes = renderer.transmit_frame(&make_frame(2), 7).unwrap();
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"\x1b_G"));
     }

@@ -70,11 +70,11 @@ mod tests {
             [formats]
             mp4 = false
         "#;
-        let c: AnimationConfig = toml::from_str(toml_str).unwrap();
-        assert!(!c.enabled);
-        assert_eq!(c.max_fps, 144);
-        assert!(!c.formats.mp4);
-        assert!(c.formats.gif); // default kept
-        assert_eq!(c.decode_cache_mb, 64); // default kept
+        let config: AnimationConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.max_fps, 144);
+        assert!(!config.formats.mp4);
+        assert!(config.formats.gif);
+        assert_eq!(config.decode_cache_mb, 64);
     }
 }

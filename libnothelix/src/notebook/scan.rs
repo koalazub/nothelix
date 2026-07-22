@@ -1,141 +1,121 @@
-//! Static `.jl` source scan: find the cell + line where a variable is
-//! assigned. Used by the `UndefVarError` enricher in `error_format` —
-//! when the kernel says "x not defined" but the static scan finds an
-//! assignment in a later cell, the formatter can point at that cell
-//! and tell the user to run it first.
-//!
-//! Pure source-level scan, no Julia kernel involvement.
+use serde_json::json;
 
-// Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`), not
-// borrows.
-#![allow(clippy::needless_pass_by_value)]
+use super::cells::parse_jl_file;
+use super::marker::CellKind;
+use crate::error::Result;
 
-use super::cells::{CellKind, parse_jl_file};
+const NOT_FOUND: &str = "null";
 
-/// A code cell reduced to what the error-formatter's cross-cell scan
-/// needs: its index, its source, and any marker-line label.
 pub struct ScanCell {
     pub index: i64,
     pub code: String,
     pub label: String,
 }
 
-/// Load every code cell of a notebook `.jl` for static cross-cell
-/// analysis. Returns an empty vector when the file can't be parsed —
-/// callers treat "no cells" and "unreadable" identically (no guidance).
 pub fn scan_code_cells(jl_path: &str) -> Vec<ScanCell> {
-    let Ok((cells, _)) = parse_jl_file(jl_path) else {
-        return Vec::new();
-    };
-    cells
+    code_cells(jl_path).unwrap_or_default()
+}
+
+fn code_cells(jl_path: &str) -> Result<Vec<ScanCell>> {
+    let (cells, _) = parse_jl_file(jl_path)?;
+    Ok(cells
         .into_iter()
-        .filter(|c| c.kind == CellKind::Code)
-        .map(|c| ScanCell {
-            index: c.index as i64,
-            code: c.code,
-            label: c.marker_comment,
+        .filter(|cell| cell.kind == CellKind::Code)
+        .map(|cell| ScanCell {
+            index: cell.index as i64,
+            code: cell.code,
+            label: cell.marker_comment,
         })
-        .collect()
+        .collect())
 }
 
 pub fn scan_variable_definition(jl_path: String, var_name: String) -> String {
-    let Ok((cells, _)) = parse_jl_file(&jl_path) else {
-        return "null".to_string();
-    };
-    for cell in &cells {
-        if cell.kind != CellKind::Code {
-            continue;
-        }
-        if let Some((line_no, line_text)) = find_assignment_line(&cell.code, &var_name) {
-            return format!(
-                r#"{{"cell_index":{},"line_in_cell":{},"line_text":{}}}"#,
-                cell.index,
-                line_no,
-                serde_json::to_string(line_text.trim()).unwrap_or_else(|_| "\"\"".to_string())
-            );
-        }
-    }
-    "null".to_string()
+    definition_site(&jl_path, &var_name).unwrap_or_else(|| NOT_FOUND.to_string())
 }
 
-/// Find the first line in `code` that assigns to `var_name`. Returns
-/// `(line_number_0_indexed, line_text)` or `None`.
-///
-/// Recognizes:
-///   - `var = expr`        (plain assignment)
-///   - `var .= expr`       (broadcast assignment)
-///   - `var += expr`       (compound assignments)
-///   - `var, other = ...`  (destructuring — first LHS position)
-///
-/// Rejects:
-///   - `var == expr`       (equality comparison)
-///   - `function var(...)` (function definition — we want variable
-///     introductions, though functions ARE technically binding `var`;
-///     caller can iterate again if the variable slot turns out to be a
-///     function, but the common UX case is `x = …` style assignments)
-///   - Matches inside `#` comment tails (best-effort — we just strip the
-///     comment tail before scanning)
+fn definition_site(jl_path: &str, var_name: &str) -> Option<String> {
+    code_cells(jl_path).ok()?.iter().find_map(|cell| {
+        let (line_in_cell, line_text) = find_assignment_line(&cell.code, var_name)?;
+        Some(
+            json!({
+                "cell_index": cell.index,
+                "line_in_cell": line_in_cell,
+                "line_text": line_text.trim(),
+            })
+            .to_string(),
+        )
+    })
+}
+
 fn find_assignment_line(code: &str, var_name: &str) -> Option<(usize, String)> {
-    for (idx, raw_line) in code.lines().enumerate() {
-        // Strip inline comments — `x = 5 # note` → `x = 5 `
-        let line = match raw_line.find('#') {
-            Some(pos) => &raw_line[..pos],
+    code.lines().enumerate().find_map(|(at, raw_line)| {
+        let uncommented = match raw_line.split_once('#') {
+            Some((before_comment, _)) => before_comment,
             None => raw_line,
         };
-        if line_assigns_to(line, var_name) {
-            return Some((idx, raw_line.to_string()));
-        }
-    }
-    None
+        line_assigns_to(uncommented, var_name).then(|| (at, raw_line.to_string()))
+    })
 }
 
-/// Token-level check: does `line` contain `var_name` followed by an
-/// assignment operator (but not `==`)?
 fn line_assigns_to(line: &str, var_name: &str) -> bool {
     let bytes = line.as_bytes();
-    let mut i = 0;
-    let name_bytes = var_name.as_bytes();
-    while i + name_bytes.len() <= bytes.len() {
-        // Match `var_name` on an identifier boundary.
-        let prev_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
-        if prev_ok && &bytes[i..i + name_bytes.len()] == name_bytes {
-            let after = i + name_bytes.len();
-            // Next char must NOT be part of an identifier (so we don't
-            // match `var_namex`).
-            if after < bytes.len() && is_ident_byte(bytes[after]) {
-                i += 1;
-                continue;
-            }
-            // Skip spaces and look for `=` that isn't `==`.
-            let mut j = after;
-            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
-                j += 1;
-            }
-            // Accept `=`, `.=`, `+=`, `-=`, `*=`, `/=`, `^=`, `%=`, etc.
-            // Reject `==`.
-            if j < bytes.len() {
-                let c = bytes[j];
-                let has_dot = j >= 1 && bytes[j.saturating_sub(1)] == b'.';
-                if c == b'=' && bytes.get(j + 1) != Some(&b'=') {
-                    return true;
-                }
-                if matches!(c, b'+' | b'-' | b'*' | b'/' | b'^' | b'%')
-                    && bytes.get(j + 1) == Some(&b'=')
-                {
-                    return true;
-                }
-                if has_dot && c == b'=' {
-                    return true;
-                }
+    let name = var_name.as_bytes();
+    let mut at = 0;
+    while at + name.len() <= bytes.len() {
+        let on_boundary = at == 0 || !is_ident_byte(bytes[at - 1]);
+        if on_boundary && &bytes[at..at + name.len()] == name {
+            let after = at + name.len();
+            if !bytes.get(after).is_some_and(|&b| is_ident_byte(b))
+                && starts_assignment(bytes, skip_blanks(bytes, after))
+            {
+                return true;
             }
         }
-        i += 1;
+        at += 1;
     }
     false
 }
 
+fn skip_blanks(bytes: &[u8], from: usize) -> usize {
+    let mut at = from;
+    while matches!(bytes.get(at), Some(b' ' | b'\t')) {
+        at += 1;
+    }
+    at
+}
+
+fn starts_assignment(bytes: &[u8], at: usize) -> bool {
+    let Some(&op) = bytes.get(at) else {
+        return false;
+    };
+    let followed_by_equals = bytes.get(at + 1) == Some(&b'=');
+    match op {
+        b'=' => !followed_by_equals,
+        b'+' | b'-' | b'*' | b'/' | b'^' | b'%' => followed_by_equals,
+        _ => false,
+    }
+}
+
 #[inline]
-fn is_ident_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line_assigns_to;
+
+    #[test]
+    fn assignment_forms_are_recognised() {
+        for line in ["x = 1", "x=1", "x += 1", "x *= 2", "  x  =  1"] {
+            assert!(line_assigns_to(line, "x"), "{line}");
+        }
+    }
+
+    #[test]
+    fn comparisons_and_other_names_are_rejected() {
+        for line in ["x == 1", "xy = 1", "ax = 1", "y = x", "x, y = f()"] {
+            assert!(!line_assigns_to(line, "x"), "{line}");
+        }
+    }
 }

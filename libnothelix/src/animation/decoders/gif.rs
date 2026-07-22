@@ -1,138 +1,58 @@
-use crate::animation::decoder::{
-    AnimatedDecoder, AnimationMetadata, DecodedFrame, DecoderEntry, DecoderError, frame_at_in,
-    hash_bytes,
-};
-use std::sync::Arc;
-use std::time::Duration;
+use crate::animation::decoder::{AnimatedDecoder, DecoderEntry, DecoderError};
+use crate::animation::decoders::frames::{FrameSequence, Looping};
 
-pub struct GifSource {
-    frames: Vec<DecodedFrame>,
-    metadata: AnimationMetadata,
-}
-
-impl GifSource {
-    pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
-        use ::image::{AnimationDecoder, codecs::gif::GifDecoder};
-        let dec = GifDecoder::new(std::io::Cursor::new(bytes))?;
-        let frames_iter = dec.into_frames();
-        let mut frames = Vec::new();
-        let mut acc = Duration::ZERO;
-        let mut width = 0u16;
-        let mut height = 0u16;
-        for (idx, f) in frames_iter.enumerate() {
-            let f = f?;
-            let buf = f.buffer();
-            (width, height) =
-                crate::animation::decoder::fit_dimensions_to_u16(buf.width(), buf.height())?;
-            let raw = buf.as_raw();
-            let rgba: Arc<[u8]> = Arc::from(raw.as_slice());
-            let content_id = hash_bytes(&rgba);
-            let presentation_offset = acc;
-            let delay = f.delay().numer_denom_ms();
-            let delay_ms = (delay.0 as u64) / (delay.1 as u64).max(1);
-            acc += Duration::from_millis(delay_ms.max(10));
-            frames.push(DecodedFrame {
-                rgba,
-                width,
-                height,
-                frame_index: idx as u64,
-                presentation_offset,
-                content_id,
-            });
-        }
-        let frame_count = frames.len() as u64;
-        let total = if frame_count == 0 {
-            Duration::ZERO
-        } else {
-            acc
-        };
-        let native_fps = if total.as_millis() == 0 {
-            0.0
-        } else {
-            (frame_count as f32 * 1000.0) / total.as_millis() as f32
-        };
-        Ok(Box::new(GifSource {
-            frames,
-            metadata: AnimationMetadata {
-                width,
-                height,
-                frame_count: Some(frame_count),
-                native_fps,
-                total_duration: Some(total),
-                loops_natively: true,
-            },
-        }))
-    }
+pub fn open(bytes: &[u8]) -> Result<Box<dyn AnimatedDecoder>, DecoderError> {
+    use ::image::{AnimationDecoder, codecs::gif::GifDecoder};
+    let decoder = GifDecoder::new(std::io::Cursor::new(bytes))?;
+    let mut sequence = FrameSequence::new(0, 0);
+    sequence.absorb(decoder.into_frames())?;
+    Ok(sequence.into_source(Looping::Always))
 }
 
 inventory::submit! {
-    DecoderEntry { mime: "image/gif", factory: |b| GifSource::open(b) }
-}
-
-impl AnimatedDecoder for GifSource {
-    fn metadata(&self) -> AnimationMetadata {
-        self.metadata.clone()
-    }
-
-    fn frame_at(&mut self, elapsed: Duration) -> Result<Option<DecodedFrame>, DecoderError> {
-        Ok(frame_at_in(
-            &self.frames,
-            self.metadata.total_duration,
-            elapsed,
-        ))
-    }
-
-    fn seek(&mut self, _elapsed: Duration) -> Result<(), DecoderError> {
-        Ok(())
-    }
+    DecoderEntry { mime: "image/gif", factory: open }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::decoders::frames::frame_at_ms;
     use crate::animation::decoders::gif_fixture::tiny_gif_bytes;
+
+    fn tiny_gif() -> Box<dyn AnimatedDecoder> {
+        open(&tiny_gif_bytes()).expect("decode tiny gif")
+    }
 
     #[test]
     fn metadata_reports_four_frames() {
-        let bytes = tiny_gif_bytes();
-        let dec = GifSource::open(&bytes).expect("decode tiny gif");
-        let meta = dec.metadata();
-        assert_eq!(meta.frame_count, Some(4));
+        let meta = tiny_gif().metadata();
+        assert_eq!(meta.frame_count, 4);
         assert_eq!(meta.width, 32);
         assert_eq!(meta.height, 32);
     }
 
     #[test]
     fn frame_at_returns_index_one_at_150ms() {
-        let bytes = tiny_gif_bytes();
-        let mut dec = GifSource::open(&bytes).unwrap();
-        let f = dec.frame_at(Duration::from_millis(150)).unwrap().unwrap();
-        assert_eq!(f.frame_index, 1);
+        assert_eq!(frame_at_ms(tiny_gif().as_mut(), 150).frame_index, 1);
     }
 
     #[test]
     fn frame_at_loops_after_total_duration() {
-        let bytes = tiny_gif_bytes();
-        let mut dec = GifSource::open(&bytes).unwrap();
-        let f = dec.frame_at(Duration::from_millis(450)).unwrap().unwrap();
-        // 450 % 400 = 50 -> frame 0
-        assert_eq!(f.frame_index, 0);
+        assert_eq!(frame_at_ms(tiny_gif().as_mut(), 450).frame_index, 0);
     }
 
     #[test]
     fn content_ids_are_distinct_per_frame() {
-        let bytes = tiny_gif_bytes();
-        let mut dec = GifSource::open(&bytes).unwrap();
-        let mut ids = std::collections::HashSet::new();
-        for ms in [0, 100, 200, 300] {
-            let f = dec.frame_at(Duration::from_millis(ms)).unwrap().unwrap();
-            ids.insert(f.content_id);
-        }
+        let mut decoder = tiny_gif();
+        let ids: std::collections::HashSet<u64> = [0, 100, 200, 300]
+            .into_iter()
+            .map(|ms| frame_at_ms(decoder.as_mut(), ms).content_id)
+            .collect();
         assert_eq!(ids.len(), 4);
     }
 
     #[test]
     fn malformed_bytes_return_error() {
-        assert!(GifSource::open(b"not a gif").is_err());
+        assert!(open(b"not a gif").is_err());
     }
 }

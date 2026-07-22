@@ -1,298 +1,270 @@
-// Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`), not
-// borrows. The owned type is load-bearing for the FFI dispatcher.
-#![allow(clippy::needless_pass_by_value)]
-
-//! Document-level conceal computation.
-//!
-//! The Rust FFI layer exposes two entry points:
-//!   - `compute_conceal_overlays` — scan a whole document.
-//!   - `compute_conceal_overlays_for_comments_with_options` — scan only
-//!     Julia comment lines (lines starting with `# `), which is the format
-//!     converted notebooks use for their markdown cells.
-//!
-//! Both return document-relative CHARACTER offsets (not byte offsets) so
-//! the Scheme layer can hand them straight to Helix's overlay API. Char
-//! offsets are mapped from byte offsets via `build_byte_to_char_map`.
+use std::ops::Range;
 
 use serde_json::json;
 
+use super::char_offsets::CharOffsets;
 use super::math_regions::find_math_regions;
-use super::scanner::{ScannerOptions, scan_to_vec_opts};
+use super::overlay::CharOffsetTsv;
+use super::scanner::{ScannerOptions, scan_region};
+use crate::error::{Result, ffi};
 
-/// Scan an entire document for math regions and return a JSON array of
-/// `{"offset": char_off, "replacement": str}` pairs.
+const COMMENT_PREFIX: &str = "# ";
+const DISPLAY_FENCE: &str = "$$";
+
+#[allow(clippy::needless_pass_by_value)]
 pub fn compute_conceal_overlays(text: String) -> String {
-    let byte_to_char = build_byte_to_char_map(&text);
-    let doc_char_len = text.chars().count();
-    let regions = find_math_regions(&text);
-    if regions.is_empty() {
-        return "[]".to_string();
-    }
-
-    let mut all_overlays: Vec<serde_json::Value> = Vec::new();
-
-    for (region_start, region_end) in regions {
-        if region_end <= region_start {
-            continue;
-        }
-        let math_text = &text[region_start..region_end];
-        for (offset, replacement) in scan_to_vec_opts(math_text, ScannerOptions::default()) {
-            let byte_off = region_start + offset;
-            let char_off = byte_to_char
-                .get(byte_off)
-                .copied()
-                .unwrap_or_else(|| text[..byte_off.min(text.len())].chars().count());
-            if char_off >= doc_char_len {
-                continue;
-            }
-            all_overlays.push(json!({
-                "offset": char_off,
-                "replacement": replacement
-            }));
-        }
-    }
-
-    json!(all_overlays).to_string()
+    ffi(document_overlays_json(&text))
 }
 
-/// Like `compute_conceal_overlays`, but only scans lines that start with `# `
-/// (Julia/notebook comment lines that contain markdown with LaTeX math).
-///
-/// Single-line math (`$...$`, `\(...\)`) is scanned per-line so `$5` on one
-/// line can't accidentally match `$10` on another. Multi-line `$$...$$` blocks
-/// are detected by finding `# $$` open/close lines and joining the content
-/// between them.
-///
-/// Returns tab-separated format: `"char_offset\treplacement\n..."`
-/// All offsets are CHAR offsets (not byte offsets).
-///
-/// Exposed as the `-with-options` FFI so the math-render plugin can pass
-/// `hide_math_layout=true` per-call without a process-global flag.
+#[allow(clippy::needless_pass_by_value)]
 pub fn compute_conceal_overlays_for_comments_with_options(
     text: String,
     hide_math_layout: bool,
 ) -> String {
-    let opts = ScannerOptions { hide_math_layout };
-    let byte_to_char = build_byte_to_char_map(&text);
-    let doc_char_len = text.chars().count();
-    let mut out = String::new();
+    ffi(comment_overlays_tsv(
+        &text,
+        ScannerOptions { hide_math_layout },
+    ))
+}
 
-    let lines: Vec<(usize, &str)> = line_ranges(&text);
-
-    // Helper: emit one overlay from a byte offset in the document.
-    let mut emit = |doc_byte_offset: usize, repl: &str| {
-        let char_offset = byte_to_char
-            .get(doc_byte_offset)
-            .copied()
-            .unwrap_or_else(|| text[..doc_byte_offset.min(text.len())].chars().count());
-        if char_offset < doc_char_len {
-            out.push_str(&char_offset.to_string());
-            out.push('\t');
-            out.push_str(repl);
-            out.push('\n');
+fn document_overlays_json(text: &str) -> Result<String> {
+    let regions = find_math_regions(text);
+    if regions.is_empty() {
+        return Ok("[]".to_string());
+    }
+    let offsets = CharOffsets::of(text);
+    let mut overlays: Vec<serde_json::Value> = Vec::new();
+    for (start, end) in regions {
+        if end <= start {
+            continue;
         }
-    };
+        for (offset, replacement) in scan_region(&text[start..end], ScannerOptions::default()) {
+            if let Some(char_offset) = offsets.visible(start + offset)? {
+                overlays.push(json!({"offset": char_offset, "replacement": replacement}));
+            }
+        }
+    }
+    Ok(json!(overlays).to_string())
+}
+
+fn comment_overlays_tsv(text: &str, options: ScannerOptions) -> Result<String> {
+    let offsets = CharOffsets::of(text);
+    let lines = line_starts(text);
+    let mut tsv = CharOffsetTsv::new(&offsets);
 
     let mut i = 0;
     while i < lines.len() {
-        let (line_byte_start, line) = lines[i];
-        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        let content = if let Some(c) = trimmed.strip_prefix("# ") {
-            c
-        } else {
+        let (line_start, line) = lines[i];
+        let Some(content) = comment_content(line) else {
             i += 1;
             continue;
         };
-
-        // A `$$ ... $$` display block is owned by the Typst image renderer
-        // (math-image.scm); inline conceal skips it so the image is the
-        // sole visual rather than three renderers compositing.
-        if content.trim() == "$$" {
-            let mut close_line = None;
-            for (j, &(_, jline)) in lines.iter().enumerate().skip(i + 1) {
-                let jt = jline.trim_end_matches('\n').trim_end_matches('\r');
-                if let Some(jc) = jt.strip_prefix("# ") {
-                    if jc.trim() == "$$" {
-                        close_line = Some(j);
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            if let Some(close) = close_line {
-                i = close + 1;
-                continue;
-            }
-        }
-
-        // A markdown pipe table is rendered as a transparent Typst image by
-        // table-image.scm (overlays can't align columns — one grapheme per
-        // source char). The `# | ... |` lines carry no `$` math, so inline
-        // conceal naturally leaves them untouched; nothing to do here.
-
-        // Single-line processing: inline $...$ and \(...\)
-        if content.is_empty() {
-            i += 1;
+        if content.trim() == DISPLAY_FENCE
+            && let Some(close) = display_block_close(&lines, i)
+        {
+            i = close + 1;
             continue;
         }
-
-        let content_byte_start = line_byte_start + (trimmed.len() - content.len());
-        let regions = find_math_regions(content);
-        let content_bytes = content.as_bytes();
-
-        for &(region_start, region_end) in &regions {
-            if region_end <= region_start {
-                continue;
-            }
-
-            // `$$ x $$` display regions belong to the image renderer.
-            if region_start >= 2
-                && content_bytes[region_start - 1] == b'$'
-                && content_bytes[region_start - 2] == b'$'
-            {
-                continue;
-            }
-
-            // Hide opening delimiter (\( or $$ or $).
-            if region_start >= 2
-                && matches!(
-                    (
-                        content_bytes[region_start - 2],
-                        content_bytes[region_start - 1]
-                    ),
-                    (b'\\', b'(') | (b'$', b'$')
-                )
-            {
-                emit(content_byte_start + region_start - 2, "");
-                emit(content_byte_start + region_start - 1, "");
-            } else if region_start >= 1 && content_bytes[region_start - 1] == b'$' {
-                emit(content_byte_start + region_start - 1, "");
-            }
-
-            // Hide closing delimiter (\) or $$ or $).
-            if region_end + 1 < content_bytes.len()
-                && matches!(
-                    (content_bytes[region_end], content_bytes[region_end + 1]),
-                    (b'\\', b')') | (b'$', b'$')
-                )
-            {
-                emit(content_byte_start + region_end, "");
-                emit(content_byte_start + region_end + 1, "");
-            } else if region_end < content_bytes.len() && content_bytes[region_end] == b'$' {
-                emit(content_byte_start + region_end, "");
-            }
-
-            // Emit overlays for the math content.
-            let math_text = &content[region_start..region_end];
-            for (offset, replacement) in scan_to_vec_opts(math_text, opts) {
-                emit(content_byte_start + region_start + offset, &replacement);
-            }
+        if !content.is_empty() {
+            conceal_comment_content(
+                content,
+                line_start + COMMENT_PREFIX.len(),
+                options,
+                &mut tsv,
+            )?;
         }
-
-        // Hide markdown escape backslashes OUTSIDE math regions.
-        // \(a\) → (a), \[2 marks\] → [2 marks], etc.
-        {
-            let mut j = 0;
-            while j + 1 < content_bytes.len() {
-                if content_bytes[j] == b'\\'
-                    && matches!(content_bytes[j + 1], b'(' | b')' | b'[' | b']')
-                {
-                    let inside_math = regions.iter().any(|&(start, end)| {
-                        let region_open = start.saturating_sub(2);
-                        let region_close = (end + 2).min(content_bytes.len());
-                        j >= region_open && j < region_close
-                    });
-                    if !inside_math {
-                        emit(content_byte_start + j, "");
-                        j += 2;
-                        continue;
-                    }
-                }
-                j += 1;
-            }
-        }
-
         i += 1;
     }
 
-    out
+    Ok(tsv.into_rows())
 }
 
-/// Build a lookup table from byte offset → char offset. Every byte
-/// position maps to the char index of the character that contains that
-/// byte (so mid-character bytes map correctly too).
-pub(super) fn build_byte_to_char_map(text: &str) -> Vec<usize> {
-    let mut map = vec![0usize; text.len() + 1];
-    let mut char_idx = 0;
-    for (byte_idx, ch) in text.char_indices() {
-        for slot in &mut map[byte_idx..byte_idx + ch.len_utf8()] {
-            *slot = char_idx;
+fn conceal_comment_content(
+    content: &str,
+    content_start: usize,
+    options: ScannerOptions,
+    tsv: &mut CharOffsetTsv,
+) -> Result<()> {
+    let bytes = content.as_bytes();
+    let regions = find_math_regions(content);
+
+    for &(start, end) in &regions {
+        if end <= start || is_display_region(bytes, start) {
+            continue;
         }
-        char_idx += 1;
+        for byte in opening_delimiter(bytes, start)
+            .into_iter()
+            .chain(closing_delimiter(bytes, end))
+            .flatten()
+        {
+            tsv.hide(content_start + byte)?;
+        }
+        for (offset, replacement) in scan_region(&content[start..end], options) {
+            tsv.push(content_start + start + offset, &replacement)?;
+        }
     }
-    map[text.len()] = char_idx;
-    map
+
+    for byte in markdown_escapes(bytes, &regions) {
+        tsv.hide(content_start + byte)?;
+    }
+    Ok(())
 }
 
-/// Iterate text line-by-line, yielding `(byte_offset, line_text)` for each
-/// line. Unlike `str::lines()`, this preserves the byte offsets needed for
-/// overlay placement.
-fn line_ranges(text: &str) -> Vec<(usize, &str)> {
-    let mut result = Vec::new();
+fn comment_content(line: &str) -> Option<&str> {
+    line.trim_end_matches('\n')
+        .trim_end_matches('\r')
+        .strip_prefix(COMMENT_PREFIX)
+}
+
+fn display_block_close(lines: &[(usize, &str)], open: usize) -> Option<usize> {
+    for (j, &(_, line)) in lines.iter().enumerate().skip(open + 1) {
+        match comment_content(line) {
+            Some(body) if body.trim() == DISPLAY_FENCE => return Some(j),
+            Some(_) => {}
+            None => return None,
+        }
+    }
+    None
+}
+
+fn is_display_region(bytes: &[u8], start: usize) -> bool {
+    start >= 2 && bytes[start - 1] == b'$' && bytes[start - 2] == b'$'
+}
+
+fn opening_delimiter(bytes: &[u8], start: usize) -> Option<Range<usize>> {
+    if start >= 2
+        && matches!(
+            (bytes[start - 2], bytes[start - 1]),
+            (b'\\', b'(') | (b'$', b'$')
+        )
+    {
+        Some(start - 2..start)
+    } else if start >= 1 && bytes[start - 1] == b'$' {
+        Some(start - 1..start)
+    } else {
+        None
+    }
+}
+
+fn closing_delimiter(bytes: &[u8], end: usize) -> Option<Range<usize>> {
+    if end + 1 < bytes.len() && matches!((bytes[end], bytes[end + 1]), (b'\\', b')') | (b'$', b'$'))
+    {
+        Some(end..end + 2)
+    } else if end < bytes.len() && bytes[end] == b'$' {
+        Some(end..end + 1)
+    } else {
+        None
+    }
+}
+
+fn markdown_escapes(bytes: &[u8], regions: &[(usize, usize)]) -> Vec<usize> {
+    let mut escapes = Vec::new();
+    let mut j = 0;
+    while j + 1 < bytes.len() {
+        if bytes[j] == b'\\'
+            && matches!(bytes[j + 1], b'(' | b')' | b'[' | b']')
+            && !regions.iter().any(|&(start, end)| {
+                (start.saturating_sub(2)..(end + 2).min(bytes.len())).contains(&j)
+            })
+        {
+            escapes.push(j);
+            j += 2;
+            continue;
+        }
+        j += 1;
+    }
+    escapes
+}
+
+fn line_starts(text: &str) -> Vec<(usize, &str)> {
+    let mut lines = Vec::new();
     let mut start = 0;
     for line in text.split('\n') {
-        result.push((start, line));
+        lines.push((start, line));
         start += line.len() + 1;
     }
-    result
+    lines
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn pipe_table_lines_produce_no_overlays() {
-        // Tables render as Typst images (table-image.scm); conceal must leave
-        // their `# | ... |` lines untouched — no box-drawing overlays, no tofu.
-        let text = "# | A | B |\n# |---|---|\n# | x | y |\n";
-        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
-        assert!(!tsv.contains('│'), "no box overlays: {tsv:?}");
-        assert!(!tsv.contains('├'), "no rule overlays: {tsv:?}");
+    fn tsv(input: &str) -> String {
+        compute_conceal_overlays_for_comments_with_options(input.to_string(), false)
     }
 
-    #[test]
-    fn inline_math_on_pipe_line_still_conceals() {
-        let text = "# cost | $\\alpha$ |\n";
-        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
-        assert!(tsv.contains('α'), "math should still conceal: {tsv:?}");
-        assert!(!tsv.contains('│'), "no box rows: {tsv:?}");
+    fn overlays(input: &str) -> Vec<(usize, String)> {
+        tsv(input)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (offset, replacement) = line.split_once('\t').unwrap();
+                (offset.parse().unwrap(), replacement.to_string())
+            })
+            .collect()
     }
 
-    /// Apply the byte-offset overlays to the (ASCII-LaTeX) input to get the
-    /// visible text a reader would see. Input is ASCII so every overlay offset
-    /// is a char boundary; an empty replacement hides that byte.
+    fn hidden(input: &str) -> Vec<usize> {
+        overlays(input)
+            .into_iter()
+            .filter(|(_, r)| r.is_empty())
+            .map(|(o, _)| o)
+            .collect()
+    }
+
+    fn conceals(input: &str, glyph: &str) -> bool {
+        overlays(input).iter().any(|(_, r)| r == glyph)
+    }
+
     fn apply_overlays(input: &str) -> String {
-        let tsv = compute_conceal_overlays_for_comments_with_options(input.to_string(), false);
-        let mut reps: std::collections::HashMap<usize, &str> = std::collections::HashMap::new();
-        for line in tsv.lines() {
-            if let Some((off, rep)) = line.split_once('\t')
-                && let Ok(n) = off.parse::<usize>()
-            {
-                reps.insert(n, rep);
-            }
-        }
+        let replacements: std::collections::HashMap<usize, String> =
+            overlays(input).into_iter().collect();
         let mut out = String::new();
         for (i, ch) in input.char_indices() {
-            match reps.get(&i) {
-                Some(rep) => out.push_str(rep),
+            match replacements.get(&i) {
+                Some(replacement) => out.push_str(replacement),
                 None => out.push(ch),
             }
         }
         out
+    }
+
+    #[test]
+    fn document_scan_places_overlays_at_region_offsets() {
+        let input = r#"some text $\alpha + \beta$ more text"#;
+        let json = compute_conceal_overlays(input.to_string());
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let offsets: Vec<usize> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["offset"].as_u64().unwrap() as usize)
+            .collect();
+        assert!(!offsets.is_empty());
+        assert!(offsets.contains(&"some text $".len()), "{offsets:?}");
+    }
+
+    #[test]
+    fn document_without_math_yields_an_empty_array() {
+        assert_eq!(
+            compute_conceal_overlays("plain text no math".to_string()),
+            "[]"
+        );
+    }
+
+    #[test]
+    fn pipe_table_lines_produce_no_overlays() {
+        let rows = tsv("# | A | B |\n# |---|---|\n# | x | y |\n");
+        assert!(!rows.contains('│'), "no box overlays: {rows:?}");
+        assert!(!rows.contains('├'), "no rule overlays: {rows:?}");
+    }
+
+    #[test]
+    fn inline_math_on_pipe_line_still_conceals() {
+        let rows = tsv("# cost | $\\alpha$ |\n");
+        assert!(rows.contains('α'), "math should still conceal: {rows:?}");
+        assert!(!rows.contains('│'), "no box rows: {rows:?}");
     }
 
     #[test]
@@ -373,9 +345,128 @@ mod tests {
 
     #[test]
     fn mathbb_conceals_to_double_struck() {
-        let text = "# subspace of $\\mathbb{R}^3$.\n";
-        let tsv = compute_conceal_overlays_for_comments_with_options(text.to_string(), false);
-        assert!(tsv.contains('ℝ'), "double-struck R emitted: {tsv:?}");
-        assert!(tsv.contains('³'), "superscript 3 emitted: {tsv:?}");
+        let rows = tsv("# subspace of $\\mathbb{R}^3$.\n");
+        assert!(rows.contains('ℝ'), "double-struck R emitted: {rows:?}");
+        assert!(rows.contains('³'), "superscript 3 emitted: {rows:?}");
+    }
+
+    #[test]
+    fn simple_alpha_conceals_and_hides_delimiters() {
+        assert!(conceals("# $\\alpha$\n", "α"));
+        assert!(hidden("# $\\alpha$\n").len() >= 2);
+    }
+
+    #[test]
+    fn non_comment_lines_are_skipped() {
+        assert!(tsv("x = rand(10)\nprintln(\"value: $x\")\n").is_empty());
+    }
+
+    #[test]
+    fn comment_lines_conceal_amid_code() {
+        assert!(conceals(
+            "x = 1\n# The value $\\beta$ is cool\ny = 2\n",
+            "β"
+        ));
+    }
+
+    #[test]
+    fn a_lone_dollar_per_line_opens_no_region() {
+        assert!(overlays("# cost is $5\n# price is $10\n").is_empty());
+    }
+
+    #[test]
+    fn markdown_escaped_parens_hide_only_their_backslashes() {
+        assert_eq!(hidden("# \\(a\\) Find the eigenvalues\n").len(), 2);
+    }
+
+    #[test]
+    fn markdown_escaped_brackets_hide_only_their_backslashes() {
+        assert_eq!(hidden("# Some text \\[2 marks\\]\n").len(), 2);
+    }
+
+    #[test]
+    fn backslash_parens_around_real_math_conceal() {
+        assert!(!overlays("# \\(\\alpha + \\beta\\)\n").is_empty());
+    }
+
+    #[test]
+    fn multiple_regions_on_one_line_all_conceal() {
+        assert!(conceals("# $\\alpha$ and $\\beta$\n", "α"));
+        assert!(conceals("# $\\alpha$ and $\\beta$\n", "β"));
+    }
+
+    #[test]
+    fn font_command_conceals_in_comments() {
+        assert!(conceals("# $\\mathbf{v}$\n", "𝐯"));
+    }
+
+    #[test]
+    fn eigenvalue_equation_conceals_every_symbol() {
+        let input = "# $A\\mathbf{v} = \\lambda\\mathbf{v}$\n";
+        assert!(conceals(input, "λ"));
+        assert!(conceals(input, "𝐯"));
+    }
+
+    #[test]
+    fn offsets_are_char_positions_not_byte_positions() {
+        let input = "# ═══ separator\n# $\\alpha$\n";
+        let (offset, _) = overlays(input)
+            .into_iter()
+            .find(|(_, r)| r == "α")
+            .expect("α overlay");
+        assert!(offset < 30, "char offset {offset} looks like a byte offset");
+    }
+
+    #[test]
+    fn no_overlay_lands_outside_a_math_region() {
+        let input = "# \\(b\\) Verify the eigenvalue equation $A\\mathbf{v} = \\lambda\\mathbf{v}$ numerically for each eigenpair. What is the maximum residual $\\|A\\mathbf{v} - \\lambda\\mathbf{v}\\|$?\n";
+        let word_span = |word: &str| {
+            let byte = input.find(word).unwrap();
+            let start = input[..byte].chars().count();
+            start..start + word.chars().count()
+        };
+        for word in ["numerically", "maximum"] {
+            let span = word_span(word);
+            for (offset, replacement) in overlays(input) {
+                assert!(
+                    !span.contains(&offset),
+                    "stray overlay inside {word:?} at {offset}: {replacement:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_document_yields_nothing() {
+        assert!(tsv("").is_empty());
+    }
+
+    #[test]
+    fn document_without_comment_lines_yields_nothing() {
+        assert!(tsv("x = 1\ny = 2\nz = x + y\n").is_empty());
+    }
+
+    #[test]
+    fn display_block_is_owned_by_the_image_renderer() {
+        let input = "# $$\n# y_n = x_n - \\alpha^2\\, x_{n-2}\n# $$\n";
+        assert!(overlays(input).is_empty(), "{:?}", overlays(input));
+    }
+
+    #[test]
+    fn display_block_with_cases_is_owned_by_the_image_renderer() {
+        let input = "# $$\n#    h_n = \\begin{cases}\n#    1 & 0 \\leq n \\leq 2 \\\\\\\\\n#    0 & \\text{otherwise}\n#    \\end{cases}\n# $$\n";
+        assert!(overlays(input).is_empty(), "{:?}", overlays(input));
+    }
+
+    #[test]
+    fn norm_and_superscript_conceal_together() {
+        let input = "# $\\|x - P_K x\\|^2$\n";
+        assert!(conceals(input, "‖"));
+        assert!(conceals(input, "²"));
+    }
+
+    #[test]
+    fn ldots_conceals_to_ellipsis() {
+        assert!(conceals("# $K = 1, 2, \\ldots, 32$\n", "…"));
     }
 }

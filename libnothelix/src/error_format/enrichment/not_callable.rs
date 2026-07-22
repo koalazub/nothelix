@@ -1,23 +1,15 @@
-//! "Objects of type X are not callable" enricher.
-//!
-//! Julia raises this whenever the parser sees `name(arg)` where `name`
-//! is currently bound to a value rather than a function. The generic
-//! E043 hint suggests "missing `*`", which is one valid cause but
-//! misleading when the real issue is "you reassigned `X` two cells ago
-//! and now you're calling it like a function".
-//!
-//! When the kernel populates `in_scope_variable_types`, we can pinpoint:
-//! the failing object's type comes from the message, every identifier
-//! called in the source line is a candidate, and intersecting the two
-//! sets gives us the specific name with cell-anchored attribution.
-
 use std::fmt::Write;
 
-use super::super::scanners;
+use super::super::scan::Scanner;
 use super::super::types::{ScopeVarEntry, StructuredError};
 
+const MAX_LISTED_NAMES: usize = 5;
+const OBJECTS_OF_TYPE: &str = "objects of type ";
+const ARE_NOT_CALLABLE: &str = " are not callable";
+
 pub(super) fn enrich(message: &str, source: &str, err: &StructuredError) -> Option<String> {
-    let obj_type = extract_not_callable_type(message)?;
+    let obj_type = scan_uncallable_type(message)?;
+    let called = scan_call_identifiers(source);
 
     let mut out = String::new();
     let _ = writeln!(
@@ -25,76 +17,77 @@ pub(super) fn enrich(message: &str, source: &str, err: &StructuredError) -> Opti
         "   = note: called something of type {obj_type} (not a function)"
     );
 
-    let call_names = scan_call_identifiers(source);
-    let typed_vars = err.in_scope_variable_types.get(&obj_type);
-
-    if let Some(entries) = typed_vars {
-        let matching: Vec<&ScopeVarEntry> = entries
-            .iter()
-            .filter(|e| call_names.iter().any(|c| c == &e.name))
-            .collect();
-        if matching.is_empty() {
-            // Couldn't intersect — list all in-scope values of that type so the user can eyeball.
-            let _ = writeln!(out, "   = scope: in-scope values of type {obj_type}:");
-            for e in entries {
-                let _ = writeln!(out, "   |   `{}` — cell {}", e.name, e.cell);
-            }
-        } else {
-            out.push_str("   = scope: the call site likely resolves to:\n");
-            for e in matching {
-                let _ = writeln!(
-                    out,
-                    "   |   `{}` — {obj_type} assigned in cell {}",
-                    e.name, e.cell
-                );
-            }
-            out.push_str("   = help: that name is a value, not a function. Index it with `[…]` or pick a different name for your function.\n");
-        }
-    } else if !call_names.is_empty() {
-        out.push_str("   = note: names called in the source line:\n");
-        for name in call_names.iter().take(5) {
-            let _ = writeln!(out, "   |   `{name}()`");
-        }
-        out.push_str("   = help: one of these resolves to a value, not a function. Execute upstream cells so the kernel knows each binding's type, then re-run this cell for a pinpointed hint.\n");
+    match err.in_scope_variable_types.get(&obj_type) {
+        Some(entries) => write_typed_vars(&mut out, &obj_type, entries, &called),
+        None if !called.is_empty() => write_called_names(&mut out, &called),
+        None => {}
     }
-
     Some(out)
 }
 
-/// Pull the "of type X" portion out of `objects of type X are not callable`.
-pub(super) fn extract_not_callable_type(msg: &str) -> Option<String> {
-    let start = msg.find("objects of type ")?;
-    let after = &msg[start + "objects of type ".len()..];
-    let end = after.find(" are not callable")?;
-    let t = after[..end].trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
+fn write_typed_vars(
+    out: &mut String,
+    obj_type: &str,
+    entries: &[ScopeVarEntry],
+    called: &[String],
+) {
+    let matching: Vec<&ScopeVarEntry> = entries
+        .iter()
+        .filter(|entry| called.iter().any(|name| name == &entry.name))
+        .collect();
+
+    if matching.is_empty() {
+        let _ = writeln!(out, "   = scope: in-scope values of type {obj_type}:");
+        for entry in entries {
+            let _ = writeln!(out, "   |   `{}` — cell {}", entry.name, entry.cell);
+        }
+        return;
     }
+
+    out.push_str("   = scope: the call site likely resolves to:\n");
+    for entry in matching {
+        let _ = writeln!(
+            out,
+            "   |   `{}` — {obj_type} assigned in cell {}",
+            entry.name, entry.cell
+        );
+    }
+    out.push_str("   = help: that name is a value, not a function. Index it with `[…]` or pick a different name for your function.\n");
 }
 
-/// Find every `identifier(` call in a source line. Skips string content
-/// and stops at `#` comments. Used to narrow the not-callable enrichment
-/// when Julia's error omits the offending name.
+fn write_called_names(out: &mut String, called: &[String]) {
+    out.push_str("   = note: names called in the source line:\n");
+    for name in called.iter().take(MAX_LISTED_NAMES) {
+        let _ = writeln!(out, "   |   `{name}()`");
+    }
+    out.push_str("   = help: one of these resolves to a value, not a function. Execute upstream cells so the kernel knows each binding's type, then re-run this cell for a pinpointed hint.\n");
+}
+
+fn scan_uncallable_type(msg: &str) -> Option<String> {
+    let start = msg.find(OBJECTS_OF_TYPE)? + OBJECTS_OF_TYPE.len();
+    let after = &msg[start..];
+    let name = after[..after.find(ARE_NOT_CALLABLE)?].trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 fn scan_call_identifiers(source: &str) -> Vec<String> {
-    let mut s = scanners::Scanner::new(source);
+    let mut scanner = Scanner::new(source);
     let mut names = Vec::new();
-    while let Some(b) = s.peek() {
+    while let Some(b) = scanner.peek() {
         if b == b'#' {
             break;
         }
         if b == b'"' {
-            s.skip_string_literal();
+            scanner.skip_string_literal();
             continue;
         }
-        if let Some(name) = s.scan_identifier() {
-            if s.peek() == Some(b'(') {
+        if let Some(name) = scanner.scan_identifier() {
+            if scanner.peek() == Some(b'(') {
                 names.push(name.to_string());
             }
             continue;
         }
-        s.advance();
+        scanner.advance();
     }
     names
 }
@@ -106,14 +99,14 @@ mod tests {
     #[test]
     fn extracts_type_between_markers() {
         assert_eq!(
-            extract_not_callable_type("objects of type Vector{Float64} are not callable"),
+            scan_uncallable_type("objects of type Vector{Float64} are not callable"),
             Some("Vector{Float64}".to_string())
         );
     }
 
     #[test]
     fn extract_returns_none_outside_pattern() {
-        assert_eq!(extract_not_callable_type("totally unrelated message"), None);
+        assert_eq!(scan_uncallable_type("totally unrelated message"), None);
     }
 
     #[test]

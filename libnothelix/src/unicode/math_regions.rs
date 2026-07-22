@@ -1,100 +1,78 @@
-//! Identify `$...$`, `$$...$$` and `\(...\)` math regions in a document.
-//!
-//! The scanner itself runs on one math region at a time. This module is
-//! what decides where those regions start and end. The returned ranges
-//! are byte offsets for the region CONTENTS, not including the delimiters.
+#[derive(Clone, Copy)]
+enum MathDelimiter {
+    Dollar,
+    DoubleDollar,
+    Paren,
+}
 
-/// Scan `text` and return `(region_start, region_end)` byte-offset pairs
-/// for every math region found. The ranges cover the region's contents
-/// (excluding the `$`, `$$`, or `\(`/`\)` delimiters themselves).
-///
-/// Regions are non-overlapping and in source order. Nested math is not
-/// supported — the first closing delimiter wins.
-pub(crate) fn find_math_regions(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let len = bytes.len();
-    let mut regions = Vec::new();
-    let mut i = 0;
-
-    while i < len {
-        if bytes[i] == b'$' {
-            if i + 1 < len && bytes[i + 1] == b'$' {
-                // $$...$$
-                let start = i + 2;
-                let mut j = start;
-                while j + 1 < len {
-                    if bytes[j] == b'$' && bytes[j + 1] == b'$' {
-                        regions.push((start, j));
-                        i = j + 2;
-                        break;
-                    }
-                    j += 1;
-                }
-                if j + 1 >= len {
-                    break;
-                }
-            } else {
-                // $...$
-                let start = i + 1;
-                let mut j = start;
-                while j < len {
-                    if bytes[j] == b'$' {
-                        regions.push((start, j));
-                        i = j + 1;
-                        break;
-                    }
-                    j += 1;
-                }
-                if j >= len {
-                    break;
-                }
-            }
-        } else if bytes[i] == b'\\' && i + 1 < len && bytes[i + 1] == b'(' {
-            // \(...\) — but reject markdown-escaped parens like \(a\), \(b\)
-            let start = i + 2;
-            let mut j = start;
-            while j + 1 < len {
-                if bytes[j] == b'\\' && bytes[j + 1] == b')' {
-                    let content = &text[start..j];
-                    if looks_like_math(content) {
-                        regions.push((start, j));
-                    }
-                    i = j + 2;
-                    break;
-                }
-                j += 1;
-            }
-            if j + 1 >= len {
-                break;
-            }
-        } else {
-            i += 1;
+impl MathDelimiter {
+    fn opening_at(bytes: &[u8], i: usize) -> Option<Self> {
+        match bytes[i] {
+            b'$' if bytes.get(i + 1) == Some(&b'$') => Some(Self::DoubleDollar),
+            b'$' => Some(Self::Dollar),
+            b'\\' if bytes.get(i + 1) == Some(&b'(') => Some(Self::Paren),
+            _ => None,
         }
     }
 
-    regions
+    fn width(self) -> usize {
+        match self {
+            Self::Dollar => 1,
+            Self::DoubleDollar | Self::Paren => 2,
+        }
+    }
+
+    fn closing_from(self, bytes: &[u8], start: usize) -> Option<usize> {
+        match self {
+            Self::Dollar => (start..bytes.len()).find(|&j| bytes[j] == b'$'),
+            Self::DoubleDollar => find_pair(bytes, start, b'$', b'$'),
+            Self::Paren => find_pair(bytes, start, b'\\', b')'),
+        }
+    }
+
+    fn accepts(self, content: &str) -> bool {
+        !matches!(self, Self::Paren) || looks_like_math(content)
+    }
 }
 
-/// Heuristic: does the content between `\(` and `\)` look like actual
-/// LaTeX math, or is it just a markdown-escaped parenthetical like `\(a\)`?
-///
-/// Real math contains backslash commands, superscripts, subscripts, or is
-/// longer than a few characters. A single letter/digit is almost certainly
-/// a list marker: `\(a\)`, `\(b\)`, `\(i\)`, `\(1\)`.
+fn find_pair(bytes: &[u8], start: usize, first: u8, second: u8) -> Option<usize> {
+    (start..bytes.len().saturating_sub(1)).find(|&j| bytes[j] == first && bytes[j + 1] == second)
+}
+
 fn looks_like_math(content: &str) -> bool {
-    // Single char or empty → not math (it's \(a\), \(b\), etc.)
     if content.len() <= 2 {
         return false;
     }
-    // Contains LaTeX indicators → definitely math
-    let bytes = content.as_bytes();
-    for &b in bytes {
-        if b == b'\\' || b == b'^' || b == b'_' || b == b'{' {
-            return true;
-        }
+    if content
+        .bytes()
+        .any(|b| matches!(b, b'\\' | b'^' | b'_' | b'{'))
+    {
+        return true;
     }
-    // Longer than a short word and contains math-like chars
-    content.len() > 4 || content.contains('+') || content.contains('=') || content.contains('-')
+    content.len() > 4 || content.contains(['+', '=', '-'])
+}
+
+pub(crate) fn find_math_regions(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut regions = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let Some(delimiter) = MathDelimiter::opening_at(bytes, i) else {
+            i += 1;
+            continue;
+        };
+        let start = i + delimiter.width();
+        let Some(close) = delimiter.closing_from(bytes, start) else {
+            break;
+        };
+        if delimiter.accepts(&text[start..close]) {
+            regions.push((start, close));
+        }
+        i = close + delimiter.width();
+    }
+
+    regions
 }
 
 #[cfg(test)]
@@ -103,7 +81,6 @@ mod tests {
 
     #[test]
     fn rejects_markdown_escaped_parens() {
-        // \(a\) and \(b\) are markdown list markers, not math
         let text = r"\(a\) First item \(b\) Second item";
         let regions = find_math_regions(text);
         assert!(
@@ -131,7 +108,6 @@ mod tests {
     fn mixed_escaped_parens_and_real_math() {
         let text = r"\(b\) Compute $H(e^{j\omega})$. For $\omega \in [-\pi, \pi]$";
         let regions = find_math_regions(text);
-        // Should find the two $...$ regions but NOT the \(b\)
         assert_eq!(regions.len(), 2, "got: {regions:?}");
     }
 
@@ -142,5 +118,19 @@ mod tests {
         let regions = find_math_regions(text);
         assert_eq!(regions.len(), 1, "should find $x$, got: {regions:?}");
         assert_eq!(&text[regions[0].0..regions[0].1], "x");
+    }
+
+    #[test]
+    fn unterminated_region_stops_the_scan() {
+        assert!(find_math_regions("$\\alpha").is_empty());
+        assert!(find_math_regions("$$\\alpha").is_empty());
+        assert!(find_math_regions(r"\(\alpha").is_empty());
+    }
+
+    #[test]
+    fn display_region_excludes_its_delimiters() {
+        let text = "a $$x + y$$ b";
+        assert_eq!(find_math_regions(text), vec![(4, 9)]);
+        assert_eq!(&text[4..9], "x + y");
     }
 }

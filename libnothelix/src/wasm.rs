@@ -1,5 +1,3 @@
-//! Browser bindings for the pure `libnothelix` surface (`--features wasm`).
-
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

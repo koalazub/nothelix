@@ -1,20 +1,6 @@
-//! In-buffer markdown rendering: parse markdown comment text with comrak and
-//! emit display overlays + style spans that the fork applies WITHOUT mutating
-//! the buffer.
-//!
-//! Output is TSV, one record per line, all offsets absolute document char
-//! indices (`char_base` + local):
-//!   `O<TAB>CHAR_OFF<TAB>REPLACEMENT`  grapheme overlay (empty REPLACEMENT hides)
-//!   `S<TAB>START<TAB>END<TAB>SCOPE`   style span over a char range
-//!
-//! The plugin hands one `@markdown` cell's buffer text (lines still carry the
-//! Julia `# ` comment prefix) plus the cell's absolute char base. Math and
-//! table nodes emit nothing — they have their own renderers (math_image /
-//! table_image) and stay source-visible.
-
 #![allow(clippy::needless_pass_by_value)]
 
-use comrak::nodes::{AstNode, ListType, NodeValue, Sourcepos};
+use comrak::nodes::{AstNode, LineColumn, ListType, NodeValue, Sourcepos};
 use comrak::{Arena, Options, parse_document};
 
 const SCOPE_BOLD: &str = "markup.bold";
@@ -23,18 +9,78 @@ const SCOPE_CODE: &str = "markup.raw.inline";
 const SCOPE_LINK: &str = "markup.link.text";
 const SCOPE_LIST: &str = "markup.list";
 
-struct Emit {
-    out: String,
+enum Markup {
+    Heading(usize),
+    Wrapped(&'static str),
+    InlineCode(usize),
+    Bullet,
+    Escape,
+    ForeignRenderer,
+    Passthrough,
 }
 
-impl Emit {
+impl Markup {
+    fn of(value: &NodeValue) -> Self {
+        match value {
+            NodeValue::Heading(heading) => Self::Heading(heading.level as usize),
+            NodeValue::Strong => Self::Wrapped(SCOPE_BOLD),
+            NodeValue::Emph => Self::Wrapped(SCOPE_ITALIC),
+            NodeValue::Link(_) => Self::Wrapped(SCOPE_LINK),
+            NodeValue::Code(code) => Self::InlineCode(code.num_backticks),
+            NodeValue::Item(list) if list.list_type == ListType::Bullet => Self::Bullet,
+            NodeValue::Escaped => Self::Escape,
+            NodeValue::Math(_) | NodeValue::Table(_) => Self::ForeignRenderer,
+            _ => Self::Passthrough,
+        }
+    }
+}
+
+struct CommentBody {
+    markdown: String,
+    line_starts: Vec<usize>,
+}
+
+impl CommentBody {
+    fn strip(source: &str, char_base: usize) -> Self {
+        let mut markdown = String::new();
+        let mut line_starts = Vec::new();
+        let mut line_abs = char_base;
+        for chunk in source.split_inclusive('\n') {
+            let line = chunk.strip_suffix('\n').unwrap_or(chunk);
+            match comment_prefix_chars(line) {
+                Some(prefix) => {
+                    line_starts.push(line_abs + prefix);
+                    markdown.extend(line.chars().skip(prefix));
+                }
+                None => line_starts.push(line_abs),
+            }
+            markdown.push('\n');
+            line_abs += chunk.chars().count();
+        }
+        Self {
+            markdown,
+            line_starts,
+        }
+    }
+
+    fn absolute(&self, pos: LineColumn) -> usize {
+        self.line_starts[pos.line - 1] + (pos.column - 1)
+    }
+}
+
+struct Overlays {
+    body: CommentBody,
+    records: String,
+}
+
+impl Overlays {
     fn overlay(&mut self, char_off: usize, replacement: &str) {
-        self.out.push('O');
-        self.out.push('\t');
-        self.out.push_str(&char_off.to_string());
-        self.out.push('\t');
-        self.out.push_str(replacement);
-        self.out.push('\n');
+        self.records.push('O');
+        self.records.push('\t');
+        self.records.push_str(&char_off.to_string());
+        self.records.push('\t');
+        self.records.push_str(replacement);
+        self.records.push('\n');
     }
 
     fn hide(&mut self, char_off: usize) {
@@ -47,39 +93,96 @@ impl Emit {
         }
     }
 
+    fn hide_before(&mut self, outer_start: LineColumn, inner_start: LineColumn) {
+        if outer_start.line == inner_start.line {
+            self.hide_range(
+                self.body.absolute(outer_start),
+                self.body.absolute(inner_start),
+            );
+        }
+    }
+
+    fn hide_after(&mut self, inner_end: LineColumn, outer_end: LineColumn) {
+        if inner_end.line == outer_end.line {
+            self.hide_range(
+                self.body.absolute(inner_end) + 1,
+                self.body.absolute(outer_end) + 1,
+            );
+        }
+    }
+
     fn style(&mut self, start: usize, end: usize, scope: &str) {
         if end <= start {
             return;
         }
-        self.out.push('S');
-        self.out.push('\t');
-        self.out.push_str(&start.to_string());
-        self.out.push('\t');
-        self.out.push_str(&end.to_string());
-        self.out.push('\t');
-        self.out.push_str(scope);
-        self.out.push('\n');
-    }
-}
-
-/// Absolute char offset of each stripped line's first char in the original
-/// document, so comrak's (line, column) positions map back through the Julia
-/// comment prefixes.
-struct LineMap {
-    starts: Vec<usize>,
-}
-
-impl LineMap {
-    fn abs(&self, pos: comrak::nodes::LineColumn) -> usize {
-        self.starts[pos.line - 1] + (pos.column - 1)
+        self.records.push('S');
+        self.records.push('\t');
+        self.records.push_str(&start.to_string());
+        self.records.push('\t');
+        self.records.push_str(&end.to_string());
+        self.records.push('\t');
+        self.records.push_str(scope);
+        self.records.push('\n');
     }
 
-    fn abs_start(&self, sp: Sourcepos) -> usize {
-        self.abs(sp.start)
+    fn style_span(&mut self, span: Sourcepos, scope: &str) {
+        self.style(
+            self.body.absolute(span.start),
+            self.body.absolute(span.end) + 1,
+            scope,
+        );
     }
 
-    fn abs_end_exclusive(&self, sp: Sourcepos) -> usize {
-        self.abs(sp.end) + 1
+    fn walk<'a>(&mut self, node: &'a AstNode<'a>) {
+        let (markup, span) = {
+            let data = node.data.borrow();
+            (Markup::of(&data.value), data.sourcepos)
+        };
+
+        match markup {
+            Markup::ForeignRenderer => {}
+            Markup::Heading(level) => {
+                if let Some(inner) = child_span(node) {
+                    self.hide_before(span.start, inner.start);
+                    self.style_span(inner, &format!("markup.heading.{}", level.clamp(1, 6)));
+                }
+                self.walk_children(node);
+            }
+            Markup::Wrapped(scope) => {
+                if let Some(inner) = child_span(node) {
+                    self.hide_before(span.start, inner.start);
+                    self.hide_after(inner.end, span.end);
+                    self.style_span(inner, scope);
+                }
+                self.walk_children(node);
+            }
+            Markup::InlineCode(backticks) => {
+                let start = self.body.absolute(span.start);
+                let end = self.body.absolute(span.end) + 1;
+                if end > start + 2 * backticks {
+                    self.hide_range(start, start + backticks);
+                    self.hide_range(end - backticks, end);
+                    self.style(start + backticks, end - backticks, SCOPE_CODE);
+                }
+            }
+            Markup::Bullet => {
+                let start = self.body.absolute(span.start);
+                self.overlay(start, "•");
+                self.style(start, start + 1, SCOPE_LIST);
+                self.walk_children(node);
+            }
+            Markup::Escape => {
+                let start = self.body.absolute(span.start);
+                self.hide(start);
+            }
+            Markup::Passthrough => self.walk_children(node),
+        }
+    }
+
+    fn walk_children<'a>(&mut self, node: &'a AstNode<'a>) {
+        for child in node.children() {
+            self.walk(child);
+        }
     }
 }
 
@@ -93,123 +196,18 @@ fn parse_options() -> Options<'static> {
     opts
 }
 
-/// Scan one markdown cell's text. `char_base` is the absolute document char
-/// index of `text`'s first char.
 pub fn scan_markdown_overlays(text: String, char_base: isize) -> String {
-    let base = char_base.max(0) as usize;
-    let mut stripped = String::new();
-    let mut starts = Vec::new();
-    let mut line_abs = base;
-
-    for (line, had_nl) in lines_with_nl(&text) {
-        let line_char_len = line.chars().count() + usize::from(had_nl);
-        match comment_prefix_chars(line) {
-            Some(prefix) => {
-                starts.push(line_abs + prefix);
-                stripped.extend(line.chars().skip(prefix));
-            }
-            None => starts.push(line_abs),
-        }
-        stripped.push('\n');
-        line_abs += line_char_len;
-    }
-
-    let map = LineMap { starts };
+    let body = CommentBody::strip(&text, char_base.max(0) as usize);
     let arena = Arena::new();
-    let root = parse_document(&arena, &stripped, &parse_options());
-    let mut emit = Emit { out: String::new() };
-    for child in root.children() {
-        walk(child, &map, &mut emit);
-    }
-    emit.out
-}
-
-fn walk<'a>(node: &'a AstNode<'a>, map: &LineMap, emit: &mut Emit) {
-    let (value_kind, sp) = {
-        let data = node.data.borrow();
-        (discriminant_info(&data.value), data.sourcepos)
+    let root = parse_document(&arena, &body.markdown, &parse_options());
+    let mut overlays = Overlays {
+        body,
+        records: String::new(),
     };
-
-    match value_kind {
-        Kind::Skip => {}
-        Kind::Heading(level) => {
-            if let Some(inner) = child_span(node) {
-                hide_gap(map, emit, sp.start, inner.start);
-                emit.style(
-                    map.abs(inner.start),
-                    map.abs(inner.end) + 1,
-                    &format!("markup.heading.{}", level.clamp(1, 6)),
-                );
-            }
-            walk_children(node, map, emit);
-        }
-        Kind::Styled(scope) => {
-            if let Some(inner) = child_span(node) {
-                hide_gap(map, emit, sp.start, inner.start);
-                hide_after(map, emit, inner.end, sp.end);
-                emit.style(map.abs(inner.start), map.abs(inner.end) + 1, scope);
-            }
-            walk_children(node, map, emit);
-        }
-        Kind::Code(backticks) => {
-            let start = map.abs_start(sp);
-            let end = map.abs_end_exclusive(sp);
-            if end > start + 2 * backticks {
-                emit.hide_range(start, start + backticks);
-                emit.hide_range(end - backticks, end);
-                emit.style(start + backticks, end - backticks, SCOPE_CODE);
-            }
-        }
-        Kind::Link => {
-            if let Some(inner) = child_span(node) {
-                hide_gap(map, emit, sp.start, inner.start);
-                hide_after(map, emit, inner.end, sp.end);
-                emit.style(map.abs(inner.start), map.abs(inner.end) + 1, SCOPE_LINK);
-            }
-            walk_children(node, map, emit);
-        }
-        Kind::BulletItem => {
-            let start = map.abs_start(sp);
-            emit.overlay(start, "•");
-            emit.style(start, start + 1, SCOPE_LIST);
-            walk_children(node, map, emit);
-        }
-        Kind::Escaped => {
-            emit.hide(map.abs_start(sp));
-        }
-        Kind::Recurse => walk_children(node, map, emit),
+    for child in root.children() {
+        overlays.walk(child);
     }
-}
-
-enum Kind {
-    Heading(usize),
-    Styled(&'static str),
-    Code(usize),
-    Link,
-    BulletItem,
-    Escaped,
-    Skip,
-    Recurse,
-}
-
-fn discriminant_info(value: &NodeValue) -> Kind {
-    match value {
-        NodeValue::Heading(h) => Kind::Heading(h.level as usize),
-        NodeValue::Strong => Kind::Styled(SCOPE_BOLD),
-        NodeValue::Emph => Kind::Styled(SCOPE_ITALIC),
-        NodeValue::Code(c) => Kind::Code(c.num_backticks),
-        NodeValue::Link(_) => Kind::Link,
-        NodeValue::Item(list) if list.list_type == ListType::Bullet => Kind::BulletItem,
-        NodeValue::Escaped => Kind::Escaped,
-        NodeValue::Math(_) | NodeValue::Table(_) => Kind::Skip,
-        _ => Kind::Recurse,
-    }
-}
-
-fn walk_children<'a>(node: &'a AstNode<'a>, map: &LineMap, emit: &mut Emit) {
-    for child in node.children() {
-        walk(child, map, emit);
-    }
+    overlays.records
 }
 
 fn child_span<'a>(node: &'a AstNode<'a>) -> Option<Sourcepos> {
@@ -221,49 +219,6 @@ fn child_span<'a>(node: &'a AstNode<'a>) -> Option<Sourcepos> {
     })
 }
 
-/// Hide the marker chars between a node's start and its first child's start,
-/// when both sit on the same line.
-fn hide_gap(
-    map: &LineMap,
-    emit: &mut Emit,
-    outer_start: comrak::nodes::LineColumn,
-    inner_start: comrak::nodes::LineColumn,
-) {
-    if outer_start.line == inner_start.line {
-        emit.hide_range(map.abs(outer_start), map.abs(inner_start));
-    }
-}
-
-/// Hide the marker chars between a node's last child's end and the node's
-/// own end, when both sit on the same line.
-fn hide_after(
-    map: &LineMap,
-    emit: &mut Emit,
-    inner_end: comrak::nodes::LineColumn,
-    outer_end: comrak::nodes::LineColumn,
-) {
-    if inner_end.line == outer_end.line {
-        emit.hide_range(map.abs(inner_end) + 1, map.abs(outer_end) + 1);
-    }
-}
-
-fn lines_with_nl(text: &str) -> Vec<(&str, bool)> {
-    let mut v = Vec::new();
-    let mut start = 0;
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            v.push((&text[start..i], true));
-            start = i + 1;
-        }
-    }
-    if start < text.len() {
-        v.push((&text[start..], false));
-    }
-    v
-}
-
-/// Number of leading chars that make up the Julia comment prefix (`# ` → 2,
-/// bare `#` → 1), or `None` if the line is not a comment.
 fn comment_prefix_chars(line: &str) -> Option<usize> {
     let mut chars = line.chars();
     if chars.next()? != '#' {
@@ -285,7 +240,6 @@ mod tests {
 
     #[test]
     fn bold_hides_markers_and_styles_inner() {
-        // "# **hi**"  chars: # space * * h i * *
         let out = scan("# **hi**\n");
         assert!(out.contains("O\t2\t\n"), "hide first *: {out}");
         assert!(out.contains("O\t3\t\n"), "hide second *: {out}");
@@ -296,7 +250,6 @@ mod tests {
 
     #[test]
     fn heading_hides_hashes_and_styles_rest() {
-        // "# ## Title" -> julia prefix 2 chars, then "## Title"
         let out = scan("# ## Title\n");
         assert!(out.contains("O\t2\t\n"), "hide #: {out}");
         assert!(out.contains("O\t3\t\n"), "hide #: {out}");
@@ -315,7 +268,6 @@ mod tests {
     fn link_hides_brackets_and_url() {
         let out = scan("# [lbl](u)\n");
         assert!(out.contains("markup.link.text"), "link scope: {out}");
-        // "[lbl](u)" body starts at char 2: [ l b l ] ( u )
         assert!(out.contains("O\t2\t\n"), "hide [: {out}");
         assert!(out.contains("O\t6\t\n"), "hide ]: {out}");
         assert!(out.contains("O\t7\t\n"), "hide (: {out}");
@@ -347,9 +299,7 @@ mod tests {
 
     #[test]
     fn offsets_accumulate_across_lines() {
-        // line 1 "# plain\n" = 8 chars (incl nl); bold on line 2.
         let out = scan("# plain\n# **b**\n");
-        // body of line 2 starts at char 8 + prefix 2 = 10; markers at 10,11.
         assert!(out.contains("O\t10\t\n"), "second-line offset: {out}");
         assert!(
             out.contains("S\t12\t13\tmarkup.bold"),
@@ -388,7 +338,6 @@ mod tests {
 
     #[test]
     fn multibyte_text_keeps_offsets_aligned() {
-        // "# héß **b**": h=2 é=3 ß=4 sp=5 *=6 *=7 b=8 *=9 *=10
         let out = scan("# héß **b**\n");
         assert!(
             out.contains("O\t6\t\n"),

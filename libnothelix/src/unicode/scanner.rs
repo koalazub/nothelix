@@ -1,185 +1,35 @@
-// Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`), not
-// borrows. The owned type is load-bearing for the FFI dispatcher.
-#![allow(clippy::needless_pass_by_value)]
-
-//! Byte-offset LaTeX scanner.
-//!
-//! Walks a math region's text once, dispatching to a focused `scan_*`
-//! method per case. Each method takes the current cursor position and
-//! returns the position to continue from — no implicit `i` mutation
-//! leaks between cases.
-//!
-//! The old monolithic `latex_overlays` body was a 450-line nested if/else
-//! chain; extracting the cases into methods removes the accidental
-//! coupling where one arm could silently leak state into another.
-
 use std::borrow::Cow;
+use std::ops::Range;
 
-use super::fence::{close_fence, mid_fence, open_fence};
-use super::overlay::Overlay;
-use super::sub_super::{
-    braced_sub_command, braced_super_command, latex_font_to_julia, sub_command_lookup, sub_lookup,
-    super_command_lookup, super_lookup,
+use super::cursor::{
+    alphabetic_end, matching_brace, past_matching_brace, past_spaces, past_spaces_and_tabs,
+    past_whitespace,
 };
-use super::symbol_table::unicode_lookup;
+use super::environment::Environment;
+use super::escape::{combining_mark, spacing_glyph};
+use super::font::latex_font_to_julia;
+use super::operators::{is_big_operator, is_math_operator};
+use super::overlay::Overlay;
+use super::script::Script;
+use super::symbol_table::symbol;
+use crate::error::{Error, Result, ffi};
 
-/// Per-scan options. Passed by the caller instead of pulled from a
-/// process-global atomic — the previous design meant any two documents
-/// open in parallel would fight over the toggle, and the flag was
-/// spooky-action-at-a-distance from the Scheme plugin's perspective.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScannerOptions {
-    /// When `true`, big-operator limits (`_{a}^{b}` after `\sum`, `\int`,
-    /// …) and `\frac{num}{den}` wrappers are fully hidden so the
-    /// math-render plugin's stacked virtual rows don't collide with a
-    /// redundant inline rendering. When `false` (the default), limits
-    /// render as inline scripts (`∑_m` → `∑ₘ`) like LaTeX's inline mode.
     pub hide_math_layout: bool,
 }
 
-/// Track which environment we're inside and which row we're on within it.
-/// This lets the scanner emit the right Unicode fence character on each row
-/// boundary within a matrix-style environment.
-struct EnvState {
-    env_name: String,
-    row: usize,
-    total_rows: usize,
-}
-
-/// Big operators (`\sum`, `\int`, `\prod`, …) whose following `_`/`^`
-/// carry limits — stacked by the math-render plugin when
-/// `hide_math_layout` is set, otherwise rendered as inline scripts.
-fn is_big_operator(name: &str) -> bool {
-    matches!(
-        name,
-        "sum"
-            | "prod"
-            | "coprod"
-            | "int"
-            | "iint"
-            | "iiint"
-            | "iiiint"
-            | "oint"
-            | "oiint"
-            | "oiiint"
-            | "bigcup"
-            | "bigcap"
-            | "bigvee"
-            | "bigwedge"
-            | "bigoplus"
-            | "bigotimes"
-            | "bigodot"
-            | "biguplus"
-            | "bigsqcup"
-            | "lim"
-            | "liminf"
-            | "limsup"
-            | "min"
-            | "max"
-            | "sup"
-            | "inf"
-            | "argmin"
-            | "argmax"
-    )
-}
-
-/// LaTeX math operators render as upright multi-letter text rather than a
-/// single Unicode glyph (`\cos` → `cos`, not a single codepoint). The
-/// scanner hides the leading `\` and leaves the name visible, matching what
-/// `\operatorname{cos}` would produce.
-fn is_math_operator(name: &str) -> bool {
-    matches!(
-        name,
-        "cos"
-            | "sin"
-            | "tan"
-            | "cot"
-            | "sec"
-            | "csc"
-            | "arccos"
-            | "arcsin"
-            | "arctan"
-            | "arccot"
-            | "arcsec"
-            | "arccsc"
-            | "cosh"
-            | "sinh"
-            | "tanh"
-            | "coth"
-            | "sech"
-            | "csch"
-            | "exp"
-            | "log"
-            | "ln"
-            | "lg"
-            | "max"
-            | "min"
-            | "sup"
-            | "inf"
-            | "lim"
-            | "liminf"
-            | "limsup"
-            | "det"
-            | "dim"
-            | "arg"
-            | "ker"
-            | "gcd"
-            | "lcm"
-            | "Pr"
-            | "deg"
-            | "hom"
-            | "mod"
-            | "bmod"
-            | "pmod"
-            | "sinc"
-            | "erf"
-            | "tr"
-            | "rank"
-    )
-}
-
-/// A braced sub/superscript is "simple" enough for partial emission when
-/// every content char is plain ASCII alphanumeric or a basic math operator.
-/// This rules out contents that contain backslashes (e.g. `^{2\pi i kt}`)
-/// or nested braces, where leaving individual chars raw produces a mangled
-/// display like `²\piⁱkt` instead of the intended superscripted expression.
 fn is_simple_brace_content(s: &str) -> bool {
     s.chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '=' | '*' | '(' | ')'))
 }
 
-/// Count rows in environment content for fence character selection.
-/// Row count = number of `\\` delimiters + 1, within each env.
-fn count_rows_in_env(text: &str, env_start: usize, env_end: usize) -> usize {
-    let content = &text[env_start..env_end];
-    let mut rows = 1;
-    let mut k = 0;
-    let b = content.as_bytes();
-    while k + 1 < b.len() {
-        if b[k] == b'\\' && b[k + 1] == b'\\' {
-            rows += 1;
-            k += 2;
-        } else {
-            k += 1;
-        }
-    }
-    rows
-}
-
-/// Byte-offset LaTeX scanner. Walks text once, dispatching to a focused
-/// `scan_*` method per case. Each method takes the current cursor position
-/// and returns the position to continue from — no implicit `i` mutation.
-///
-/// `pending_limits` counts limit groups still expected after a
-/// big-operator glyph; it gates the `hide_math_layout` stacking path and
-/// is zeroed the moment a non-limit byte arrives.
 struct Scanner<'a> {
     text: &'a str,
     bytes: &'a [u8],
     overlays: Vec<Overlay>,
     pending_limits: u8,
-    env_stack: Vec<EnvState>,
+    env_stack: Vec<Environment>,
     options: ScannerOptions,
 }
 
@@ -195,7 +45,6 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Drive the scanner to completion and return the accumulated overlays.
     fn scan(mut self) -> Vec<Overlay> {
         let mut i = 0;
         while i < self.bytes.len() {
@@ -204,139 +53,167 @@ impl<'a> Scanner<'a> {
         self.overlays
     }
 
-    /// Dispatch from position `i` to the matching case method.
-    /// Returns the next position to scan from.
+    fn put(&mut self, offset: usize, replacement: impl Into<Cow<'static, str>>) {
+        self.overlays.push(Overlay::at(offset, replacement));
+    }
+
+    fn hide(&mut self, range: Range<usize>) {
+        for byte in range {
+            self.overlays.push(Overlay::hide(byte));
+        }
+    }
+
     fn step(&mut self, i: usize) -> usize {
         let b = self.bytes;
         let len = b.len();
+        let next = b.get(i + 1).copied();
 
-        // Any non-whitespace, non-`_`, non-`^` byte encountered while
-        // we're still "expecting" big-op limits means the limits didn't
-        // materialise (e.g. `\sum f(x)` — no limits at all). Clear the
-        // flag so later `_`/`^` in the summand aren't mis-treated as
-        // limits.
         if self.pending_limits > 0 && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b'_' | b'^') {
             self.pending_limits = 0;
         }
 
-        // \alpha, \frac, \mathbf, \begin, \end, \text, ...
-        if b[i] == b'\\' && i + 1 < len && b[i + 1].is_ascii_alphabetic() {
-            return self.scan_backslash_command(i);
+        if b[i] == b'\\' {
+            return match next {
+                Some(c) if c.is_ascii_alphabetic() => self.scan_backslash_command(i),
+                Some(b'\\') => self.scan_row_separator(i),
+                Some(_) => self.scan_non_alpha_backslash(i),
+                None => i + 1,
+            };
         }
-        // \\ row separator (must come BEFORE the non-alpha backslash case
-        // because \\ starts with a non-alpha second byte)
-        if b[i] == b'\\' && i + 1 < len && b[i + 1] == b'\\' {
-            return self.scan_row_separator(i);
-        }
-        // \| \{ \} \, \; \! \space \( \) \[ \]
-        if b[i] == b'\\' && i + 1 < len && !b[i + 1].is_ascii_alphabetic() {
-            return self.scan_non_alpha_backslash(i);
-        }
-        // & column separator (only inside matrix-style environments)
+
         if b[i] == b'&' && !self.env_stack.is_empty() {
-            self.overlays.push(Overlay::at(i, " "));
+            self.put(i, " ");
             return i + 1;
         }
-        // ^{...}
-        if b[i] == b'^' && i + 1 < len && b[i + 1] == b'{' {
-            return self.scan_braced_superscript(i);
-        }
-        // ^\command (\top → ᵀ, \circ → °); unmapped commands fall through so
-        // the following \command still conceals normally.
-        if b[i] == b'^' && i + 1 < len && b[i + 1] == b'\\' {
-            return self.scan_command_superscript(i);
-        }
-        // ^x — any single byte whose superscript form exists in SUPER_MAP.
-        // We used to gate this on `!is_ascii_alphabetic()` back when only
-        // `n`/`i` had letter supers; that guard now blocks valid letter
-        // supers like `^N` (ℝᴺ), `^T` (transpose), `^k`, etc. Let
-        // `super_lookup` in `scan_inline_superscript` decide — unmapped bytes
-        // fall through untouched.
-        if b[i] == b'^' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'^'
+
+        if let Some(script) = Script::marked_by(b[i])
+            && i + 1 < len
         {
-            return self.scan_inline_superscript(i);
-        }
-        // _{...}
-        if b[i] == b'_' && i + 1 < len && b[i + 1] == b'{' {
-            return self.scan_braced_subscript(i);
-        }
-        // _\command (\perp → ⊥); unmapped commands fall through.
-        if b[i] == b'_' && i + 1 < len && b[i + 1] == b'\\' {
-            return self.scan_command_subscript(i);
-        }
-        // _x
-        if b[i] == b'_' && i + 1 < len && b[i + 1] != b'{' && b[i + 1] != b'\\' && b[i + 1] != b'_'
-        {
-            return self.scan_inline_subscript(i);
+            return match b[i + 1] {
+                b'{' => self.scan_braced_script(i, script),
+                b'\\' => self.scan_command_script(i, script),
+                c if c != b[i] => self.scan_inline_script(i, script),
+                _ => i + 1,
+            };
         }
 
         i + 1
     }
 
-    /// Byte index just past a `\command` name starting at `from` (the first
-    /// byte after the backslash).
     fn command_name_end(&self, from: usize) -> usize {
-        let mut j = from;
-        while j < self.bytes.len() && self.bytes[j].is_ascii_alphabetic() {
-            j += 1;
-        }
-        j
+        alphabetic_end(self.bytes, from)
     }
 
-    /// `^\command` — a command-valued superscript (`^\top` → ᵀ). Mirrors the
-    /// big-operator limit handling of the single-char path. Unmapped commands
-    /// leave the caret and return so the command conceals on its own.
-    fn scan_command_superscript(&mut self, caret: usize) -> usize {
-        let name_start = caret + 2;
+    fn skip_spaces(&self, i: usize) -> usize {
+        past_spaces(self.bytes, i)
+    }
+
+    fn consume_pending_limit(&mut self) -> bool {
+        if self.pending_limits == 0 {
+            return false;
+        }
+        self.pending_limits -= 1;
+        self.options.hide_math_layout
+    }
+
+    fn arm_limits_after(&mut self, name: &str) {
+        if is_big_operator(name) {
+            self.pending_limits = 2;
+        }
+    }
+
+    fn place_fence(&mut self, fence: &'static str, content_from: usize, fallback: usize) {
+        let at = past_whitespace(self.bytes, content_from);
+        match self.text[at..].chars().next() {
+            Some(ch) if ch.is_ascii_alphanumeric() => self.put(at, format!("{fence}{ch}")),
+            _ => self.put(fallback, fence),
+        }
+    }
+
+    fn scan_command_script(&mut self, marker: usize, script: Script) -> usize {
+        let name_start = marker + 2;
         let name_end = self.command_name_end(name_start);
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                Overlay::hide_range(&mut self.overlays, caret, name_end);
-                return name_end;
-            }
+        if self.consume_pending_limit() {
+            self.hide(marker..name_end);
+            return name_end;
         }
-        let name = &self.text[name_start..name_end];
-        if let Some(rep) = super_command_lookup(name) {
-            self.overlays.push(Overlay::at(caret, rep));
-            Overlay::hide_range(&mut self.overlays, caret + 1, name_end);
-            name_end
-        } else {
-            caret + 1
+        match script.of_command(&self.text[name_start..name_end]) {
+            Some(glyph) => {
+                self.put(marker, glyph);
+                self.hide(marker + 1..name_end);
+                name_end
+            }
+            None => marker + 1,
         }
     }
 
-    /// `_\command` — a command-valued subscript (`_\perp` → ⊥).
-    fn scan_command_subscript(&mut self, underscore: usize) -> usize {
-        let name_start = underscore + 2;
-        let name_end = self.command_name_end(name_start);
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                Overlay::hide_range(&mut self.overlays, underscore, name_end);
-                return name_end;
-            }
+    fn scan_inline_script(&mut self, marker: usize, script: Script) -> usize {
+        if self.consume_pending_limit() {
+            self.hide(marker..marker + 2);
+            return marker + 2;
         }
-        let name = &self.text[name_start..name_end];
-        if let Some(rep) = sub_command_lookup(name) {
-            self.overlays.push(Overlay::at(underscore, rep));
-            Overlay::hide_range(&mut self.overlays, underscore + 1, name_end);
-            name_end
-        } else {
-            underscore + 1
+        match script.of_char(self.bytes[marker + 1] as char) {
+            Some(glyph) => {
+                self.put(marker, glyph);
+                self.hide(marker + 1..marker + 2);
+                marker + 2
+            }
+            None => marker + 1,
         }
     }
 
-    /// Parse a `\commandname` and dispatch to the matching sub-case.
-    fn scan_backslash_command(&mut self, start: usize) -> usize {
-        let cmd_start = start;
-        let mut i = start + 1; // skip backslash
-        let name_start = i;
-        while i < self.bytes.len() && self.bytes[i].is_ascii_alphabetic() {
-            i += 1;
+    fn scan_braced_script(&mut self, marker: usize, script: Script) -> usize {
+        let content_start = marker + 2;
+        let close = matching_brace(self.bytes, content_start);
+        if close >= self.bytes.len() {
+            return close;
         }
-        let name_end = i;
-        let name = &self.text[name_start..name_end];
+        let content = &self.text[content_start..close];
+        let past_close = close + 1;
+
+        if self.consume_pending_limit() {
+            self.hide(marker..past_close);
+            return past_close;
+        }
+
+        let glyphs: Vec<Option<&'static str>> =
+            content.chars().map(|ch| script.of_char(ch)).collect();
+        if glyphs.iter().any(Option::is_some) && is_simple_brace_content(content) {
+            self.hide(marker..content_start);
+            self.replace_each_char(content, content_start, &glyphs);
+            self.hide(past_close - 1..past_close);
+            return past_close;
+        }
+
+        if let Some(glyph) = script.of_braced_command(content) {
+            self.put(marker, glyph);
+            self.hide(marker + 1..past_close);
+            return past_close;
+        }
+
+        self.hide(marker + 1..marker + 2);
+        self.hide(past_close - 1..past_close);
+        content_start
+    }
+
+    fn replace_each_char(
+        &mut self,
+        content: &str,
+        content_start: usize,
+        glyphs: &[Option<&'static str>],
+    ) {
+        let mut offset = content_start;
+        for (ch, glyph) in content.chars().zip(glyphs) {
+            if let Some(glyph) = *glyph {
+                self.put(offset, glyph);
+            }
+            offset += ch.len_utf8();
+        }
+    }
+
+    fn scan_backslash_command(&mut self, cmd_start: usize) -> usize {
+        let name_end = self.command_name_end(cmd_start + 1);
+        let name = &self.text[cmd_start + 1..name_end];
 
         match name {
             "begin" => self.scan_begin_env(cmd_start, name_end),
@@ -350,655 +227,465 @@ impl<'a> Scanner<'a> {
             "newcommand" | "renewcommand" | "providecommand" | "DeclareMathOperator" => {
                 self.scan_macro_definition(cmd_start, name_end)
             }
-            // `\left(` / `\right)` are sizing directives for paired
-            // delimiters — in a text editor there's nothing to scale, so we
-            // hide just the command and let the delimiter that follows
-            // render unchanged.
             "left" | "right" | "bigl" | "bigr" | "Bigl" | "Bigr" | "biggl" | "biggr" | "Biggl"
             | "Biggr" | "big" | "Big" | "bigg" | "Bigg" => {
-                Overlay::hide_range(&mut self.overlays, cmd_start, name_end);
+                self.hide(cmd_start..name_end);
                 name_end
             }
-            // `\tilde{x}` / `\bar{x}` / `\hat{x}` / `\vec{x}` / `\dot{x}` /
-            // `\ddot{x}` / `\widetilde{x}` / `\widehat{x}` apply a combining
-            // diacritic. Handle them via a dedicated scanner that hides the
-            // wrapper and attaches the combining mark to the content's
-            // last grapheme.
-            "tilde" | "widetilde" | "bar" | "overline" | "hat" | "widehat" | "vec" | "dot"
-            | "ddot" | "mathring" => self.scan_combining_mark_command(cmd_start, name_end, name),
-            _ => self.scan_simple_command(cmd_start, name_end, name),
+            _ => match combining_mark(name) {
+                Some(mark) => self.scan_combining_mark_command(cmd_start, name_end, name, mark),
+                None => self.scan_simple_command(cmd_start, name_end, name),
+            },
         }
     }
 
-    /// `\begin{env_name}` — push an env onto the stack and emit the opening fence.
-    fn scan_begin_env(&mut self, cmd_start: usize, mut i: usize) -> usize {
-        while i < self.bytes.len() && self.bytes[i] == b' ' {
-            i += 1;
+    fn scan_env_tag(&self, after_name: usize) -> Option<(&'a str, usize)> {
+        let open = self.skip_spaces(after_name);
+        if self.bytes.get(open) != Some(&b'{') {
+            return None;
         }
-        if i >= self.bytes.len() || self.bytes[i] != b'{' {
-            return i;
-        }
-        i += 1;
-        let env_name_start = i;
-        while i < self.bytes.len() && self.bytes[i] != b'}' {
-            i += 1;
-        }
-        let env_name = self.text[env_name_start..i].to_string();
-        if i < self.bytes.len() {
-            i += 1; // skip }
-        }
-
-        // Find matching \end{env_name}.
-        let end_tag = format!("\\end{{{env_name}}}");
-        let env_content_start = i;
-        let env_end_pos = self.text[env_content_start..]
-            .find(&end_tag)
-            .map(|pos| env_content_start + pos)
-            .unwrap_or(self.text.len());
-
-        let total_rows = count_rows_in_env(self.text, env_content_start, env_end_pos);
-
-        Overlay::hide_range(&mut self.overlays, cmd_start, i);
-
-        let fence = open_fence(&env_name, total_rows);
-        self.env_stack.push(EnvState {
-            env_name,
-            row: 0,
-            total_rows,
-        });
-        if !fence.is_empty() {
-            // Prefer prepending the fence to the first content grapheme so
-            // `\begin{cases}` on its own line doesn't waste a whole editor
-            // row just to show `⎧`. Skip leading whitespace/newline after
-            // `\begin{env}` and use a 2-grapheme replacement (`⎧t`) on the
-            // first alnum char. Falls back to emitting at `cmd_start` when
-            // the next content char isn't safe to overlay (e.g. `\leq`,
-            // where `scan_simple_command` would also write at that offset).
-            let mut content_pos = i;
-            while content_pos < self.bytes.len()
-                && matches!(self.bytes[content_pos], b' ' | b'\t' | b'\n' | b'\r')
-            {
-                content_pos += 1;
-            }
-            let placed = if let Some(ch) = self.text[content_pos..].chars().next() {
-                if ch.is_ascii_alphanumeric() {
-                    let replacement = format!("{fence}{ch}");
-                    self.overlays.push(Overlay::at(content_pos, replacement));
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if !placed {
-                self.overlays.push(Overlay::at(cmd_start, fence));
-            }
-        }
-        i
-    }
-
-    /// `\end{env_name}` — pop the env stack and emit the closing fence.
-    fn scan_end_env(&mut self, cmd_start: usize, mut i: usize) -> usize {
-        while i < self.bytes.len() && self.bytes[i] == b' ' {
-            i += 1;
-        }
-        if i >= self.bytes.len() || self.bytes[i] != b'{' {
-            return i;
-        }
-        i += 1;
-        while i < self.bytes.len() && self.bytes[i] != b'}' {
-            i += 1;
-        }
-        if i < self.bytes.len() {
-            i += 1;
-        }
-        // If any `\\` row separator ran, the last one already placed the
-        // closing fence on the last row (see `scan_row_separator`). Only
-        // emit `⎩` here for single-row environments that had no separators.
-        let (fence, had_separators) = self
-            .env_stack
-            .pop()
-            .map(|env| (close_fence(&env.env_name, env.total_rows), env.row > 0))
-            .unwrap_or_default();
-        Overlay::hide_range(&mut self.overlays, cmd_start, i);
-        if !fence.is_empty() && !had_separators {
-            self.overlays.push(Overlay::at(i - 1, fence));
-        }
-        i
-    }
-
-    /// `\text{...}`, `\mathrm{...}`, `\operatorname{...}` — hide the command
-    /// wrapper but keep the inner content visible.
-    fn scan_text_command(&mut self, cmd_start: usize, mut i: usize) -> usize {
-        while i < self.bytes.len() && self.bytes[i] == b' ' {
-            i += 1;
-        }
-        if i >= self.bytes.len() || self.bytes[i] != b'{' {
-            return i;
-        }
-        // Hide `\text{` (including the opening brace).
-        Overlay::hide_range(&mut self.overlays, cmd_start, i + 1);
-        i += 1;
-        while i < self.bytes.len() && self.bytes[i] != b'}' {
-            i += 1;
-        }
-        if i < self.bytes.len() {
-            self.overlays.push(Overlay::hide(i));
-            i += 1;
-        }
-        i
-    }
-
-    /// `\mathbf{v}`, `\mathbb{R}`, etc. — replace content letters with their
-    /// Unicode math variants and hide the command wrapper.
-    fn scan_font_command(&mut self, cmd_start: usize, i: usize, name: &str) -> usize {
-        let mut j = i;
-        while j < self.bytes.len() && self.bytes[j] == b' ' {
-            j += 1;
-        }
-        if j >= self.bytes.len() || self.bytes[j] != b'{' {
-            return i;
-        }
-        j += 1;
-        let content_start = j;
+        let name_start = open + 1;
+        let mut j = name_start;
         while j < self.bytes.len() && self.bytes[j] != b'}' {
             j += 1;
         }
-        if j >= self.bytes.len() {
-            return i;
-        }
-        let content = &self.text[content_start..j];
-        j += 1; // skip }
+        let past_close = if j < self.bytes.len() { j + 1 } else { j };
+        Some((&self.text[name_start..j], past_close))
+    }
 
-        // Fast path: single-char content with a direct mapping.
-        if content.len() == 1
-            && let Some(replacement) = latex_font_to_julia(name, content)
-        {
-            self.overlays.push(Overlay::at(cmd_start, replacement));
-            Overlay::hide_range(&mut self.overlays, cmd_start + 1, j);
-            return j;
-        }
+    fn scan_begin_env(&mut self, cmd_start: usize, after_name: usize) -> usize {
+        let Some((env_name, content_start)) = self.scan_env_tag(after_name) else {
+            return self.skip_spaces(after_name);
+        };
 
-        // Multi-char: replace every char that has a mapping.
-        let mut any_replaced = false;
-        let mut replacements: Vec<Option<&'static str>> = Vec::new();
-        for ch in content.chars() {
-            if let Some(r) = latex_font_to_julia(name, &ch.to_string()) {
-                replacements.push(Some(r));
-                any_replaced = true;
-            } else {
-                replacements.push(None);
-            }
+        let end_tag = format!("\\end{{{env_name}}}");
+        let env_end = self.text[content_start..]
+            .find(&end_tag)
+            .map_or(self.text.len(), |pos| content_start + pos);
+        let environment = Environment::opening(env_name, &self.text[content_start..env_end]);
+        let open_fence = environment.open_fence();
+
+        self.hide(cmd_start..content_start);
+        self.env_stack.push(environment);
+        if let Some(fence) = open_fence {
+            self.place_fence(fence, content_start, cmd_start);
         }
-        if any_replaced {
-            Overlay::hide_range(&mut self.overlays, cmd_start, content_start);
-            let mut char_offset = content_start;
-            for (ci, ch) in content.chars().enumerate() {
-                if let Some(r) = replacements[ci] {
-                    self.overlays.push(Overlay::at(char_offset, r));
-                }
-                char_offset += ch.len_utf8();
-            }
-            self.overlays.push(Overlay::hide(j - 1));
+        content_start
+    }
+
+    fn scan_end_env(&mut self, cmd_start: usize, after_name: usize) -> usize {
+        let Some((_, past_close)) = self.scan_env_tag(after_name) else {
+            return self.skip_spaces(after_name);
+        };
+        let close_fence = self.env_stack.pop().and_then(Environment::close_fence);
+        self.hide(cmd_start..past_close);
+        if let Some(fence) = close_fence {
+            self.put(past_close - 1, fence);
+        }
+        past_close
+    }
+
+    fn scan_row_separator(&mut self, i: usize) -> usize {
+        let Some(environment) = self.env_stack.last_mut() else {
+            return i + 1;
+        };
+        let row_fence = environment.advance_row();
+        self.hide(i..i + 2);
+        if let Some(fence) = row_fence {
+            self.place_fence(fence, i + 2, i);
+        }
+        i + 2
+    }
+
+    fn scan_text_command(&mut self, cmd_start: usize, after_name: usize) -> usize {
+        let open = self.skip_spaces(after_name);
+        if self.bytes.get(open) != Some(&b'{') {
+            return open;
+        }
+        self.hide(cmd_start..open + 1);
+        let mut j = open + 1;
+        while j < self.bytes.len() && self.bytes[j] != b'}' {
+            j += 1;
+        }
+        if j < self.bytes.len() {
+            self.hide(j..j + 1);
+            j += 1;
         }
         j
     }
 
-    /// `\frac{num}{den}` / `\dfrac` / `\tfrac` — emit a fraction-slash glyph
-    /// between the numerator and denominator, hide the command wrapper, and
-    /// return the position of the numerator's first byte so the main scan
-    /// loop walks the numerator + denominator content recursively. Without
-    /// that recursion, `\frac{C_k+C^*_{N-k}}{2}` would leave `_k`, `^*`, and
-    /// `_{N-k}` inside the numerator raw.
-    fn scan_frac_command(&mut self, cmd_start: usize, i: usize) -> usize {
-        let mut j = i;
-        while j < self.bytes.len() && self.bytes[j] == b' ' {
-            j += 1;
+    fn scan_font_command(&mut self, cmd_start: usize, after_name: usize, name: &str) -> usize {
+        let open = self.skip_spaces(after_name);
+        if self.bytes.get(open) != Some(&b'{') {
+            return after_name;
         }
-        if j >= self.bytes.len() || self.bytes[j] != b'{' {
-            Overlay::hide_range(&mut self.overlays, cmd_start, i);
-            return i;
+        let content_start = open + 1;
+        let mut close = content_start;
+        while close < self.bytes.len() && self.bytes[close] != b'}' {
+            close += 1;
         }
-        j += 1;
-        Overlay::hide_range(&mut self.overlays, cmd_start, j);
-        let num_start = j;
+        if close >= self.bytes.len() {
+            return after_name;
+        }
+        let content = &self.text[content_start..close];
+        let past_close = close + 1;
 
-        let num_close = Self::find_matching_brace(self.bytes, j);
-
-        // Locate denominator `{…}` so we know the full span of the frac.
-        let mut den_open = num_close;
-        while den_open < self.bytes.len() && self.bytes[den_open] == b' ' {
-            den_open += 1;
+        if content.len() == 1
+            && let Some(glyph) = latex_font_to_julia(name, content)
+        {
+            self.put(cmd_start, glyph);
+            self.hide(cmd_start + 1..past_close);
+            return past_close;
         }
-        let den_close = if den_open < self.bytes.len() && self.bytes[den_open] == b'{' {
-            let after_brace = den_open + 1;
-            Self::find_matching_brace(self.bytes, after_brace)
+
+        let glyphs: Vec<Option<&'static str>> = content
+            .chars()
+            .map(|ch| latex_font_to_julia(name, &ch.to_string()))
+            .collect();
+        if glyphs.iter().any(Option::is_some) {
+            self.hide(cmd_start..content_start);
+            self.replace_each_char(content, content_start, &glyphs);
+            self.hide(close..past_close);
+        }
+        past_close
+    }
+
+    fn scan_frac_command(&mut self, cmd_start: usize, after_name: usize) -> usize {
+        let num_open = self.skip_spaces(after_name);
+        if self.bytes.get(num_open) != Some(&b'{') {
+            self.hide(cmd_start..after_name);
+            return after_name;
+        }
+        let num_start = num_open + 1;
+        self.hide(cmd_start..num_start);
+
+        let past_num = past_matching_brace(self.bytes, num_start);
+        let den_open = self.skip_spaces(past_num);
+        let has_denominator = self.bytes.get(den_open) == Some(&b'{');
+        let past_den = if has_denominator {
+            past_matching_brace(self.bytes, den_open + 1)
         } else {
-            num_close
+            past_num
         };
 
         if self.options.hide_math_layout {
-            // The math-render plugin is painting numerator above /
-            // denominator below — hide the entire `\frac{..}{..}` so
-            // both representations don't fight over the same row.
-            Overlay::hide_range(&mut self.overlays, cmd_start, den_close);
-            return den_close;
+            self.hide(cmd_start..past_den);
+            return past_den;
         }
 
-        if num_close > j {
-            self.overlays.push(Overlay::at(num_close - 1, "⁄"));
+        if past_num > num_start {
+            self.put(past_num - 1, "⁄");
         }
-        if den_open < self.bytes.len() && self.bytes[den_open] == b'{' {
-            self.overlays.push(Overlay::hide(den_open));
-            if den_close > den_open + 1 {
-                self.overlays.push(Overlay::hide(den_close - 1));
+        if has_denominator {
+            self.hide(den_open..den_open + 1);
+            if past_den > den_open + 1 {
+                self.hide(past_den - 1..past_den);
             }
         }
         num_start
     }
 
-    /// Given a position `j` that points JUST past an opening `{`, return the
-    /// byte position one past the matching closing `}`. If no matching brace
-    /// is found, returns the end of the input.
-    fn find_matching_brace(bytes: &[u8], mut j: usize) -> usize {
-        let mut depth = 1i32;
-        while j < bytes.len() && depth > 0 {
-            match bytes[j] {
-                b'{' => depth += 1,
-                b'}' => depth -= 1,
-                _ => {}
-            }
-            j += 1;
-        }
-        j
-    }
-
-    /// `\newcommand{name}{body}`, `\renewcommand{name}{body}`,
-    /// `\providecommand{name}{body}`, `\DeclareMathOperator{name}{body}`.
-    /// These are LaTeX preamble directives that define macros — they produce
-    /// no output of their own. Hide the whole definition (command name,
-    /// optional args, both brace groups) so the notebook doesn't show a raw
-    /// `\renewcommand{\R}{ℝ}` line where only the `ℝ` looks rendered.
-    fn scan_macro_definition(&mut self, cmd_start: usize, name_end: usize) -> usize {
-        let mut j = name_end;
-
-        // Skip optional bracketed args: `\newcommand{\R}[0]{\mathbb R}`.
-        let skip_ws = |bytes: &[u8], mut k: usize| {
-            while k < bytes.len() && matches!(bytes[k], b' ' | b'\t') {
-                k += 1;
-            }
-            k
-        };
-
-        // Consume two brace groups (some variants take more optional args,
-        // but the common case is `{name}{body}`).
-        let mut consumed_groups = 0;
-        while consumed_groups < 2 {
-            j = skip_ws(self.bytes, j);
-            // Skip any [optional] argument blocks.
-            while j < self.bytes.len() && self.bytes[j] == b'[' {
+    fn scan_macro_definition(&mut self, cmd_start: usize, after_name: usize) -> usize {
+        let mut j = after_name;
+        for _ in 0..2 {
+            j = past_spaces_and_tabs(self.bytes, j);
+            while self.bytes.get(j) == Some(&b'[') {
                 while j < self.bytes.len() && self.bytes[j] != b']' {
                     j += 1;
                 }
                 if j < self.bytes.len() {
-                    j += 1; // skip ]
+                    j += 1;
                 }
-                j = skip_ws(self.bytes, j);
+                j = past_spaces_and_tabs(self.bytes, j);
             }
-            if j >= self.bytes.len() || self.bytes[j] != b'{' {
+            if self.bytes.get(j) != Some(&b'{') {
                 break;
             }
-            j += 1; // past {
-            j = Self::find_matching_brace(self.bytes, j);
-            consumed_groups += 1;
+            j = past_matching_brace(self.bytes, j + 1);
         }
-
-        Overlay::hide_range(&mut self.overlays, cmd_start, j);
+        self.hide(cmd_start..j);
         j
     }
 
-    /// `\tilde{X}`, `\hat{X}`, `\bar{X}`, `\vec{X}`, etc. — hide the
-    /// command wrapper and attach the combining mark to the content's last
-    /// grapheme so `\tilde{x}` renders as `x̃`, not `~{x}` or a loose mark.
-    fn scan_combining_mark_command(&mut self, cmd_start: usize, i: usize, name: &str) -> usize {
-        let combining: &'static str = match name {
-            "tilde" | "widetilde" => "\u{0303}",
-            "bar" | "overline" => "\u{0304}",
-            "hat" | "widehat" => "\u{0302}",
-            "vec" => "\u{20D7}",
-            "dot" => "\u{0307}",
-            "ddot" => "\u{0308}",
-            "mathring" => "\u{030A}",
-            _ => return self.scan_simple_command(cmd_start, i, name),
-        };
-
-        // Find the `{`; bail to the simple-command path if there isn't one.
-        let mut j = i;
-        while j < self.bytes.len() && self.bytes[j] == b' ' {
-            j += 1;
+    fn scan_combining_mark_command(
+        &mut self,
+        cmd_start: usize,
+        after_name: usize,
+        name: &str,
+        mark: &'static str,
+    ) -> usize {
+        let open = self.skip_spaces(after_name);
+        if self.bytes.get(open) != Some(&b'{') {
+            return self.scan_simple_command(cmd_start, after_name, name);
         }
-        if j >= self.bytes.len() || self.bytes[j] != b'{' {
-            return self.scan_simple_command(cmd_start, i, name);
+        let content_start = open + 1;
+        let close = past_matching_brace(self.bytes, content_start) - 1;
+        if close <= content_start {
+            self.hide(cmd_start..close + 1);
+            return close + 1;
         }
-        let open_brace = j;
-        j += 1;
-        let content_start = j;
-        let close_brace = Self::find_matching_brace(self.bytes, j) - 1;
-        if close_brace <= content_start {
-            // Empty body — just hide everything.
-            Overlay::hide_range(&mut self.overlays, cmd_start, close_brace + 1);
-            return close_brace + 1;
-        }
-
-        // Hide `\cmd` and the opening brace.
-        Overlay::hide_range(&mut self.overlays, cmd_start, open_brace + 1);
-        // Hide the closing brace and stick the combining mark in its place.
-        // Combining marks render against the preceding grapheme, so placing
-        // it where the `}` was means it attaches to the content's last
-        // character rather than floating off the end.
-        self.overlays.push(Overlay::at(close_brace, combining));
+        self.hide(cmd_start..content_start);
+        self.put(close, mark);
         content_start
     }
 
-    /// Simple `\name` lookup — falls back to the Julia symbol table.
-    ///
-    /// LaTeX math operators (`\cos`, `\sin`, `\log`, `\max`, …) don't have
-    /// a single-glyph Unicode form; they render as upright multi-letter
-    /// text. We handle them by hiding just the backslash, leaving the
-    /// operator name visible. This is what `\operatorname{cos}` would
-    /// produce and matches Jupyter/KaTeX output.
-    fn scan_simple_command(&mut self, cmd_start: usize, i: usize, name: &str) -> usize {
+    fn scan_simple_command(&mut self, cmd_start: usize, after_name: usize, name: &str) -> usize {
         if is_math_operator(name) {
-            self.overlays.push(Overlay::hide(cmd_start));
-            if is_big_operator(name) {
-                self.pending_limits = 2;
-            }
-            return i;
+            self.hide(cmd_start..cmd_start + 1);
+            self.arm_limits_after(name);
+            return after_name;
         }
-        let lookup = unicode_lookup(name.to_string());
-        if !lookup.is_empty() {
-            self.overlays
-                .push(Overlay::at(cmd_start, Cow::Owned(lookup)));
-            Overlay::hide_range(&mut self.overlays, cmd_start + 1, i);
-            if is_big_operator(name) {
-                self.pending_limits = 2;
-            }
+        if let Some(glyph) = symbol(name) {
+            self.put(cmd_start, glyph);
+            self.hide(cmd_start + 1..after_name);
+            self.arm_limits_after(name);
         }
-        i
+        after_name
     }
 
-    /// `\|` `\{` `\}` `\,` `\;` `\!` `\ ` `\(` `\)` `\[` `\]`
     fn scan_non_alpha_backslash(&mut self, i: usize) -> usize {
-        let ch = self.bytes[i + 1];
-        let replacement: Option<&'static str> = match ch {
-            b'|' => Some("‖"),
-            b'{' => Some("{"),
-            b'}' => Some("}"),
-            b',' => Some("\u{2006}"), // thin space
-            b';' => Some("\u{2005}"), // medium space
-            b'!' => Some("\u{200B}"), // zero-width
-            b' ' => Some(" "),
-            _ => None,
-        };
-        if let Some(rep) = replacement {
-            self.overlays.push(Overlay::at(i, rep));
-            self.overlays.push(Overlay::hide(i + 1));
-            i + 2
-        } else if matches!(ch, b'(' | b')' | b'[' | b']') {
-            // Math region delimiters: hide the backslash, leave the paren
-            // for the outer scanner to handle.
-            self.overlays.push(Overlay::hide(i));
-            i + 1
-        } else {
-            i + 1
+        let escaped = self.bytes[i + 1];
+        if let Some(glyph) = spacing_glyph(escaped) {
+            self.put(i, glyph);
+            self.hide(i + 1..i + 2);
+            return i + 2;
         }
-    }
-
-    /// `\\` inside a matrix-style environment → row break + fence character.
-    ///
-    /// The fence goes at the START of the next content row (prepended to its
-    /// first char via a 2-grapheme replacement) so `⎧` / `⎨` / `⎩` stack
-    /// vertically at a consistent column rather than trailing off the end of
-    /// the previous row. The last separator emits the CLOSING fence (`⎩`)
-    /// rather than the mid-fence, so `\end{cases}` on its own line ends up
-    /// with nothing to draw and can stay visually empty instead of burning a
-    /// row on a lone `⎩`. Falls back to emitting at the `\\` position when
-    /// the next row starts with a scanner-special char like `\` or `^`,
-    /// where overlaying the first grapheme would clash with another overlay.
-    fn scan_row_separator(&mut self, i: usize) -> usize {
-        let Some(env) = self.env_stack.last_mut() else {
-            return i + 1;
-        };
-        env.row += 1;
-        let row = env.row;
-        let total_rows = env.total_rows;
-        let env_name = env.env_name.clone();
-        let row_fence = if row == total_rows.saturating_sub(1) {
-            close_fence(&env_name, total_rows)
-        } else {
-            mid_fence(&env_name, row, total_rows)
-        };
-        Overlay::hide_range(&mut self.overlays, i, i + 2);
-        if !row_fence.is_empty() {
-            let mut j = i + 2;
-            while j < self.bytes.len() && matches!(self.bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
-                j += 1;
-            }
-            let placed = if let Some(ch) = self.text[j..].chars().next() {
-                if ch.is_ascii_alphanumeric() {
-                    let replacement = format!("{row_fence}{ch}");
-                    self.overlays.push(Overlay::at(j, replacement));
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if !placed {
-                self.overlays.push(Overlay::at(i, row_fence));
-            }
+        if matches!(escaped, b'(' | b')' | b'[' | b']') {
+            self.hide(i..i + 1);
         }
-        i + 2
-    }
-
-    /// `^{...}` — emit one superscript glyph per content character.
-    /// Partial emission: if at least one character has a superscript variant,
-    /// hide the `^{...}` delimiters and emit what we can; leave unmappable
-    /// characters as plain text. This keeps `^{T*}` readable as `ᵀ*` rather
-    /// than leaving the whole thing raw.
-    fn scan_to_matching_brace(&self, from: usize) -> usize {
-        let mut j = from;
-        let mut depth = 1;
-        while j < self.bytes.len() {
-            match self.bytes[j] {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return j;
-                    }
-                }
-                _ => {}
-            }
-            j += 1;
-        }
-        j
-    }
-
-    fn scan_braced_superscript(&mut self, i: usize) -> usize {
-        let caret_pos = i;
-        let content_start = i + 2;
-        let j = self.scan_to_matching_brace(content_start);
-        if j >= self.bytes.len() {
-            return j;
-        }
-        let content = &self.text[content_start..j];
-        let past_close = j + 1;
-
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                // The math-render plugin is painting this limit above/
-                // below the operator glyph — hide the whole inline form
-                // including content so we don't render both.
-                Overlay::hide_range(&mut self.overlays, caret_pos, past_close);
-                return past_close;
-            }
-        }
-
-        let supers: Vec<Option<&'static str>> = content.chars().map(super_lookup).collect();
-        let any_mapped = supers.iter().any(Option::is_some);
-
-        if any_mapped && is_simple_brace_content(content) {
-            self.overlays.push(Overlay::hide(caret_pos));
-            self.overlays.push(Overlay::hide(caret_pos + 1));
-            let mut char_offset = content_start;
-            for (ci, ch) in content.chars().enumerate() {
-                if let Some(rep) = supers[ci] {
-                    self.overlays.push(Overlay::at(char_offset, rep));
-                }
-                char_offset += ch.len_utf8();
-            }
-            self.overlays.push(Overlay::hide(past_close - 1));
-            return past_close;
-        }
-
-        if let Some(rep) = braced_super_command(content) {
-            self.overlays.push(Overlay::at(caret_pos, rep));
-            Overlay::hide_range(&mut self.overlays, caret_pos + 1, past_close);
-            return past_close;
-        }
-
-        self.overlays.push(Overlay::hide(caret_pos + 1));
-        self.overlays.push(Overlay::hide(past_close - 1));
-        content_start
-    }
-
-    /// `^x` single-character superscript.
-    fn scan_inline_superscript(&mut self, i: usize) -> usize {
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                // Hide `^x` entirely so only the stacked virtual-line
-                // version is visible.
-                self.overlays.push(Overlay::hide(i));
-                self.overlays.push(Overlay::hide(i + 1));
-                return i + 2;
-            }
-        }
-        let ch = self.bytes[i + 1] as char;
-        if let Some(rep) = super_lookup(ch) {
-            self.overlays.push(Overlay::at(i, rep));
-            self.overlays.push(Overlay::hide(i + 1));
-            i + 2
-        } else {
-            i + 1
-        }
-    }
-
-    /// `_{...}` — emit one subscript glyph per content character.
-    /// Partial emission: if at least one character has a subscript variant,
-    /// hide the `_{...}` delimiters and emit what we can; leave unmappable
-    /// characters as plain text. This keeps `_{N-k}` readable as `N₋ₖ`
-    /// (uppercase N has no Unicode subscript form) rather than leaving the
-    /// whole thing raw.
-    fn scan_braced_subscript(&mut self, i: usize) -> usize {
-        let underscore_pos = i;
-        let content_start = i + 2;
-        let j = self.scan_to_matching_brace(content_start);
-        if j >= self.bytes.len() {
-            return j;
-        }
-        let content = &self.text[content_start..j];
-        let past_close = j + 1;
-
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                Overlay::hide_range(&mut self.overlays, underscore_pos, past_close);
-                return past_close;
-            }
-        }
-
-        let subs: Vec<Option<&'static str>> = content.chars().map(sub_lookup).collect();
-        let any_mapped = subs.iter().any(Option::is_some);
-
-        if any_mapped && is_simple_brace_content(content) {
-            self.overlays.push(Overlay::hide(underscore_pos));
-            self.overlays.push(Overlay::hide(underscore_pos + 1));
-            let mut char_offset = content_start;
-            for (ci, ch) in content.chars().enumerate() {
-                if let Some(rep) = subs[ci] {
-                    self.overlays.push(Overlay::at(char_offset, rep));
-                }
-                char_offset += ch.len_utf8();
-            }
-            self.overlays.push(Overlay::hide(past_close - 1));
-            return past_close;
-        }
-
-        if let Some(rep) = braced_sub_command(content) {
-            self.overlays.push(Overlay::at(underscore_pos, rep));
-            Overlay::hide_range(&mut self.overlays, underscore_pos + 1, past_close);
-            return past_close;
-        }
-
-        self.overlays.push(Overlay::hide(underscore_pos + 1));
-        self.overlays.push(Overlay::hide(past_close - 1));
-        content_start
-    }
-
-    /// `_x` single-character subscript. Leaves the source raw when `x` has
-    /// no Unicode subscript form. (An earlier version fell back to the Julia
-    /// symbol table here, which produced false positives like `_c` → ̧
-    /// combining-cedilla because single Latin letters happen to name
-    /// combining-mark characters in the table.)
-    fn scan_inline_subscript(&mut self, i: usize) -> usize {
-        if self.pending_limits > 0 {
-            self.pending_limits -= 1;
-            if self.options.hide_math_layout {
-                self.overlays.push(Overlay::hide(i));
-                self.overlays.push(Overlay::hide(i + 1));
-                return i + 2;
-            }
-        }
-        let ch = self.bytes[i + 1] as char;
-        if let Some(rep) = sub_lookup(ch) {
-            self.overlays.push(Overlay::at(i, rep));
-            self.overlays.push(Overlay::hide(i + 1));
-            i + 2
-        } else {
-            i + 1
-        }
+        i + 1
     }
 }
 
-/// Public FFI entry point. Scans one math region's worth of text and returns
-/// a JSON array of `{"offset": N, "replacement": "X"}` entries. Uses
-/// default options — callers that need `hide_math_layout` go through
-/// [`latex_overlays_with_options`] or [`scan_to_vec_opts`].
+#[allow(clippy::needless_pass_by_value)]
 pub fn latex_overlays(text: String) -> String {
     latex_overlays_with_options(text, false)
 }
 
-/// FFI entry point with explicit `hide_math_layout`. `true` hides big-op
-/// limits and `\frac` bodies so the math-render virtual-row plugin can
-/// paint them instead.
+#[allow(clippy::needless_pass_by_value)]
 pub fn latex_overlays_with_options(text: String, hide_math_layout: bool) -> String {
-    let opts = ScannerOptions { hide_math_layout };
-    let overlays = Scanner::new(&text, opts).scan();
-    serde_json::to_string(&overlays).unwrap_or_else(|_| "[]".to_string())
+    ffi(overlays_json(&text, ScannerOptions { hide_math_layout }))
 }
 
-/// Scan a math region and return overlays as `(byte_offset, replacement)`
-/// tuples. Used by the conceal pipeline; every caller threads options
-/// through explicitly so there's no default-variant wrapper anymore.
-pub(super) fn scan_to_vec_opts(text: &str, options: ScannerOptions) -> Vec<(usize, String)> {
+fn overlays_json(text: &str, options: ScannerOptions) -> Result<String> {
+    serde_json::to_string(&Scanner::new(text, options).scan()).map_err(|source| Error::Json {
+        subject: "latex conceal overlays",
+        source,
+    })
+}
+
+pub(super) fn scan_region(text: &str, options: ScannerOptions) -> Vec<(usize, String)> {
     Scanner::new(text, options)
         .scan()
         .into_iter()
         .map(|o| (o.offset, o.replacement.into_owned()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn replacements(source: &str) -> Vec<String> {
+        let json = latex_overlays(source.to_string());
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["replacement"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn hidden_offsets(source: &str) -> Vec<usize> {
+        let json = latex_overlays(source.to_string());
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["replacement"].as_str().unwrap().is_empty())
+            .map(|o| o["offset"].as_u64().unwrap() as usize)
+            .collect()
+    }
+
+    fn contains(source: &str, glyph: &str) -> bool {
+        replacements(source).iter().any(|r| r == glyph)
+    }
+
+    fn starts_with(source: &str, glyph: char) -> bool {
+        replacements(source).iter().any(|r| r.starts_with(glyph))
+    }
+
+    #[test]
+    fn simple_command_replaces_then_hides_its_name() {
+        let json = latex_overlays(r"\alpha + \beta".into());
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert!(!arr.is_empty());
+        assert_eq!(arr[0]["offset"], 0);
+        assert_eq!(arr[0]["replacement"], "α");
+        assert_eq!(arr[1]["replacement"], "");
+    }
+
+    #[test]
+    fn braced_superscript_maps_every_char() {
+        let reps = replacements("10^{-6}");
+        assert!(reps.iter().any(|r| r == "⁻"));
+        assert!(reps.iter().any(|r| r == "⁶"));
+    }
+
+    #[test]
+    fn font_command_maps_single_letter() {
+        let json = latex_overlays(r"\mathbf{b}".into());
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_array().unwrap()[0]["replacement"], "𝐛");
+    }
+
+    #[test]
+    fn plain_text_yields_no_overlays() {
+        assert_eq!(latex_overlays("x + y = z".into()), "[]");
+    }
+
+    #[test]
+    fn text_command_hides_wrapper_and_keeps_body() {
+        let source = r"\text{otherwise}";
+        let hidden = hidden_offsets(source);
+        assert!(hidden.contains(&0));
+        assert!(hidden.contains(&(source.len() - 1)));
+    }
+
+    #[test]
+    fn cases_env_opens_and_closes_with_fences() {
+        let source = r"\begin{cases} 1 & 0 \leq n \leq 2 \\ 0 & \text{otherwise} \end{cases}";
+        assert!(starts_with(source, '⎧'), "{:?}", replacements(source));
+        assert!(starts_with(source, '⎩'), "{:?}", replacements(source));
+        assert!(contains(source, "≤"));
+        assert!(contains(source, " "));
+    }
+
+    #[test]
+    fn three_row_cases_env_uses_the_mid_fence() {
+        let source = r"\begin{cases} 1 & a \\ 2 & b \\ 3 & c \end{cases}";
+        assert!(starts_with(source, '⎨'), "{:?}", replacements(source));
+        assert!(starts_with(source, '⎩'), "{:?}", replacements(source));
+    }
+
+    #[test]
+    fn pmatrix_env_uses_paren_fences() {
+        let source = r"\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}";
+        assert!(starts_with(source, '⎛'), "{:?}", replacements(source));
+        assert!(starts_with(source, '⎞'), "{:?}", replacements(source));
+    }
+
+    #[test]
+    fn braced_subscript_maps_its_char() {
+        assert!(contains("h_{n}", "ₙ"));
+    }
+
+    #[test]
+    fn sum_paired_limits_render_as_scripts() {
+        let source = r"\sum_{k=-n}^n c_k";
+        assert!(contains(source, "∑"));
+        assert!(contains(source, "ⁿ"));
+        assert!(contains(source, "₋"));
+    }
+
+    #[test]
+    fn sum_with_bare_single_char_limit_renders_subscript() {
+        let source = r"\sum_m \varphi_m";
+        assert!(contains(source, "∑"));
+        assert!(contains(source, "ₘ"));
+    }
+
+    #[test]
+    fn integral_with_ascii_bounds_render_as_scripts() {
+        let source = r"\int_a^b f(x)dx";
+        assert!(contains(source, "∫"));
+        assert!(contains(source, "ₐ"));
+        assert!(contains(source, "ᵇ"));
+    }
+
+    #[test]
+    fn prod_with_braced_subscript_and_bare_super_render_as_scripts() {
+        let source = r"\prod_{i=1}^n a_i";
+        assert!(contains(source, "∏"));
+        assert!(contains(source, "ⁿ"));
+        assert!(contains(source, "₁"));
+    }
+
+    #[test]
+    fn inline_super_on_non_big_operator_still_works() {
+        let source = r"\alpha^2 + \beta^3";
+        assert!(contains(source, "α"));
+        assert!(contains(source, "²"));
+        assert!(contains(source, "³"));
+    }
+
+    #[test]
+    fn complex_braced_superscript_drops_braces() {
+        let source = r"e^{2\pi i kt}";
+        let hidden = hidden_offsets(source);
+        assert!(hidden.contains(&source.find('{').unwrap()));
+        assert!(hidden.contains(&source.find('}').unwrap()));
+        assert!(contains(source, "π"));
+    }
+
+    #[test]
+    fn complex_braced_subscript_drops_braces() {
+        let source = r"x_{L^2(\mathbb{R})}";
+        let hidden = hidden_offsets(source);
+        assert!(hidden.contains(&source.find('{').unwrap()));
+        assert!(hidden.contains(&source.rfind('}').unwrap()));
+        assert!(contains(source, "ℝ"));
+    }
+
+    #[test]
+    fn norm_delimiter_becomes_double_bar() {
+        assert!(contains(r"\|B - B_1\|", "‖"));
+    }
+
+    #[test]
+    fn piecewise_definition_conceals_end_to_end() {
+        let source = r"h_n = \begin{cases} 1 & 0 \leq n \leq 2 \\ 0 & \text{otherwise} \end{cases}";
+        assert!(contains(source, "ₙ"));
+        assert!(starts_with(source, '⎧'));
+        assert!(starts_with(source, '⎩'));
+        assert!(contains(source, "≤"));
+    }
+
+    #[test]
+    fn frac_emits_a_slash_and_hides_the_command() {
+        let source = r"\frac{a}{b}";
+        assert!(contains(source, "⁄"));
+        assert!(hidden_offsets(source).contains(&0));
+    }
+
+    #[test]
+    fn nested_frac_emits_a_slash_per_level() {
+        let slashes = replacements(r"\frac{1}{\frac{a}{b}}")
+            .iter()
+            .filter(|r| *r == "⁄")
+            .count();
+        assert!(slashes >= 2, "got {slashes}");
+    }
+
+    #[test]
+    fn hide_math_layout_suppresses_big_op_limits() {
+        let visible: Vec<String> = {
+            let json = latex_overlays_with_options(r"\sum_{k=0}^n a_k".into(), true);
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            parsed
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o["replacement"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(visible.iter().any(|r| r == "∑"));
+        assert!(
+            !visible.iter().any(|r| r == "ⁿ"),
+            "stacked renderer owns the limits: {visible:?}"
+        );
+    }
 }

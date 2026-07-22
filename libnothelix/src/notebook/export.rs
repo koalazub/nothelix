@@ -1,110 +1,111 @@
-//! Markdown / Typst export of a parsed `.jl` notebook.
-//!
-//! Both formats render the notebook as a sequence of fenced code
-//! blocks (for code cells) interleaved with the markdown body (for
-//! markdown cells). The Typst output additionally wraps each section
-//! in `#code-cell[…]` / `#markdown-cell[…]` macros that the bundled
-//! template understands.
-
-// Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`), not
-// borrows.
-#![allow(clippy::needless_pass_by_value)]
-
 use std::fs;
 
-use super::cells::{CellKind, jl_sibling_path, parse_jl_file};
+use super::cells::parse_jl_file;
+use super::ipynb::sibling_path;
+use super::marker::CellKind;
+use crate::error::{Error, Result, ffi};
 
-pub fn export_to_markdown(jl_path: String) -> String {
-    let (cells, _) = match parse_jl_file(&jl_path) {
-        Err(e) => return format!("ERROR: {e}"),
-        Ok(v) => v,
-    };
+#[derive(Clone, Copy)]
+enum Format {
+    Markdown,
+    Typst,
+}
 
-    let mut out = String::new();
-
-    for cell in &cells {
-        match cell.kind {
-            // Raw cells pass through verbatim — nbformat defines them
-            // as already being in the target format.
-            CellKind::Markdown | CellKind::Typst | CellKind::Raw => {
-                for line in cell.code.lines() {
-                    out.push_str(line.strip_prefix("# ").unwrap_or(line));
-                    out.push('\n');
-                }
-                out.push('\n');
-            }
-            CellKind::Code => {
-                if cell.code.trim().is_empty() {
-                    continue;
-                }
-                out.push_str("```julia\n");
-                out.push_str(&cell.code);
-                if !cell.code.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push_str("```\n\n");
-            }
+impl Format {
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::Markdown => ".md",
+            Self::Typst => ".typ",
         }
     }
 
-    let out_path = jl_sibling_path(&jl_path, ".md");
-    match fs::write(&out_path, &out) {
-        Ok(_) => format!("Exported to {out_path}"),
-        Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
+    fn render_prose(self, body: &str) -> Result<String> {
+        match self {
+            Self::Markdown => Ok(verbatim(body)),
+            Self::Typst => {
+                let typst = crate::typst_export::md_to_typst(&uncommented_block(body)).map_err(
+                    |source| Error::Malformed {
+                        subject: "markdown cell",
+                        detail: source.to_string(),
+                    },
+                )?;
+                Ok(format!("{typst}\n"))
+            }
+        }
     }
 }
 
-/// Export a `.jl` notebook to Typst (`.typ`).
+pub fn export_to_markdown(jl_path: String) -> String {
+    ffi(export(&jl_path, Format::Markdown))
+}
+
 pub fn export_to_typst(jl_path: String) -> String {
-    let (cells, _) = match parse_jl_file(&jl_path) {
-        Err(e) => return format!("ERROR: {e}"),
-        Ok(v) => v,
-    };
+    ffi(export(&jl_path, Format::Typst))
+}
 
+fn export(jl_path: &str, format: Format) -> Result<String> {
+    let (cells, _) = parse_jl_file(jl_path)?;
     let mut out = String::new();
-
     for cell in &cells {
         match cell.kind {
             CellKind::Markdown | CellKind::Typst => {
-                let stripped: String = cell
-                    .code
-                    .lines()
-                    .map(|l| l.strip_prefix("# ").unwrap_or(l))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                match crate::typst_export::md_to_typst(&stripped) {
-                    Ok(typst) => out.push_str(&typst),
-                    Err(e) => return format!("ERROR: {e}"),
-                }
-                out.push('\n');
+                out.push_str(&format.render_prose(&cell.code)?);
             }
-            // Raw cells pass through without markdown→typst rewriting —
-            // nbformat defines them as already being in the target format.
-            CellKind::Raw => {
-                for line in cell.code.lines() {
-                    out.push_str(line.strip_prefix("# ").unwrap_or(line));
-                    out.push('\n');
-                }
-                out.push('\n');
-            }
+            CellKind::Raw => out.push_str(&verbatim(&cell.code)),
             CellKind::Code => {
-                if cell.code.trim().is_empty() {
-                    continue;
+                if !cell.code.trim().is_empty() {
+                    out.push_str(&fenced_julia(&cell.code));
                 }
-                out.push_str("```julia\n");
-                out.push_str(&cell.code);
-                if !cell.code.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push_str("```\n\n");
             }
         }
     }
 
-    let out_path = jl_sibling_path(&jl_path, ".typ");
-    match fs::write(&out_path, &out) {
-        Ok(_) => format!("Exported to {out_path}"),
-        Err(e) => format!("ERROR: Cannot write {out_path}: {e}"),
+    let out_path = sibling_path(jl_path, format.extension());
+    fs::write(&out_path, &out).map_err(|source| Error::writing(&out_path, source))?;
+    Ok(format!("Exported to {out_path}"))
+}
+
+fn uncomment(line: &str) -> &str {
+    line.strip_prefix("# ").unwrap_or(line)
+}
+
+fn uncommented_block(code: &str) -> String {
+    code.lines().map(uncomment).collect::<Vec<_>>().join("\n")
+}
+
+fn verbatim(code: &str) -> String {
+    let mut out: String = code
+        .lines()
+        .flat_map(|line| [uncomment(line), "\n"])
+        .collect();
+    out.push('\n');
+    out
+}
+
+fn fenced_julia(code: &str) -> String {
+    let newline = if code.ends_with('\n') { "" } else { "\n" };
+    format!("```julia\n{code}{newline}```\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{export_to_markdown, export_to_typst};
+
+    #[test]
+    fn a_directory_named_like_a_notebook_is_not_rewritten() {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let dir = tmp_dir.path().join("proj.jl");
+        std::fs::create_dir(&dir).unwrap();
+        let jl_path = dir.join("nb.jl");
+        let src = "# ═══ Nothelix Notebook: nb.ipynb ═══\n# Cells: 1\n\n@cell 0 :julia\nx = 1\n";
+        std::fs::write(&jl_path, src).unwrap();
+
+        let md = export_to_markdown(jl_path.to_string_lossy().into());
+        assert_eq!(md, format!("Exported to {}", dir.join("nb.md").display()));
+        assert!(dir.join("nb.md").exists());
+
+        let typ = export_to_typst(jl_path.to_string_lossy().into());
+        assert_eq!(typ, format!("Exported to {}", dir.join("nb.typ").display()));
+        assert!(dir.join("nb.typ").exists());
     }
 }

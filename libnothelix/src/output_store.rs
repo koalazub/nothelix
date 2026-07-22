@@ -1,26 +1,17 @@
 #![allow(clippy::needless_pass_by_value)]
 
-//! Per-cell notebook output store — the out-of-buffer source of truth for
-//! cell output. One file per cell at
-//! `~/.local/share/nothelix/outputs/<workspace>/<cell_id>.json`, holding
-//! `<source_hash>\n<outputs_json>` (the nbformat outputs array captured
-//! against `source_hash`). Best-effort: read/write failures never block
-//! execution or opening a notebook.
-
+use crate::error::{Error, Result, ffi};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-}
-
 fn store_root() -> PathBuf {
-    home_dir().join(".local/share/nothelix/outputs")
+    std::env::var("HOME")
+        .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
+        .join(".local/share/nothelix/outputs")
 }
 
-fn sanitize(key: &str) -> String {
+fn path_safe(key: &str) -> String {
     key.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -32,42 +23,45 @@ fn sanitize(key: &str) -> String {
         .collect()
 }
 
-fn cell_path(root: &Path, workspace: &str, cell_id: &str) -> PathBuf {
-    root.join(sanitize(workspace))
-        .join(format!("{}.json", sanitize(cell_id)))
+struct CellRecord {
+    path: PathBuf,
 }
 
-fn get_at(root: &Path, workspace: &str, cell_id: &str) -> String {
-    match fs::read_to_string(cell_path(root, workspace, cell_id)) {
-        Ok(s) => match s.split_once('\n') {
-            Some((hash, json)) => format!("{hash}\t{json}"),
-            None => String::new(),
-        },
-        Err(_) => String::new(),
+impl CellRecord {
+    fn locate(root: &Path, workspace: &str, cell_id: &str) -> Self {
+        Self {
+            path: root
+                .join(path_safe(workspace))
+                .join(format!("{}.json", path_safe(cell_id))),
+        }
     }
-}
 
-fn set_at(
-    root: &Path,
-    workspace: &str,
-    cell_id: &str,
-    source_hash: &str,
-    outputs_json: &str,
-) -> Result<(), String> {
-    let path = cell_path(root, workspace, cell_id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("ERROR: cannot create {}: {e}", parent.display()))?;
+    fn read(&self) -> Result<Option<String>> {
+        match fs::read_to_string(&self.path) {
+            Ok(stored) => Ok(stored
+                .split_once('\n')
+                .map(|(source_hash, outputs_json)| format!("{source_hash}\t{outputs_json}"))),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Error::reading(&self.path, e)),
+        }
     }
-    fs::write(&path, format!("{source_hash}\n{outputs_json}"))
-        .map_err(|e| format!("ERROR: cannot write {}: {e}", path.display()))
-}
 
-fn clear_at(root: &Path, workspace: &str, cell_id: &str) -> Result<(), String> {
-    match fs::remove_file(cell_path(root, workspace, cell_id)) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("ERROR: cannot remove: {e}")),
+    fn write(&self, source_hash: &str, outputs_json: &str) -> Result<()> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| Error::orphan(&self.path))?;
+        fs::create_dir_all(parent).map_err(|e| Error::creating(parent, e))?;
+        fs::write(&self.path, format!("{source_hash}\n{outputs_json}"))
+            .map_err(|e| Error::writing(&self.path, e))
+    }
+
+    fn discard(&self) -> Result<()> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(Error::removing(&self.path, e)),
+        }
     }
 }
 
@@ -77,27 +71,21 @@ pub fn output_store_put(
     source_hash: String,
     outputs_json: String,
 ) -> String {
-    match set_at(
-        &store_root(),
-        &workspace,
-        &cell_id,
-        &source_hash,
-        &outputs_json,
-    ) {
-        Ok(()) => String::new(),
-        Err(e) => e,
-    }
+    ffi(CellRecord::locate(&store_root(), &workspace, &cell_id)
+        .write(&source_hash, &outputs_json)
+        .map(|()| String::new()))
 }
 
 pub fn output_store_get(workspace: String, cell_id: String) -> String {
-    get_at(&store_root(), &workspace, &cell_id)
+    ffi(CellRecord::locate(&store_root(), &workspace, &cell_id)
+        .read()
+        .map(Option::unwrap_or_default))
 }
 
 pub fn output_store_clear(workspace: String, cell_id: String) -> String {
-    match clear_at(&store_root(), &workspace, &cell_id) {
-        Ok(()) => String::new(),
-        Err(e) => e,
-    }
+    ffi(CellRecord::locate(&store_root(), &workspace, &cell_id)
+        .discard()
+        .map(|()| String::new()))
 }
 
 #[cfg(test)]
@@ -105,12 +93,25 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn get_at(root: &Path, workspace: &str, cell_id: &str) -> String {
+        CellRecord::locate(root, workspace, cell_id)
+            .read()
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    fn set_at(root: &Path, workspace: &str, cell_id: &str, source_hash: &str, outputs_json: &str) {
+        CellRecord::locate(root, workspace, cell_id)
+            .write(source_hash, outputs_json)
+            .unwrap();
+    }
+
     #[test]
     fn put_get_roundtrip() {
         let root = tempdir().unwrap();
         let dir = root.path().to_path_buf();
         assert_eq!(get_at(&dir, "ws", "cell-1"), "");
-        set_at(&dir, "ws", "cell-1", "h1", "[{\"a\":1}]").unwrap();
+        set_at(&dir, "ws", "cell-1", "h1", "[{\"a\":1}]");
         assert_eq!(get_at(&dir, "ws", "cell-1"), "h1\t[{\"a\":1}]");
     }
 
@@ -118,8 +119,8 @@ mod tests {
     fn put_overwrites_in_place() {
         let root = tempdir().unwrap();
         let dir = root.path().to_path_buf();
-        set_at(&dir, "ws", "c", "h1", "[1]").unwrap();
-        set_at(&dir, "ws", "c", "h2", "[2]").unwrap();
+        set_at(&dir, "ws", "c", "h1", "[1]");
+        set_at(&dir, "ws", "c", "h2", "[2]");
         assert_eq!(get_at(&dir, "ws", "c"), "h2\t[2]");
     }
 
@@ -127,8 +128,8 @@ mod tests {
     fn distinct_cells_and_workspaces_isolate() {
         let root = tempdir().unwrap();
         let dir = root.path().to_path_buf();
-        set_at(&dir, "wsA", "c", "h", "[1]").unwrap();
-        set_at(&dir, "wsB", "c", "h", "[2]").unwrap();
+        set_at(&dir, "wsA", "c", "h", "[1]");
+        set_at(&dir, "wsB", "c", "h", "[2]");
         assert_eq!(get_at(&dir, "wsA", "c"), "h\t[1]");
         assert_eq!(get_at(&dir, "wsB", "c"), "h\t[2]");
     }
@@ -137,16 +138,24 @@ mod tests {
     fn clear_removes_entry() {
         let root = tempdir().unwrap();
         let dir = root.path().to_path_buf();
-        set_at(&dir, "ws", "c", "h", "[1]").unwrap();
-        clear_at(&dir, "ws", "c").unwrap();
+        set_at(&dir, "ws", "c", "h", "[1]");
+        CellRecord::locate(&dir, "ws", "c").discard().unwrap();
         assert_eq!(get_at(&dir, "ws", "c"), "");
+    }
+
+    #[test]
+    fn clear_of_absent_entry_succeeds() {
+        let root = tempdir().unwrap();
+        CellRecord::locate(root.path(), "ws", "never-written")
+            .discard()
+            .unwrap();
     }
 
     #[test]
     fn sanitizes_path_separators_in_keys() {
         let root = tempdir().unwrap();
         let dir = root.path().to_path_buf();
-        set_at(&dir, "/abs/ws/../x", "a/b", "h", "[1]").unwrap();
+        set_at(&dir, "/abs/ws/../x", "a/b", "h", "[1]");
         assert_eq!(get_at(&dir, "/abs/ws/../x", "a/b"), "h\t[1]");
     }
 
@@ -154,5 +163,16 @@ mod tests {
     fn missing_entry_returns_empty() {
         let root = tempdir().unwrap();
         assert_eq!(get_at(root.path(), "ws", "nope"), "");
+    }
+
+    #[test]
+    fn unreadable_record_reports_the_path_instead_of_an_empty_hit() {
+        let root = tempdir().unwrap();
+        let occupied = root.path().join("ws").join("c.json");
+        fs::create_dir_all(&occupied).unwrap();
+        let failure = CellRecord::locate(root.path(), "ws", "c")
+            .read()
+            .unwrap_err();
+        assert!(failure.to_string().contains("c.json"), "{failure}");
     }
 }

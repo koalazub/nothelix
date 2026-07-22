@@ -1,24 +1,8 @@
-// Steel's `register_fn` marshals values from the Steel VM and requires
-// the registered fn's signature to take owned types (`String`), not
-// borrows. The owned type is load-bearing for the FFI dispatcher.
-#![allow(clippy::needless_pass_by_value)]
+use super::char_offsets::CharOffsets;
+use super::overlay::{CharOffsetTsv, Overlay};
+use super::script::Script;
+use crate::error::{Result, ffi};
 
-//! Typst math → Unicode concealment.
-//!
-//! Scans Typst `$...$` math regions and replaces known symbol names
-//! (pi → π, alpha → α, etc.) with their Unicode equivalents.
-//!
-//! Only replaces names that are in the curated symbol table — single
-//! letter variables like `x`, `n`, `t` are left as-is.
-
-use super::overlay::Overlay;
-
-/// Common Typst math symbol names → Unicode replacements.
-/// Only names that have a distinct visual symbol — NOT single letters.
-///
-/// Sorted by key (byte-lexicographic) so `lookup_symbol` can binary-search
-/// instead of scanning all entries per word. The `typst_symbols_sorted`
-/// test enforces the ordering invariant.
 static TYPST_SYMBOLS: &[(&str, &str)] = &[
     ("CC", "ℂ"),
     ("Delta", "Δ"),
@@ -81,11 +65,6 @@ static TYPST_SYMBOLS: &[(&str, &str)] = &[
     ("zeta", "ζ"),
 ];
 
-/// Look up a Typst symbol name. Returns None for unknown names.
-/// This is the ONLY lookup — no fallback to the Julia table, which
-/// would match single letters and cause false positives.
-///
-/// `TYPST_SYMBOLS` is kept sorted by key so this is a binary search.
 fn lookup_symbol(name: &str) -> Option<&'static str> {
     TYPST_SYMBOLS
         .binary_search_by_key(&name, |&(k, _)| k)
@@ -93,200 +72,132 @@ fn lookup_symbol(name: &str) -> Option<&'static str> {
         .map(|i| TYPST_SYMBOLS[i].1)
 }
 
-/// Scan a Typst document and produce concealment overlays.
-pub fn scan_typst_math(text: &str) -> Vec<Overlay> {
-    let mut overlays = Vec::new();
+fn relation_glyph(pair: (u8, u8)) -> Option<&'static str> {
+    match pair {
+        (b'<', b'=') => Some("≤"),
+        (b'>', b'=') => Some("≥"),
+        (b'!', b'=') => Some("≠"),
+        (b'-', b'>') => Some("→"),
+        (b'<', b'-') => Some("←"),
+        (b'=', b'>') => Some("⇒"),
+        _ => None,
+    }
+}
+
+fn word_end(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.') {
+        i += 1;
+    }
+    i
+}
+
+fn closing_dollar(bytes: &[u8], from: usize) -> Option<usize> {
+    (from..bytes.len()).find(|&j| bytes[j] == b'$')
+}
+
+fn scan_typst_math(text: &str) -> Vec<Overlay> {
     let bytes = text.as_bytes();
-    let len = bytes.len();
+    let mut overlays = Vec::new();
     let mut i = 0;
 
-    while i < len {
+    while i < bytes.len() {
         if bytes[i] != b'$' {
             i += 1;
             continue;
         }
 
-        // Found a $. Determine if it's display or inline.
-        let dollar_start = i;
-        i += 1;
+        let open = i;
+        let content_start = open + 1;
+        let opens_a_display_block = (open == 0 || bytes[open - 1] == b'\n')
+            && matches!(bytes.get(content_start), Some(b'\n' | b' '));
 
-        // Display math: $ on its own line (preceded by newline or start of file,
-        // followed by newline or space)
-        let is_display = (dollar_start == 0 || bytes[dollar_start - 1] == b'\n')
-            && i < len
-            && (bytes[i] == b'\n' || bytes[i] == b' ');
-
-        // Find closing $
-        let content_start = i;
-        let closing = loop {
-            if i >= len {
-                break None;
-            }
-            if bytes[i] == b'$' {
-                break Some(i);
-            }
-            i += 1;
+        let Some(close) = closing_dollar(bytes, content_start) else {
+            break;
         };
 
-        let close = match closing {
-            Some(c) => c,
-            None => break,
-        };
-
-        // Hide the opening $
-        overlays.push(Overlay::hide(dollar_start));
-        // Hide the closing $
+        overlays.push(Overlay::hide(open));
         overlays.push(Overlay::hide(close));
-
-        // For display math, also hide the newline/space after opening $
-        // and any whitespace before closing $
-        if is_display && content_start < len && bytes[content_start] == b'\n' {
+        if opens_a_display_block && bytes.get(content_start) == Some(&b'\n') {
             overlays.push(Overlay::hide(content_start));
         }
 
-        // Scan content for symbol replacements
         scan_content(&text[content_start..close], content_start, &mut overlays);
-
         i = close + 1;
     }
 
     overlays
 }
 
-/// Scan math content for known symbol names and sub/superscript digits.
 fn scan_content(content: &str, base: usize, overlays: &mut Vec<Overlay>) {
     let bytes = content.as_bytes();
-    let len = bytes.len();
     let mut i = 0;
 
-    while i < len {
-        // Words: alphabetic + dots (for "plus.minus" etc.)
+    while i < bytes.len() {
         if bytes[i].is_ascii_alphabetic() {
-            let start = i;
-            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.') {
-                i += 1;
+            let end = word_end(bytes, i);
+            if let Some(glyph) = lookup_symbol(&content[i..end]) {
+                overlays.push(Overlay::at(base + i, glyph));
+                overlays.extend((i + 1..end).map(|k| Overlay::hide(base + k)));
             }
-            let word = &content[start..i];
-            if let Some(repl) = lookup_symbol(word) {
-                overlays.push(Overlay::at(base + start, repl));
-                for k in (start + 1)..i {
-                    overlays.push(Overlay::hide(base + k));
-                }
-            }
+            i = end;
             continue;
         }
 
-        // ^digit → superscript
-        if bytes[i] == b'^'
-            && i + 1 < len
-            && bytes[i + 1].is_ascii_digit()
-            && let Some(sup) = super_digit(bytes[i + 1])
+        if let Some(script) = Script::marked_by(bytes[i])
+            && let Some(&next) = bytes.get(i + 1)
+            && next.is_ascii_digit()
+            && let Some(glyph) = script.of_char(next as char)
         {
-            overlays.push(Overlay::at(base + i, sup));
+            overlays.push(Overlay::at(base + i, glyph));
             overlays.push(Overlay::hide(base + i + 1));
             i += 2;
             continue;
         }
 
-        // _digit → subscript
-        if bytes[i] == b'_'
-            && i + 1 < len
-            && bytes[i + 1].is_ascii_digit()
-            && let Some(sub) = sub_digit(bytes[i + 1])
+        if let Some(&next) = bytes.get(i + 1)
+            && let Some(glyph) = relation_glyph((bytes[i], next))
         {
-            overlays.push(Overlay::at(base + i, sub));
+            overlays.push(Overlay::at(base + i, glyph));
             overlays.push(Overlay::hide(base + i + 1));
             i += 2;
             continue;
-        }
-
-        // <= → ≤, >= → ≥, != → ≠
-        if i + 1 < len {
-            let pair = (bytes[i], bytes[i + 1]);
-            let repl = match pair {
-                (b'<', b'=') => Some("≤"),
-                (b'>', b'=') => Some("≥"),
-                (b'!', b'=') => Some("≠"),
-                (b'-', b'>') => Some("→"),
-                (b'<', b'-') => Some("←"),
-                (b'=', b'>') => Some("⇒"),
-                _ => None,
-            };
-            if let Some(r) = repl {
-                overlays.push(Overlay::at(base + i, r));
-                overlays.push(Overlay::hide(base + i + 1));
-                i += 2;
-                continue;
-            }
         }
 
         i += 1;
     }
 }
 
-fn super_digit(b: u8) -> Option<&'static str> {
-    match b {
-        b'0' => Some("⁰"),
-        b'1' => Some("¹"),
-        b'2' => Some("²"),
-        b'3' => Some("³"),
-        b'4' => Some("⁴"),
-        b'5' => Some("⁵"),
-        b'6' => Some("⁶"),
-        b'7' => Some("⁷"),
-        b'8' => Some("⁸"),
-        b'9' => Some("⁹"),
-        _ => None,
-    }
-}
-
-fn sub_digit(b: u8) -> Option<&'static str> {
-    match b {
-        b'0' => Some("₀"),
-        b'1' => Some("₁"),
-        b'2' => Some("₂"),
-        b'3' => Some("₃"),
-        b'4' => Some("₄"),
-        b'5' => Some("₅"),
-        b'6' => Some("₆"),
-        b'7' => Some("₇"),
-        b'8' => Some("₈"),
-        b'9' => Some("₉"),
-        _ => None,
-    }
-}
-
-/// Convert overlays to tab-separated format for the Steel plugin.
+#[allow(clippy::needless_pass_by_value)]
 pub fn typst_overlays_to_tsv(text: String) -> String {
-    let byte_to_char = super::conceal::build_byte_to_char_map(&text);
-    let doc_char_len = text.chars().count();
-    let overlays = scan_typst_math(&text);
-    let mut out = String::new();
+    ffi(typst_overlay_rows(&text))
+}
 
-    for overlay in &overlays {
-        let char_offset = byte_to_char
-            .get(overlay.offset)
-            .copied()
-            .unwrap_or_else(|| text[..overlay.offset.min(text.len())].chars().count());
-        if char_offset < doc_char_len {
-            out.push_str(&char_offset.to_string());
-            out.push('\t');
-            out.push_str(&overlay.replacement);
-            out.push('\n');
-        }
+fn typst_overlay_rows(text: &str) -> Result<String> {
+    let offsets = CharOffsets::of(text);
+    let mut tsv = CharOffsetTsv::new(&offsets);
+    for overlay in scan_typst_math(text) {
+        tsv.push(overlay.offset, &overlay.replacement)?;
     }
-
-    out
+    Ok(tsv.into_rows())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn glyphs(text: &str) -> Vec<String> {
+        scan_typst_math(text)
+            .into_iter()
+            .map(|o| o.replacement.into_owned())
+            .collect()
+    }
+
+    fn hidden_count(text: &str) -> usize {
+        glyphs(text).iter().filter(|r| r.is_empty()).count()
+    }
+
     #[test]
     fn typst_symbols_sorted() {
-        // `lookup_symbol` binary-searches this table; the keys must stay
-        // strictly sorted (byte-lexicographic) or lookups silently miss.
         assert!(
             TYPST_SYMBOLS.windows(2).all(|w| w[0].0 < w[1].0),
             "TYPST_SYMBOLS must be sorted by key with no duplicates"
@@ -295,77 +206,47 @@ mod tests {
 
     #[test]
     fn inline_math_alpha() {
-        let text = "for $alpha in RR$.";
-        let overlays = scan_typst_math(text);
-        assert!(
-            overlays.iter().any(|o| o.replacement == "α"),
-            "no α: {overlays:?}"
-        );
-        assert!(
-            overlays.iter().any(|o| o.replacement == "ℝ"),
-            "no ℝ: {overlays:?}"
-        );
-        // $ delimiters hidden
-        let hidden: Vec<_> = overlays
-            .iter()
-            .filter(|o| o.replacement.is_empty())
-            .collect();
-        assert!(hidden.len() >= 2, "$ not hidden: {overlays:?}");
+        let found = glyphs("for $alpha in RR$.");
+        assert!(found.iter().any(|r| r == "α"), "no α: {found:?}");
+        assert!(found.iter().any(|r| r == "ℝ"), "no ℝ: {found:?}");
+        assert!(hidden_count("for $alpha in RR$.") >= 2);
     }
 
     #[test]
     fn display_math_block() {
         let text = "defined by\n$\n  y_n = x_n - alpha^2  x_(n-2)\n$\nfor some";
-        let overlays = scan_typst_math(text);
+        let found = glyphs(text);
+        assert!(found.iter().any(|r| r == "α"), "no α: {found:?}");
+        assert!(found.iter().any(|r| r == "²"), "no ²: {found:?}");
         assert!(
-            overlays.iter().any(|o| o.replacement == "α"),
-            "no α: {overlays:?}"
-        );
-        assert!(
-            overlays.iter().any(|o| o.replacement == "²"),
-            "no ²: {overlays:?}"
-        );
-        // Single-letter vars x, y, n should NOT be replaced
-        assert!(
-            !overlays
-                .iter()
-                .any(|o| o.replacement == "x" || o.replacement == "n" || o.replacement == "y"),
-            "single letters replaced: {overlays:?}"
+            !found.iter().any(|r| r == "x" || r == "n" || r == "y"),
+            "single letters replaced: {found:?}"
         );
     }
 
     #[test]
     fn no_false_positives_in_text() {
-        let text = "Consider the system defined by something.";
-        let overlays = scan_typst_math(text);
-        assert!(
-            overlays.is_empty(),
-            "text outside $ got overlays: {overlays:?}"
-        );
+        assert!(scan_typst_math("Consider the system defined by something.").is_empty());
     }
 
     #[test]
     fn operator_conceal() {
-        let text = "$x <= y$";
-        let overlays = scan_typst_math(text);
-        assert!(
-            overlays.iter().any(|o| o.replacement == "≤"),
-            "no ≤: {overlays:?}"
-        );
+        assert!(glyphs("$x <= y$").iter().any(|r| r == "≤"));
     }
 
     #[test]
     fn dollar_hidden() {
-        let text = "value $pi$ ok";
-        let overlays = scan_typst_math(text);
-        let hidden: Vec<_> = overlays
-            .iter()
-            .filter(|o| o.replacement.is_empty())
-            .collect();
-        assert!(hidden.len() >= 2, "$ delimiters not hidden: {overlays:?}");
-        assert!(
-            overlays.iter().any(|o| o.replacement == "π"),
-            "no π: {overlays:?}"
-        );
+        assert!(hidden_count("value $pi$ ok") >= 2);
+        assert!(glyphs("value $pi$ ok").iter().any(|r| r == "π"));
+    }
+
+    #[test]
+    fn tsv_rows_carry_char_offsets() {
+        let rows = typst_overlays_to_tsv("é $pi$".to_string());
+        let pi = rows
+            .lines()
+            .find(|line| line.ends_with("\tπ"))
+            .expect("π row");
+        assert_eq!(pi.split_once('\t').unwrap().0, "3");
     }
 }

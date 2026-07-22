@@ -1,18 +1,21 @@
 use crate::animation::decoder::DecodedFrame;
 #[cfg(test)]
 use crate::animation::renderer::select_renderer;
-use crate::animation::renderer::{
-    AnimationRenderer, RenderContext, RendererCapabilities, RendererEntry, TerminalCaps,
-};
-use crate::animation::renderers::encode_rgba_to_png;
+use crate::animation::renderer::{AnimationRenderer, RendererEntry, TerminalCaps};
+use crate::animation::renderers::png;
+use crate::error::Result;
 
 pub struct StaticFallbackRenderer {
     last_id: Option<u64>,
 }
 
 impl StaticFallbackRenderer {
+    pub fn boxed() -> Box<dyn AnimationRenderer> {
+        Box::new(StaticFallbackRenderer { last_id: None })
+    }
+
     pub fn try_new(_caps: &TerminalCaps) -> Option<Box<dyn AnimationRenderer>> {
-        Some(Box::new(StaticFallbackRenderer { last_id: None }))
+        Some(Self::boxed())
     }
 }
 
@@ -25,20 +28,13 @@ impl AnimationRenderer for StaticFallbackRenderer {
         "static-fallback"
     }
 
-    fn capabilities(&self) -> RendererCapabilities {
-        RendererCapabilities {
-            supports_native_animation: false,
-            supports_diff_frames: false,
-            max_dimensions: None,
-        }
-    }
-
-    fn transmit_frame(&mut self, frame: &DecodedFrame, _ctx: &RenderContext) -> Vec<u8> {
+    fn transmit_frame(&mut self, frame: &DecodedFrame, _engine_id: u64) -> Result<Vec<u8>> {
         if Some(frame.content_id) == self.last_id {
-            return Vec::new();
+            return Ok(Vec::new());
         }
+        let png = png::encode_rgba(frame.rgba.as_ref(), frame.width, frame.height)?;
         self.last_id = Some(frame.content_id);
-        encode_rgba_to_png(frame.rgba.as_ref(), frame.width, frame.height)
+        Ok(png)
     }
 }
 
@@ -61,47 +57,23 @@ mod tests {
 
     #[test]
     fn static_fallback_emits_png_first_call() {
-        let caps = TerminalCaps::default();
-        let mut r = StaticFallbackRenderer::try_new(&caps).unwrap();
-        let bytes = r.transmit_frame(
-            &make_frame(7),
-            &RenderContext {
-                engine_id: 1,
-                cell_position: (0, 0),
-                previous_content_id: None,
-            },
-        );
+        let mut renderer = StaticFallbackRenderer::try_new(&TerminalCaps::default()).unwrap();
+        let bytes = renderer.transmit_frame(&make_frame(7), 1).unwrap();
         assert!(!bytes.is_empty());
         assert_eq!(&bytes[0..4], b"\x89PNG");
     }
 
     #[test]
     fn static_fallback_skips_same_content() {
-        let caps = TerminalCaps::default();
-        let mut r = StaticFallbackRenderer::try_new(&caps).unwrap();
-        let _ = r.transmit_frame(
-            &make_frame(7),
-            &RenderContext {
-                engine_id: 1,
-                cell_position: (0, 0),
-                previous_content_id: None,
-            },
-        );
-        let bytes = r.transmit_frame(
-            &make_frame(7),
-            &RenderContext {
-                engine_id: 1,
-                cell_position: (0, 0),
-                previous_content_id: Some(7),
-            },
-        );
+        let mut renderer = StaticFallbackRenderer::try_new(&TerminalCaps::default()).unwrap();
+        let _ = renderer.transmit_frame(&make_frame(7), 1).unwrap();
+        let bytes = renderer.transmit_frame(&make_frame(7), 1).unwrap();
         assert!(bytes.is_empty());
     }
 
     #[test]
     fn select_renderer_returns_static_when_no_kitty() {
-        let caps = TerminalCaps::default();
-        let r = select_renderer(&caps);
-        assert_eq!(r.name(), "static-fallback");
+        let renderer = select_renderer(&TerminalCaps::default());
+        assert_eq!(renderer.name(), "static-fallback");
     }
 }

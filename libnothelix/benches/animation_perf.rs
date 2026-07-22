@@ -1,300 +1,228 @@
-//! Animation perf characterisation. Runs the tick loop and records
-//! per-frame work, encode throughput, and idle cost so we can argue
-//! about battery and CPU budget with concrete numbers, not adjectives.
-//!
-//! Run: cargo run --release --features gif --bench animation_perf
-
-use std::time::{Duration, Instant};
-
-use nothelix::animation::decoders::gif::GifSource;
+use nothelix::animation::decoders::gif;
 use nothelix::animation::engine::AnimationEngine;
-use nothelix::animation::renderer::{TerminalCaps, select_renderer};
+use nothelix::animation::renderer::{AnimationRenderer, TerminalCaps, select_renderer};
 use nothelix::animation::renderers::kitty_replay::KittyReplayRenderer;
 use nothelix::animation::renderers::static_fallback::StaticFallbackRenderer;
+use std::time::{Duration, Instant};
 
-/// Inline fixture builder (the test fixture lives behind #[cfg(test)] so the
-/// bench rebuilds the same 4-frame 32x32 GIF here).
-fn tiny_gif_bytes() -> Vec<u8> {
-    use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
-    let mut buf = Vec::new();
-    {
-        let mut enc = GifEncoder::new(&mut buf);
-        enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
-            .unwrap();
-        for k in 0..4u8 {
-            let mut img = RgbaImage::new(32, 32);
-            for p in img.pixels_mut() {
-                *p = ::image::Rgba([k * 60, 0, 255 - k * 60, 255]);
-            }
-            let frame = Frame::from_parts(
-                img,
-                0,
-                0,
-                Delay::from_saturating_duration(Duration::from_millis(100)),
-            );
-            enc.encode_frame(frame).unwrap();
-        }
-    }
-    buf
-}
+const NATIVE_FRAME_PERIOD: Duration = Duration::from_millis(100);
+const TINY_SIDE: u32 = 32;
+const PLOTS_SIDE: u32 = 480;
+const FIXTURE_FRAMES: u32 = 4;
 
 fn main() {
     println!("animation perf — release build");
     bench_decode();
-    bench_tick_static_fallback();
-    bench_tick_kitty_replay();
+    bench_tick("static fallback (PNG re-encode)", 1, static_fallback());
+    bench_tick("kitty replay (PNG + Kitty APC)", 2, kitty_replay());
     bench_idle_no_animations();
     bench_dedup_skip();
     bench_steady_state_fps();
     bench_large_frame();
 }
 
-/// Build a 4-frame animated GIF at the given dimension.
+struct TickTally {
+    emitted: u32,
+    wire_bytes: usize,
+    work: Duration,
+}
+
+impl TickTally {
+    fn mean_work_per_frame(&self) -> Duration {
+        self.work
+            .checked_div(self.emitted)
+            .unwrap_or(Duration::ZERO)
+    }
+
+    fn mean_bytes_per_frame(&self) -> usize {
+        self.wire_bytes
+            .checked_div(self.emitted as usize)
+            .unwrap_or(0)
+    }
+
+    fn throughput_kb_per_sec(&self) -> f64 {
+        (self.wire_bytes as f64 / 1024.0) / self.work.as_secs_f64()
+    }
+
+    fn core_utilisation_pct(&self, wall_clock: Duration) -> f64 {
+        (self.work.as_secs_f64() / wall_clock.as_secs_f64()) * 100.0
+    }
+}
+
+fn drive(engine: &mut AnimationEngine, ticks: u32, period: Duration) -> TickTally {
+    let start = Instant::now();
+    let mut tally = TickTally {
+        emitted: 0,
+        wire_bytes: 0,
+        work: Duration::ZERO,
+    };
+    for tick in 0..ticks {
+        let began = Instant::now();
+        if let Some(output) = engine.tick(start + period * tick)
+            && !output.bytes.is_empty()
+        {
+            tally.wire_bytes += output.bytes.len();
+            tally.emitted += 1;
+        }
+        tally.work += began.elapsed();
+    }
+    tally
+}
+
 fn animated_gif(side: u32, frames: u32) -> Vec<u8> {
     use ::image::{Delay, Frame, RgbaImage, codecs::gif::GifEncoder};
     let mut buf = Vec::new();
     {
-        let mut enc = GifEncoder::new(&mut buf);
-        enc.set_repeat(::image::codecs::gif::Repeat::Infinite)
-            .unwrap();
-        for k in 0..frames as u8 {
-            let mut img = RgbaImage::new(side, side);
-            for p in img.pixels_mut() {
-                *p = ::image::Rgba([
-                    k.wrapping_mul(60),
+        let mut encoder = GifEncoder::new(&mut buf);
+        encoder
+            .set_repeat(::image::codecs::gif::Repeat::Infinite)
+            .expect("set gif repeat");
+        for step in 0..frames as u8 {
+            let mut image = RgbaImage::new(side, side);
+            for pixel in image.pixels_mut() {
+                *pixel = ::image::Rgba([
+                    step.wrapping_mul(60),
                     0,
-                    255u8.wrapping_sub(k.wrapping_mul(60)),
+                    255u8.wrapping_sub(step.wrapping_mul(60)),
                     255,
                 ]);
             }
-            let frame = Frame::from_parts(
-                img,
-                0,
-                0,
-                Delay::from_saturating_duration(Duration::from_millis(100)),
-            );
-            enc.encode_frame(frame).unwrap();
+            encoder
+                .encode_frame(Frame::from_parts(
+                    image,
+                    0,
+                    0,
+                    Delay::from_saturating_duration(NATIVE_FRAME_PERIOD),
+                ))
+                .expect("encode gif frame");
         }
     }
     buf
 }
 
-fn bench_large_frame() {
-    println!("\n[large frame] 480x480 4-frame GIF (≈ Plots.jl default size)");
-    let bytes = animated_gif(480, 4);
-    println!("  source size: {} bytes", bytes.len());
-    let dec = GifSource::open(&bytes).unwrap();
-    let caps = TerminalCaps {
-        kitty_graphics: true,
-        kitty_animation_protocol: false,
-        max_fps: 60,
-    };
-    let r = KittyReplayRenderer::try_new(&caps).unwrap();
-    let mut eng = AnimationEngine::new(99, dec, r, 64 * 1024 * 1024);
-
-    let start = Instant::now();
-    let mut frame_bytes = 0usize;
-    let mut frames = 0u32;
-    let mut tick_total = Duration::ZERO;
-    for i in 0..40u32 {
-        let now = start + Duration::from_millis(i as u64 * 100);
-        let t0 = Instant::now();
-        if let Some(out) = eng.tick(now)
-            && !out.bytes.is_empty()
-        {
-            frame_bytes += out.bytes.len();
-            frames += 1;
-        }
-        tick_total += t0.elapsed();
-    }
-    println!(
-        "  40 ticks (4 unique frames × 10 cycles): {} unique-frame emissions, mean per-emitted-frame {:?}, total wire bytes {} ({} B/frame)",
-        frames,
-        if frames > 0 {
-            tick_total / frames
-        } else {
-            Duration::ZERO
-        },
-        frame_bytes,
-        if frames > 0 {
-            frame_bytes / frames as usize
-        } else {
-            0
-        },
-    );
-    let cpu_pct = (tick_total.as_secs_f64() / 4.0) * 100.0; // 4 sec wall-clock for 40 ticks @ 100ms
-    println!(
-        "  → at 10 fps native rate, CPU budget: {:.4}% of one core",
-        cpu_pct
-    );
+fn tiny_gif() -> Vec<u8> {
+    animated_gif(TINY_SIDE, FIXTURE_FRAMES)
 }
 
-fn time<F: FnMut()>(label: &str, iters: u32, mut f: F) -> Duration {
+fn gif_engine(id: u64, bytes: &[u8], renderer: Box<dyn AnimationRenderer>) -> AnimationEngine {
+    let decoder = gif::open(bytes).expect("decode gif fixture");
+    AnimationEngine::new(id, decoder, renderer)
+}
+
+fn static_fallback() -> Box<dyn AnimationRenderer> {
+    StaticFallbackRenderer::try_new(&TerminalCaps::default()).expect("static fallback renderer")
+}
+
+fn kitty_replay() -> Box<dyn AnimationRenderer> {
+    KittyReplayRenderer::try_new(&TerminalCaps::HOST_DEFAULT).expect("kitty replay renderer")
+}
+
+fn time<F: FnMut()>(label: &str, iters: u32, mut body: F) -> Duration {
     let start = Instant::now();
     for _ in 0..iters {
-        f();
+        body();
     }
     let elapsed = start.elapsed();
-    let per = elapsed / iters;
-    println!(
-        "  {:32}  {} iters,  total {:>8.3?},  per-iter {:>8.3?}",
-        label, iters, elapsed, per
-    );
-    per
+    let per_iter = elapsed / iters;
+    println!("  {label:32}  {iters} iters,  total {elapsed:>8.3?},  per-iter {per_iter:>8.3?}");
+    per_iter
 }
 
 fn bench_decode() {
-    println!("\n[decode] open + frame_at on tiny 4-frame 32x32 GIF");
-    let bytes = tiny_gif_bytes();
+    println!(
+        "\n[decode] open + frame_at on tiny {FIXTURE_FRAMES}-frame {TINY_SIDE}x{TINY_SIDE} GIF"
+    );
+    let bytes = tiny_gif();
     println!("  fixture size: {} bytes", bytes.len());
 
-    let _ = time("open()", 1000, || {
-        let _ = GifSource::open(&bytes).unwrap();
+    time("open()", 1_000, || {
+        let _ = gif::open(&bytes).expect("decode gif fixture");
     });
 
-    let mut dec = GifSource::open(&bytes).unwrap();
-    let _ = time("frame_at(150ms)", 100_000, || {
-        let _ = dec.frame_at(Duration::from_millis(150)).unwrap();
+    let mut decoder = gif::open(&bytes).expect("decode gif fixture");
+    time("frame_at(150ms)", 100_000, || {
+        let _ = decoder
+            .frame_at(Duration::from_millis(150))
+            .expect("frame at 150ms");
     });
 }
 
-fn bench_tick_static_fallback() {
-    println!("\n[tick — static fallback (PNG re-encode)] tiny GIF, 32x32");
-    let bytes = tiny_gif_bytes();
-    let dec = GifSource::open(&bytes).unwrap();
-    let r = StaticFallbackRenderer::try_new(&TerminalCaps::default()).unwrap();
-    let mut eng = AnimationEngine::new(1, dec, r, 1_000_000);
-    let start = Instant::now();
-    let mut frame_bytes = 0usize;
-    let mut frames = 0u32;
-    for i in 0..1000u32 {
-        let now = start + Duration::from_millis(i as u64 * 100);
-        if let Some(out) = eng.tick(now)
-            && !out.bytes.is_empty()
-        {
-            frame_bytes += out.bytes.len();
-            frames += 1;
-        }
-    }
-    let elapsed = start.elapsed();
+fn bench_tick(label: &str, id: u64, renderer: Box<dyn AnimationRenderer>) {
+    println!("\n[tick — {label}] tiny GIF, {TINY_SIDE}x{TINY_SIDE}");
+    let mut engine = gif_engine(id, &tiny_gif(), renderer);
+    let tally = drive(&mut engine, 1_000, NATIVE_FRAME_PERIOD);
     println!(
-        "  1000 ticks, {} frames emitted, total bytes {}, mean per-tick {:.3?}, throughput {:.1} kB/s",
-        frames,
-        frame_bytes,
-        elapsed / 1000,
-        (frame_bytes as f64 / 1024.0) / elapsed.as_secs_f64()
-    );
-}
-
-fn bench_tick_kitty_replay() {
-    println!("\n[tick — kitty replay (PNG + Kitty APC)] tiny GIF, 32x32");
-    let bytes = tiny_gif_bytes();
-    let dec = GifSource::open(&bytes).unwrap();
-    let caps = TerminalCaps {
-        kitty_graphics: true,
-        kitty_animation_protocol: false,
-        max_fps: 60,
-    };
-    let r = KittyReplayRenderer::try_new(&caps).unwrap();
-    let mut eng = AnimationEngine::new(2, dec, r, 1_000_000);
-    let start = Instant::now();
-    let mut frame_bytes = 0usize;
-    let mut frames = 0u32;
-    for i in 0..1000u32 {
-        let now = start + Duration::from_millis(i as u64 * 100);
-        if let Some(out) = eng.tick(now)
-            && !out.bytes.is_empty()
-        {
-            frame_bytes += out.bytes.len();
-            frames += 1;
-        }
-    }
-    let elapsed = start.elapsed();
-    println!(
-        "  1000 ticks, {} frames emitted, total bytes {}, mean per-tick {:.3?}, throughput {:.1} kB/s",
-        frames,
-        frame_bytes,
-        elapsed / 1000,
-        (frame_bytes as f64 / 1024.0) / elapsed.as_secs_f64()
+        "  1000 ticks, {} frames emitted, total bytes {}, work-time {:.3?}, throughput {:.1} kB/s",
+        tally.emitted,
+        tally.wire_bytes,
+        tally.work,
+        tally.throughput_kb_per_sec()
     );
 }
 
 fn bench_idle_no_animations() {
     println!("\n[idle] inventory selection cost when no engines registered");
-    let caps = TerminalCaps::default();
-    let _ = time("select_renderer(no kitty)", 100_000, || {
-        let _ = select_renderer(&caps);
+    time("select_renderer(no kitty)", 100_000, || {
+        let _ = select_renderer(&TerminalCaps::default());
     });
-    let caps = TerminalCaps {
-        kitty_graphics: true,
-        kitty_animation_protocol: false,
-        max_fps: 60,
-    };
-    let _ = time("select_renderer(kitty)", 100_000, || {
-        let _ = select_renderer(&caps);
+    time("select_renderer(kitty)", 100_000, || {
+        let _ = select_renderer(&TerminalCaps::HOST_DEFAULT);
     });
 }
 
 fn bench_dedup_skip() {
-    println!("\n[dedup] skip-on-content-id (renderer should return empty Vec)");
-    let bytes = tiny_gif_bytes();
-    let dec = GifSource::open(&bytes).unwrap();
-    let r = StaticFallbackRenderer::try_new(&TerminalCaps::default()).unwrap();
-    let mut eng = AnimationEngine::new(3, dec, r, 1_000_000);
-    // First tick to seed last_content_id
+    println!("\n[dedup] skip-on-content-id (renderer returns empty bytes)");
+    let mut engine = gif_engine(3, &tiny_gif(), static_fallback());
     let now = Instant::now();
-    let _ = eng.tick(now);
-    // Subsequent ticks at same time → same frame → renderer skips
-    let elapsed = time("tick same-frame (dedup)", 100_000, || {
-        let _ = eng.tick(now);
+    let _ = engine.tick(now);
+    let per_tick = time("tick same-frame (dedup)", 100_000, || {
+        let _ = engine.tick(now);
     });
     println!(
-        "  dedup hot-path per-tick: {:.3?}  (this is the cost when an animation is paused on its current frame)",
-        elapsed
+        "  dedup hot-path per-tick: {per_tick:.3?}  (the cost while an animation sits paused on its current frame)"
     );
 }
 
 fn bench_steady_state_fps() {
     println!("\n[fps cap] simulate 60 fps drive of one engine for 1 second");
-    let bytes = tiny_gif_bytes();
-    let dec = GifSource::open(&bytes).unwrap();
-    let caps = TerminalCaps {
-        kitty_graphics: true,
-        kitty_animation_protocol: false,
-        max_fps: 60,
-    };
-    let r = KittyReplayRenderer::try_new(&caps).unwrap();
-    let mut eng = AnimationEngine::new(4, dec, r, 1_000_000);
-    let start = Instant::now();
-    let frames_per_sec = 60u32;
-    let frame_period = Duration::from_secs_f64(1.0 / frames_per_sec as f64);
-    let mut total_bytes = 0usize;
-    let mut frames_emitted = 0u32;
-    let mut work_time = Duration::ZERO;
-    for i in 0..frames_per_sec {
-        let now = start + frame_period * i;
-        let t0 = Instant::now();
-        if let Some(out) = eng.tick(now)
-            && !out.bytes.is_empty()
-        {
-            total_bytes += out.bytes.len();
-            frames_emitted += 1;
-        }
-        work_time += t0.elapsed();
-    }
+    let ticks = 60u32;
+    let second = Duration::from_secs(1);
+    let mut engine = gif_engine(4, &tiny_gif(), kitty_replay());
+    let tally = drive(&mut engine, ticks, second / ticks);
     println!(
-        "  60-tick second: {} frames emitted, {} bytes, work-time {:.3?} ({:.4}% CPU at 60fps)",
-        frames_emitted,
-        total_bytes,
-        work_time,
-        (work_time.as_secs_f64() / 1.0) * 100.0
+        "  {}-tick second: {} frames emitted, {} bytes, work-time {:.3?} ({:.4}% CPU at 60fps)",
+        ticks,
+        tally.emitted,
+        tally.wire_bytes,
+        tally.work,
+        tally.core_utilisation_pct(second)
     );
     println!(
         "  → mean wire bytes per emitted frame: {} B",
-        if frames_emitted > 0 {
-            total_bytes / frames_emitted as usize
-        } else {
-            0
-        }
+        tally.mean_bytes_per_frame()
+    );
+}
+
+fn bench_large_frame() {
+    println!(
+        "\n[large frame] {PLOTS_SIDE}x{PLOTS_SIDE} {FIXTURE_FRAMES}-frame GIF (≈ Plots.jl default size)"
+    );
+    let bytes = animated_gif(PLOTS_SIDE, FIXTURE_FRAMES);
+    println!("  source size: {} bytes", bytes.len());
+    let ticks = 40u32;
+    let mut engine = gif_engine(99, &bytes, kitty_replay());
+    let tally = drive(&mut engine, ticks, NATIVE_FRAME_PERIOD);
+    println!(
+        "  {} ticks ({} unique frames × 10 cycles): {} unique-frame emissions, mean per-emitted-frame {:?}, total wire bytes {} ({} B/frame)",
+        ticks,
+        FIXTURE_FRAMES,
+        tally.emitted,
+        tally.mean_work_per_frame(),
+        tally.wire_bytes,
+        tally.mean_bytes_per_frame(),
+    );
+    println!(
+        "  → at 10 fps native rate, CPU budget: {:.4}% of one core",
+        tally.core_utilisation_pct(NATIVE_FRAME_PERIOD * ticks)
     );
 }

@@ -1,14 +1,4 @@
-//! Comprehensive corpus of LaTeX math expressions used to validate
-//! nothelix's LaTeX -> Typst -> SVG rendering pipeline.
-//!
-//! The corpus covers the categories requested for the audit:
-//! Euler identities, Fourier transforms, Taylor series, determinants,
-//! matrices, calculus, and advanced formulae.  Each entry pairs a
-//! human-readable name with the inner LaTeX math content (without
-//! surrounding display-math delimiters).
-
 pub const CORPUS: &[(&str, &str)] = &[
-    // Basic building blocks -------------------------------------------------
     ("euler_identity", "e^(i pi) + 1 = 0"),
     ("golden_ratio", "\\varphi = \\frac{1 + \\sqrt{5}}{2}"),
     (
@@ -19,7 +9,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "gamma_integral",
         "\\Gamma(n+1) = \\int_0^\\infty x^n e^{-x} \\, dx = n!",
     ),
-    // Fourier analysis ------------------------------------------------------
     (
         "fourier_transform",
         "\\hat{f}(\\xi) = \\int_{-\\infty}^{\\infty} f(x) \\, e^{-2\\pi i x \\xi} \\, dx",
@@ -32,7 +21,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "fourier_series",
         "f(x) \\sim \\sum_{n=-\\infty}^{\\infty} c_n \\, e^{i n \\pi x / L}",
     ),
-    // Taylor / series expansions --------------------------------------------
     ("taylor_exp", "e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!}"),
     (
         "taylor_sin",
@@ -46,7 +34,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "binomial_series",
         "(1+x)^\\alpha = \\sum_{n=0}^{\\infty} \\binom{\\alpha}{n} x^n",
     ),
-    // Determinants ----------------------------------------------------------
     (
         "det_2x2",
         "\\det(A) = \\begin{vmatrix} a & b \\\\ c & d \\end{vmatrix} = ad - bc",
@@ -56,7 +43,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "\\begin{vmatrix} a & b & c \\\\ d & e & f \\\\ g & h & i \\end{vmatrix}",
     ),
     ("characteristic_poly", "\\det(A - \\lambda I) = 0"),
-    // Matrices --------------------------------------------------------------
     (
         "matrix_3x3",
         "A = \\begin{pmatrix} 1 & 2 & 3 \\\\ 4 & 5 & 6 \\\\ 7 & 8 & 9 \\end{pmatrix}",
@@ -69,7 +55,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "matrix_bmatrix",
         "B = \\begin{bmatrix} \\lambda & 0 \\\\ 0 & \\lambda^{-1} \\end{bmatrix}",
     ),
-    // Calculus --------------------------------------------------------------
     (
         "derivative_limit",
         "\\frac{d}{dx} f(x) = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}",
@@ -99,7 +84,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "line_integral",
         "\\oint_C \\mathbf{F} \\cdot d\\mathbf{r} = \\iint_S (\\nabla \\times \\mathbf{F}) \\cdot d\\mathbf{S}",
     ),
-    // Differential equations / advanced -------------------------------------
     (
         "heat_equation",
         "\\frac{\\partial u}{\\partial t} = \\alpha \\nabla^2 u",
@@ -129,7 +113,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "path_integral",
         "\\langle q_f | e^{-iHt/\\hbar} | q_i \\rangle = \\int_{q(0)=q_i}^{q(t)=q_f} e^{iS[q]/\\hbar} \\, \\mathcal{D}q",
     ),
-    // Number theory / discrete ---------------------------------------------
     (
         "riemann_zeta",
         "\\zeta(s) = \\sum_{n=1}^{\\infty} \\frac{1}{n^s} = \\prod_{p \\text{ prime}} \\frac{1}{1 - p^{-s}}",
@@ -138,7 +121,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "euler_product",
         "\\zeta(s) = \\prod_{p} \\frac{1}{1 - p^{-s}}",
     ),
-    // Linear algebra --------------------------------------------------------
     ("eigenvalue", "A \\mathbf{v} = \\lambda \\mathbf{v}"),
     (
         "norm",
@@ -148,7 +130,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "inner_product",
         "\\langle u, v \\rangle = \\sum_{i=1}^{n} u_i \\overline{v_i}",
     ),
-    // Probability / statistics ----------------------------------------------
     (
         "gaussian",
         "f(x) = \\frac{1}{\\sigma\\sqrt{2\\pi}} \\exp\\left( -\\frac{(x-\\mu)^2}{2\\sigma^2} \\right)",
@@ -161,7 +142,6 @@ pub const CORPUS: &[(&str, &str)] = &[
         "variance",
         "\\operatorname{Var}(X) = \\mathbb{E}[(X - \\mu)^2]",
     ),
-    // Sets / logic ----------------------------------------------------------
     (
         "set_union",
         "A \\cup B = \\{ x \\mid x \\in A \\text{ or } x \\in B \\}",
@@ -170,11 +150,9 @@ pub const CORPUS: &[(&str, &str)] = &[
         "forall_exists",
         "\\forall \\varepsilon > 0 \\quad \\exists \\delta > 0 : |x - a| < \\delta \\implies |f(x) - L| < \\varepsilon",
     ),
-    // Accents / special -----------------------------------------------------
     ("accent_vector", "\\vec{v} = \\hat{i} + \\hat{j} + \\hat{k}"),
     ("accent_widehat", "\\widehat{AB}"),
     ("accent_widetilde", "\\widetilde{G}^{-1}(\\omega)"),
-    // Layout / structured ---------------------------------------------------
     (
         "aligned_equations",
         "\\begin{aligned} a &= b + c \\\\ d &= e + f \\end{aligned}",

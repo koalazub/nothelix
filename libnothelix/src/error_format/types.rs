@@ -1,11 +1,3 @@
-//! Structured-error data types exchanged with the Julia kernel.
-//!
-//! The kernel emits errors in two shapes: a fully structured JSON
-//! payload (`StructuredError`) and a plain stderr blob. Both flow into
-//! the same formatter, but the structured form carries cross-cell
-//! context (`VarContext`, `MethodCandidate`, `ScopeVarEntry`) that the
-//! formatter uses to enrich the rendered message.
-
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -28,21 +20,12 @@ pub struct StructuredError {
     pub cell_context: HashMap<String, VarContext>,
     #[serde(default)]
     pub unexecuted_deps: Vec<i64>,
-    /// Runtime type → list of in-scope variables currently of that type.
-    /// Populated by the kernel on `MethodError`. Empty when the kernel
-    /// isn't running or nothing has been executed yet.
     #[serde(default)]
     pub in_scope_variable_types: HashMap<String, Vec<ScopeVarEntry>>,
-    /// In-scope values the failing `MethodError`'s function *does* have
-    /// a method for. Populated for single-arg `MethodErrors`.
     #[serde(default)]
     pub method_candidates: Vec<MethodCandidate>,
-    /// The undefined symbols an `UndefVarError` named, in error order.
-    /// Populated by the static cross-cell enricher, never by the kernel.
     #[serde(skip)]
     pub undef_symbols: Vec<String>,
-    /// One cross-cell guidance line per entry in `undef_symbols`, aligned
-    /// by index — "`S` is defined in @cell K …", "`S` comes from `PKG` …".
     #[serde(skip)]
     pub undef_guidance: Vec<String>,
 }
@@ -65,26 +48,16 @@ pub struct MethodCandidate {
     pub cell: i64,
 }
 
-/// Where the formatter learned about a variable's defining cell. Each
-/// variant carries exactly the fields meaningful for its provenance.
-/// Serialized form uses a `source` tag — kernel must emit one of:
-///   {"`source":"executed","defined_in_cell":N,"status":"done`"}
-///   {"`source":"pending_registered","defined_in_cell":N`}
-///   {"`source":"static_source","defined_in_cell":N,"line_in_cell":L,"line_text"`:"…"}
 #[derive(Debug, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum VarContext {
-    /// Cell ran (success or error) — kernel `VARIABLE_SOURCES` had the
-    /// binding. `status` is `"done"` or `"error"`.
     Executed {
         defined_in_cell: i64,
         status: String,
     },
-    /// Cell is in the kernel's `CELLS` registry (source parsed by
-    /// `@cell`) but hasn't executed — AST says it would define the var.
-    PendingRegistered { defined_in_cell: i64 },
-    /// Static `.jl` scan found an assignment in a cell the kernel hasn't
-    /// seen yet. Carries the exact line for user navigation.
+    PendingRegistered {
+        defined_in_cell: i64,
+    },
     StaticSource {
         defined_in_cell: i64,
         line_in_cell: i64,

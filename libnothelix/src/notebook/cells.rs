@@ -1,370 +1,286 @@
-//! `.jl` cell parser + the `JlCell` type it produces.
-//!
-//! Notebook `.jl` files use a comment-based marker syntax that this
-//! module knows how to walk. Each section is delimited by `@cell`,
-//! `@markdown`, `@raw` or `@typst` markers; everything between markers
-//! is the cell body. We also strip `# @image <path>` lines from bodies
-//! and stash them on the cell so the converter can lift them into
-//! `display_data` outputs / `attachments`.
-
 use std::fs;
 
-use serde_json::Value;
-// ─── Cell types ───────────────────────────────────────────────────────────────
+use super::ipynb::sibling_path;
+use super::marker::{CellKind, Marker};
+use crate::error::{Error, Result};
 
-#[derive(Debug, PartialEq)]
-pub enum CellKind {
-    Code,
-    Markdown,
-    Typst,
-    /// nbformat `raw` cell — content passes through conversion verbatim
-    /// (never executed, never rendered as markdown). Stored in the .jl
-    /// with `# `-prefixed lines exactly like markdown bodies.
-    Raw,
-}
+const HEADER_PREFIX: &str = "# ═══ Nothelix Notebook: ";
+const HEADER_SUFFIX: &str = " ═══";
+const OUTPUT_OPEN: &str = "# ─── Output";
+const OUTPUT_CLOSE: &str = "# ─────────────";
+const IMAGE_MARKER: &str = "# @image ";
+const PREAMBLE_INDEX: isize = -1;
+const RETIRED_MACRO_PACKAGE: &str = "NothelixMacros";
 
-pub struct JlCell {
+pub(super) struct JlCell {
     pub index: isize,
     pub kind: CellKind,
     pub code: String,
     pub start_line: usize,
-    /// Trailing comment from the marker line, e.g. "# Q1" from "@markdown 3 # Q1".
-    /// Prepended to cell code during export so it appears in the ipynb.
     pub marker_comment: String,
-    /// Paths from `# @image <path>` markers inside this cell's body.
-    /// Stripped from `code` (the kernel doesn't need them as literal
-    /// comments, and in markdown they'd render as `@image foo.png`
-    /// prose), but preserved here so `convert_to_ipynb` can lift them
-    /// into portable forms — `display_data` outputs on code cells or
-    /// base64 `attachments` on markdown cells.
     pub images: Vec<String>,
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Extract the trailing comment from a marker line's "rest" portion.
-/// Input: "3 # Q1" or "5 :julia # answer" or "0" → "# Q1", "# answer", ""
-pub(super) fn extract_marker_comment(rest: &str) -> String {
-    if let Some(hash_pos) = rest.find(" #") {
-        // Everything from " #" onward, trimmed
-        let comment = rest[hash_pos + 1..].trim();
-        if comment.starts_with('#') {
-            return comment.to_string();
+impl JlCell {
+    fn opened_by(marker: Marker, start_line: usize) -> Self {
+        Self {
+            index: marker.index,
+            kind: marker.kind,
+            code: String::new(),
+            start_line,
+            marker_comment: marker.comment,
+            images: Vec::new(),
         }
     }
-    String::new()
 }
 
-/// Derive a sibling path by swapping a trailing `.jl` for `new_ext`
-/// (`".ipynb"`, `".md"`, …). Only the suffix is swapped — a plain
-/// `.replace(".jl", …)` would also rewrite `.jl` occurrences mid-path
-/// (`my.jl.backup.jl`, `proj.jl/nb.jl`) and corrupt the destination.
-/// Paths without the suffix get the extension appended.
-pub(super) fn jl_sibling_path(jl_path: &str, new_ext: &str) -> String {
-    match jl_path.strip_suffix(".jl") {
-        Some(stem) => format!("{stem}{new_ext}"),
-        None => format!("{jl_path}{new_ext}"),
-    }
-}
-
-/// Read and parse an `.ipynb` file.
-pub fn read_notebook(path: &str) -> Result<Value, String> {
-    let content = fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
-    serde_json::from_str(&content).map_err(|e| format!("Invalid JSON in {path}: {e}"))
-}
-
-/// Join notebook cell `source` lines into a single `String`.
-pub fn source_to_string(source: &Value) -> String {
-    match source {
-        Value::Array(lines) => {
-            let parts = lines.iter().map(|l| l.as_str().unwrap_or(""));
-            let mut out = String::with_capacity(parts.clone().map(str::len).sum());
-            for part in parts {
-                out.push_str(part);
-            }
-            out
-        }
-        Value::String(s) => s.clone(),
-        _ => String::new(),
-    }
-}
-
-/// True for a line that only loads `NothelixMacros` (`using`/`import`).
-///
-/// Older converted notebooks carried a `using NothelixMacros` preamble, and
-/// users sometimes paste it into a cell body. That package no longer exists —
-/// the kernel defines `@cell`/`@markdown` itself and JETLS masks the markers —
-/// so the line is dropped rather than forwarded to the kernel, where it would
-/// fail with "Package NothelixMacros not found in current path".
-fn is_nothelix_macros_load(line: &str) -> bool {
-    let code = line.split('#').next().unwrap_or("").trim();
-    for kw in ["using ", "import "] {
-        if let Some(rest) = code.strip_prefix(kw) {
-            let pkg = rest.trim_end_matches(';').trim();
-            if pkg == "NothelixMacros" {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Parse a `.jl` file into a list of cells and the originating `.ipynb` path.
-pub fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String), String> {
-    let content = fs::read_to_string(jl_path).map_err(|e| format!("Cannot read {jl_path}: {e}"))?;
+pub(super) fn parse_jl_file(jl_path: &str) -> Result<(Vec<JlCell>, String)> {
+    let content = fs::read_to_string(jl_path).map_err(|source| Error::reading(jl_path, source))?;
     let lines: Vec<&str> = content.lines().collect();
+    let source_path =
+        declared_source_path(&lines).unwrap_or_else(|| sibling_path(jl_path, ".ipynb"));
 
-    // Extract source .ipynb path from header.
-    let mut source_path = String::new();
-    for line in &lines {
-        if let Some(rest) = line.strip_prefix("# ═══ Nothelix Notebook: ") {
-            source_path = rest.trim_end_matches(" ═══").trim().to_string();
-            break;
-        }
-    }
-    if source_path.is_empty() {
-        source_path = jl_sibling_path(jl_path, ".ipynb");
-    }
-
-    // Locate cell markers.
-    //
-    // Match three shapes on each line:
-    //   `@cell N :lang`      (full marker, stamp N, record lang)
-    //   `@cell :lang`        (nothelix autofill produced it without
-    //                         an index yet — accept, assign index 0
-    //                         as a placeholder, the renumber pass
-    //                         later fixes it)
-    //   `@cell`              (bare — user typed it and the autofill
-    //                         hasn't fired yet; still a boundary)
-    //
-    // …and equivalent shapes for `@markdown`. Before we only matched
-    // `@cell ` (with trailing space), so bare `@cell` lines slipped
-    // through and got shipped into the Julia kernel where they
-    // detonated with `MethodError: no method matching var"@cell"`.
-    let mut cells: Vec<JlCell> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim_end() == "@cell" {
-            cells.push(JlCell {
-                index: 0,
-                kind: CellKind::Code,
-                code: String::new(),
-                start_line: i,
-                marker_comment: String::new(),
-                images: Vec::new(),
-            });
-        } else if let Some(rest) = line.strip_prefix("@cell ") {
-            let rest = rest.trim();
-            let first = rest.split_whitespace().next().unwrap_or("");
-            let idx: isize = first.parse().unwrap_or(0);
-            cells.push(JlCell {
-                index: idx,
-                kind: CellKind::Code,
-                code: String::new(),
-                start_line: i,
-                marker_comment: extract_marker_comment(rest),
-                images: Vec::new(),
-            });
-        } else if line.trim_end() == "@markdown" {
-            cells.push(JlCell {
-                index: 0,
-                kind: CellKind::Markdown,
-                code: String::new(),
-                start_line: i,
-                marker_comment: String::new(),
-                images: Vec::new(),
-            });
-        } else if let Some(rest) = line.strip_prefix("@markdown ") {
-            let first = rest.split_whitespace().next().unwrap_or("");
-            let idx: isize = first.parse().unwrap_or(0);
-            cells.push(JlCell {
-                index: idx,
-                kind: CellKind::Markdown,
-                code: String::new(),
-                start_line: i,
-                marker_comment: extract_marker_comment(rest),
-                images: Vec::new(),
-            });
-        } else if line.trim_end() == "@raw" {
-            cells.push(JlCell {
-                index: 0,
-                kind: CellKind::Raw,
-                code: String::new(),
-                start_line: i,
-                marker_comment: String::new(),
-                images: Vec::new(),
-            });
-        } else if let Some(rest) = line.strip_prefix("@raw ") {
-            let first = rest.split_whitespace().next().unwrap_or("");
-            let idx: isize = first.parse().unwrap_or(0);
-            cells.push(JlCell {
-                index: idx,
-                kind: CellKind::Raw,
-                code: String::new(),
-                start_line: i,
-                marker_comment: extract_marker_comment(rest),
-                images: Vec::new(),
-            });
-        } else if line.trim_end() == "@typst" {
-            cells.push(JlCell {
-                index: 0,
-                kind: CellKind::Typst,
-                code: String::new(),
-                start_line: i,
-                marker_comment: String::new(),
-                images: Vec::new(),
-            });
-        } else if let Some(rest) = line.strip_prefix("@typst ") {
-            let first = rest.split_whitespace().next().unwrap_or("");
-            let idx: isize = first.parse().unwrap_or(0);
-            cells.push(JlCell {
-                index: idx,
-                kind: CellKind::Typst,
-                code: String::new(),
-                start_line: i,
-                marker_comment: extract_marker_comment(rest),
-                images: Vec::new(),
-            });
-        }
-    }
-
-    // If there's non-empty code before the first cell marker, insert
-    // an implicit preamble cell at index -1. This handles `using X`
-    // lines at the top of the file that need to execute before any cell.
-    //
-    // `using NothelixMacros` is special-cased out: the converter injects
-    // it so Julia's JETLS resolves @cell/@markdown macros
-    // without false "Missing reference" squiggles, but it's not user
-    // code. Letting it become a preamble cell pollutes .ipynb round-
-    // trips — the package only exists in nothelix's default Julia env, so
-    // running that cell in stock Julia fails with "Package
-    // NothelixMacros not found in current path".
-    let first_marker_line = cells.first().map(|c| c.start_line).unwrap_or(lines.len());
-    if first_marker_line > 0 {
-        let preamble: String = lines[..first_marker_line]
-            .iter()
-            .copied()
-            .filter(|l| {
-                let t = l.trim();
-                if t.is_empty() || t.starts_with('#') {
-                    return false;
-                }
-                if is_nothelix_macros_load(l) {
-                    return false;
-                }
-                true
-            })
-            .collect::<Vec<&str>>()
-            .join("\n");
-        if !preamble.trim().is_empty() {
-            cells.insert(
-                0,
-                JlCell {
-                    index: -1,
-                    kind: CellKind::Code,
-                    code: preamble,
-                    start_line: 0,
-                    marker_comment: String::new(),
-                    images: Vec::new(),
-                },
-            );
-        }
-    }
-
-    // Collect code for each cell (strip output sections *and* any
-    // stray marker-shaped lines that slipped into the cell body).
-    // The stray-marker strip is a defense against users typing a new
-    // `@cell` inside an existing cell without triggering the autofill
-    // expansion — without it those lines would be forwarded to the
-    // Julia kernel, which would then choke on `@cell` as a malformed
-    // macro invocation.
-    // Collect boundaries first so we can mutate cells below.
-    let boundaries: Vec<(usize, usize)> = cells
+    let mut cells: Vec<JlCell> = lines
         .iter()
         .enumerate()
-        .map(|(ci, cell)| {
-            let code_start = cell.start_line + 1;
-            let code_end = cells.get(ci + 1).map_or(lines.len(), |c| c.start_line);
-            (code_start, code_end)
-        })
+        .filter_map(|(at, line)| Marker::parse(line).map(|marker| JlCell::opened_by(marker, at)))
         .collect();
 
-    for (ci, (code_start, code_end)) in boundaries.into_iter().enumerate() {
-        let is_marker_line = |line: &str| -> bool {
-            let t = line.trim_end();
-            t == "@cell"
-                || t == "@markdown"
-                || t == "@raw"
-                || t == "@typst"
-                || line.starts_with("@cell ")
-                || line.starts_with("@markdown ")
-                || line.starts_with("@raw ")
-                || line.starts_with("@typst ")
-        };
+    let first_marker = cells.first().map_or(lines.len(), |cell| cell.start_line);
+    if let Some(preamble) = preamble_cell(&lines[..first_marker]) {
+        cells.insert(0, preamble);
+    }
 
-        let mut filtered: Vec<&str> = Vec::new();
-        let mut images: Vec<String> = Vec::new();
-        let mut in_output = false;
-        for line in &lines[code_start..code_end] {
-            if line.contains("# ─── Output") {
-                in_output = true;
-                continue;
-            }
-            if in_output {
-                if line.contains("# ─────────────") {
-                    in_output = false;
-                }
-                continue;
-            }
-            if is_marker_line(line) {
-                continue;
-            }
-            if is_nothelix_macros_load(line) {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("# @image ") {
-                let path = rest.trim_end_matches('\r').trim();
-                if !path.is_empty() {
-                    images.push(path.to_string());
-                }
-                continue;
-            }
-            filtered.push(line);
-        }
-        cells[ci].images = images;
-
-        // Trim trailing blank lines.
-        while filtered
-            .last()
-            .map(|l: &&str| l.trim().is_empty())
-            .unwrap_or(false)
-        {
-            filtered.pop();
-        }
-
-        let mut code = filtered.join("\n");
-
-        // Prepend marker-line comment as the first line of cell content.
-        // For "@markdown 3 # Q1", this makes "# Q1" appear as "# # Q1"
-        // in the cell body (a markdown heading when the # prefix is stripped).
-        if !cells[ci].marker_comment.is_empty() {
-            let comment = &cells[ci].marker_comment;
-            let prefix_line = if matches!(
-                cells[ci].kind,
-                CellKind::Markdown | CellKind::Typst | CellKind::Raw
-            ) {
-                format!("# {comment}")
-            } else {
-                comment.to_string()
-            };
-            if code.is_empty() {
-                code = prefix_line;
-            } else {
-                code = format!("{prefix_line}\n{code}");
-            }
-        }
-
-        cells[ci].code = code;
+    for at in 0..cells.len() {
+        let from = cells[at].start_line + 1;
+        let to = cells
+            .get(at + 1)
+            .map_or(lines.len(), |cell| cell.start_line);
+        let body = CellBody::read(&lines[from..to]);
+        cells[at].code = body.code(cells[at].kind, &cells[at].marker_comment);
+        cells[at].images = body.images;
     }
 
     Ok((cells, source_path))
+}
+
+fn declared_source_path(lines: &[&str]) -> Option<String> {
+    lines
+        .iter()
+        .find_map(|line| {
+            let declared = line.strip_prefix(HEADER_PREFIX)?;
+            Some(declared.trim_end_matches(HEADER_SUFFIX).trim().to_string())
+        })
+        .filter(|path| !path.is_empty())
+}
+
+fn preamble_cell(before_first_marker: &[&str]) -> Option<JlCell> {
+    let code = before_first_marker
+        .iter()
+        .copied()
+        .filter(|line| is_executable_preamble(line))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    (!code.trim().is_empty()).then(|| JlCell {
+        index: PREAMBLE_INDEX,
+        kind: CellKind::Code,
+        code,
+        start_line: 0,
+        marker_comment: String::new(),
+        images: Vec::new(),
+    })
+}
+
+fn is_executable_preamble(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty() && !trimmed.starts_with('#') && !loads_retired_macro_package(line)
+}
+
+fn loads_retired_macro_package(line: &str) -> bool {
+    let code = match line.split_once('#') {
+        Some((before_comment, _)) => before_comment,
+        None => line,
+    }
+    .trim();
+    ["using ", "import "].into_iter().any(|keyword| {
+        code.strip_prefix(keyword)
+            .is_some_and(|package| package.trim_end_matches(';').trim() == RETIRED_MACRO_PACKAGE)
+    })
+}
+
+#[derive(Default)]
+struct CellBody<'a> {
+    code_lines: Vec<&'a str>,
+    images: Vec<String>,
+}
+
+impl<'a> CellBody<'a> {
+    fn read(lines: &[&'a str]) -> Self {
+        let mut body = Self::default();
+        let mut inside_output = false;
+        for line in lines {
+            if line.contains(OUTPUT_OPEN) {
+                inside_output = true;
+                continue;
+            }
+            if inside_output {
+                inside_output = !line.contains(OUTPUT_CLOSE);
+                continue;
+            }
+            if Marker::parse(line).is_some() || loads_retired_macro_package(line) {
+                continue;
+            }
+            if let Some(declared) = line.strip_prefix(IMAGE_MARKER) {
+                let path = declared.trim_end_matches('\r').trim();
+                if !path.is_empty() {
+                    body.images.push(path.to_string());
+                }
+                continue;
+            }
+            body.code_lines.push(line);
+        }
+        while body
+            .code_lines
+            .last()
+            .is_some_and(|line| line.trim().is_empty())
+        {
+            body.code_lines.pop();
+        }
+        body
+    }
+
+    fn code(&self, kind: CellKind, marker_comment: &str) -> String {
+        let code = self.code_lines.join("\n");
+        if marker_comment.is_empty() {
+            return code;
+        }
+        let heading = if kind.is_prose() {
+            format!("# {marker_comment}")
+        } else {
+            marker_comment.to_string()
+        };
+        if code.is_empty() {
+            heading
+        } else {
+            format!("{heading}\n{code}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notebook::fixture;
+
+    fn parse_source(src: &str) -> Vec<JlCell> {
+        let dir = tempfile::TempDir::new().unwrap();
+        let jl_path = dir.path().join("nb.jl");
+        std::fs::write(&jl_path, src).unwrap();
+        parse_jl_file(&jl_path.to_string_lossy()).unwrap().0
+    }
+
+    #[test]
+    fn every_marker_opens_a_cell_carrying_its_own_body() {
+        let (cells, source_path) = parse_jl_file(&fixture::path("simple.jl")).unwrap();
+        assert_eq!(cells.len(), 4);
+        assert!(source_path.ends_with("simple.ipynb"));
+
+        assert_eq!(cells[0].index, 0);
+        assert_eq!(cells[0].kind, CellKind::Code);
+        assert_eq!(cells[0].code, "using Plots");
+
+        assert_eq!(cells[1].index, 1);
+        assert_eq!(cells[1].code, "x = 1:10\ny = x.^2");
+
+        assert_eq!(cells[2].index, 2);
+        assert_eq!(cells[2].kind, CellKind::Markdown);
+
+        assert_eq!(cells[3].index, 3);
+        assert_eq!(cells[3].code, "plot(x, y)");
+    }
+
+    #[test]
+    fn preamble_filter_drops_nothelix_macros_pragma() {
+        let cells = parse_source(
+            "using NothelixMacros  # cell markers for static checking\n\n\
+             # ═══ Nothelix Notebook: example.ipynb ═══\n# Cells: 1\n\n\
+             @cell 0 :julia\nx = 1\n",
+        );
+        assert_eq!(
+            cells.len(),
+            1,
+            "should not emit preamble cell for pragma-only preamble, got: {}",
+            cells.len()
+        );
+        assert_eq!(cells[0].index, 0);
+        assert_eq!(cells[0].code, "x = 1");
+    }
+
+    #[test]
+    fn cell_body_drops_nothelix_macros_load() {
+        let cells = parse_source(
+            "@cell 0 :julia\n\
+             import Pkg\n\
+             using NothelixMacros\n\
+             import NothelixMacros;\n\
+             x = 1\n",
+        );
+        let body = &cells.iter().find(|c| c.index == 0).unwrap().code;
+        assert!(
+            !body.contains("NothelixMacros"),
+            "NothelixMacros load lines must be stripped from the cell body, got:\n{body}"
+        );
+        assert!(
+            body.contains("import Pkg"),
+            "real code dropped, got:\n{body}"
+        );
+        assert!(body.contains("x = 1"), "real code dropped, got:\n{body}");
+    }
+
+    #[test]
+    fn preamble_filter_keeps_real_user_preamble() {
+        let cells = parse_source(
+            "using NothelixMacros\nconst MY_CONST = 42\nusing LinearAlgebra\n\n\
+             @cell 0 :julia\nA = I\n",
+        );
+        assert_eq!(
+            cells.len(),
+            2,
+            "expected preamble cell + @cell 0, got {} cells",
+            cells.len()
+        );
+        assert_eq!(cells[0].index, PREAMBLE_INDEX);
+        assert!(cells[0].code.contains("const MY_CONST = 42"));
+        assert!(cells[0].code.contains("using LinearAlgebra"));
+        assert!(
+            !cells[0].code.contains("NothelixMacros"),
+            "pragma must not leak into preamble cell"
+        );
+    }
+
+    #[test]
+    fn a_bare_cell_marker_is_a_boundary_and_never_reaches_the_kernel() {
+        let cells = parse_source(
+            "@cell 0:julia\n\nusing DSP\n\n# building a matrix\n\n\
+             @cell\n\nA = zeros(8, 8)\n\ndisplay(A)\n",
+        );
+        assert_eq!(cells.len(), 2, "bare `@cell` must split into its own cell");
+
+        for (i, cell) in cells.iter().enumerate() {
+            assert!(
+                !cell.code.contains("@cell"),
+                "cell {i} still contains @cell: {:?}",
+                cell.code
+            );
+            assert!(
+                !cell.code.contains("@markdown"),
+                "cell {i} still contains @markdown: {:?}",
+                cell.code
+            );
+        }
+
+        assert!(cells[0].code.contains("using DSP"));
+        assert!(cells[1].code.contains("A = zeros(8, 8)"));
+        assert!(cells[1].code.contains("display(A)"));
+    }
 }

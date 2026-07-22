@@ -1,3 +1,5 @@
+mod frames;
+
 #[cfg(feature = "gif")]
 pub mod gif;
 
@@ -7,14 +9,8 @@ pub mod apng;
 #[cfg(feature = "webp")]
 pub mod webp;
 
-#[cfg(feature = "video")]
-pub mod mp4;
-
-#[cfg(feature = "video")]
-pub mod webm;
-
-#[cfg(feature = "lottie")]
-pub mod lottie;
+#[cfg(any(feature = "video", feature = "lottie"))]
+pub mod unsupported;
 
 #[cfg(test)]
 pub mod gif_fixture;
