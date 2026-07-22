@@ -160,9 +160,7 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes = {
-              # steel rev b67efd5c (nothelix Cargo.lock); helix-fork pins a
-              # different rev, so hx-nothelix carries its own outputHash above
-              "steel-core-0.8.2" = "sha256-qPDz0ax290E7UEFTDfrmLmsn1r9dIuOxMiRmNrDkfZo=";
+              "steel-core-0.8.2" = "sha256-x+/tqIcuD/1orXOnAg97UUbeeuYitr0ke3F/OY0lM+U=";
             };
           };
 
