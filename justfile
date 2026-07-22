@@ -27,7 +27,7 @@
 # file. The install recipe does rm + cp + codesign so you don't have to
 # remember the sequence.
 
-set shell := ["sh", "-euc"]
+set shell := ["nu", "-c"]
 
 steel_native := env("HOME") / ".steel" / "native"
 steel_cogs := env("HOME") / ".steel" / "cogs"
@@ -37,104 +37,116 @@ nothelix_root := justfile_directory()
 
 # build + install the dylib and plugin symlinks (run after Rust changes)
 install profile="release":
-    #!/usr/bin/env sh
-    set -eu
-    if [ "{{ profile }}" = "debug" ]; then
-        echo "Building libnothelix (debug)..."
+    #!/usr/bin/env nu
+    if "{{ profile }}" == "debug" {
+        print "Building libnothelix (debug)..."
         cargo build -p libnothelix
-    else
-        echo "Building libnothelix (release)..."
+    } else {
+        print "Building libnothelix (release)..."
         cargo build --release -p libnothelix
-    fi
+    }
 
     # ── Dylib ─────────────────────────────────────────────────────────────
-    mkdir -p "{{ steel_native }}"
+    mkdir "{{ steel_native }}"
 
-    if [ -f "target/{{ profile }}/libnothelix.dylib" ]; then
-        DYLIB="target/{{ profile }}/libnothelix.dylib"
-        DEST="{{ steel_native }}/libnothelix.dylib"
-    elif [ -f "target/{{ profile }}/libnothelix.so" ]; then
-        DYLIB="target/{{ profile }}/libnothelix.so"
-        DEST="{{ steel_native }}/libnothelix.so"
-    else
-        echo "error: no built library in target/{{ profile }}/"
+    let lib = if ("target/{{ profile }}/libnothelix.dylib" | path type) == "file" {
+        {
+            src: "target/{{ profile }}/libnothelix.dylib"
+            dest: "{{ steel_native }}/libnothelix.dylib"
+        }
+    } else if ("target/{{ profile }}/libnothelix.so" | path type) == "file" {
+        {
+            src: "target/{{ profile }}/libnothelix.so"
+            dest: "{{ steel_native }}/libnothelix.so"
+        }
+    } else {
+        print "error: no built library in target/{{ profile }}/"
         exit 1
-    fi
+    }
 
-    rm -f "$DEST"
-    cp "$DYLIB" "$DEST"
+    rm -f $lib.dest
+    cp $lib.src $lib.dest
 
-    if [ "$(uname -s)" = "Darwin" ]; then
-        codesign --force --sign - "$DEST"
-    fi
+    if $nu.os-info.name == "macos" {
+        codesign --force --sign "-" $lib.dest
+    }
 
-    echo "Installed: $DEST"
+    print $"Installed: ($lib.dest)"
 
     # ── Plugin files ──────────────────────────────────────────────────────
     # Install as direct out-of-store symlinks into ~/.steel/cogs/. Steel's
     # require resolver picks up both the entry file and the module dir
     # automatically via the cogs fallback. Editing plugin sources in-place
     # in the repo reflects immediately in Helix — no rebuild step.
-    mkdir -p "{{ steel_cogs }}"
+    mkdir "{{ steel_cogs }}"
     rm -f "{{ steel_cogs }}/nothelix.scm"
     rm -f "{{ steel_cogs }}/nothelix"
     ln -s "{{ nothelix_root }}/plugin/nothelix.scm" "{{ steel_cogs }}/nothelix.scm"
     ln -s "{{ nothelix_root }}/plugin/nothelix" "{{ steel_cogs }}/nothelix"
-    echo "Linked:    {{ steel_cogs }}/nothelix.scm"
-    echo "Linked:    {{ steel_cogs }}/nothelix/"
+    print "Linked:    {{ steel_cogs }}/nothelix.scm"
+    print "Linked:    {{ steel_cogs }}/nothelix/"
 
     # ── Warn about stale conflicting paths ────────────────────────────────
     # Helix's Steel engine searches ~/.config/helix/ before $STEEL_HOME/cogs.
     # A pre-existing nothelix.scm or nothelix/ directory there will shadow
     # this install and keep loading stale code.
-    config_helix="$HOME/.config/helix"
-    if [ -e "$config_helix/nothelix.scm" ] || [ -e "$config_helix/nothelix" ]; then
-        echo ""
-        echo "warning: found legacy install under $config_helix/"
-        echo "         Helix searches that directory before ~/.steel/cogs and will"
-        echo "         load the stale copy. Remove these entries (and any home-manager"
-        echo "         rules that manage them) before restarting Helix:"
-        [ -e "$config_helix/nothelix.scm" ] && echo "           rm $config_helix/nothelix.scm"
-        [ -e "$config_helix/nothelix" ]     && echo "           rm -rf $config_helix/nothelix"
-    fi
+    let config_helix = $"($env.HOME)/.config/helix"
+    let stale_entry = ($"($config_helix)/nothelix.scm" | path exists)
+    let stale_dir = ($"($config_helix)/nothelix" | path exists)
+    if $stale_entry or $stale_dir {
+        print ""
+        print $"warning: found legacy install under ($config_helix)/"
+        print "         Helix searches that directory before ~/.steel/cogs and will"
+        print "         load the stale copy. Remove these entries (and any home-manager"
+        print "         rules that manage them) before restarting Helix:"
+        if $stale_entry { print $"           rm ($config_helix)/nothelix.scm" }
+        if $stale_dir { print $"           rm -rf ($config_helix)/nothelix" }
+    }
 
     # ── SLM helper (best-effort; opt-in on-device cell summaries) ───────────
     # Compiles the vendored Swift source once, from the system swiftc. No
     # swiftc on PATH (Linux, no Xcode CLT) just skips this step silently —
     # `slm-summaries` in .nothelix.conf stays a no-op until it's present.
-    if command -v swiftc >/dev/null 2>&1; then
-        mkdir -p "{{ slm_bin }}"
-        slm_src="{{ nothelix_root }}/tools/nothelix-slm/main.swift"
-        slm_out="{{ slm_bin }}/nothelix-slm"
-        if swiftc "$slm_src" -o "$slm_out" >/dev/null 2>&1; then
-            echo "Installed: $slm_out"
-        else
-            sdk=$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk 2>/dev/null | LC_ALL=C sort | tail -1)
-            if [ -n "$sdk" ] && DEVELOPER_DIR=/Library/Developer/CommandLineTools swiftc -sdk "$sdk" "$slm_src" -o "$slm_out" >/dev/null 2>&1; then
-                echo "Installed: $slm_out (CommandLineTools SDK fallback)"
-            else
-                echo "swiftc could not compile the SLM helper — skipping (summaries stay off)"
-            fi
-        fi
-    else
-        echo "swiftc not found — skipping SLM helper (summaries stay off)"
-    fi
+    if (which swiftc | is-not-empty) {
+        mkdir "{{ slm_bin }}"
+        let slm_src = "{{ nothelix_root }}/tools/nothelix-slm/main.swift"
+        let slm_out = "{{ slm_bin }}/nothelix-slm"
+        if (swiftc $slm_src -o $slm_out | complete | get exit_code) == 0 {
+            print $"Installed: ($slm_out)"
+        } else {
+            let sdks = (glob "/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk" | sort)
+            let fallback = if ($sdks | is-empty) {
+                1
+            } else {
+                with-env {DEVELOPER_DIR: "/Library/Developer/CommandLineTools"} {
+                    swiftc -sdk ($sdks | last) $slm_src -o $slm_out | complete | get exit_code
+                }
+            }
+            if $fallback == 0 {
+                print $"Installed: ($slm_out) \(CommandLineTools SDK fallback)"
+            } else {
+                print "swiftc could not compile the SLM helper — skipping (summaries stay off)"
+            }
+        }
+    } else {
+        print "swiftc not found — skipping SLM helper (summaries stay off)"
+    }
 
 # Julia bootstrap: dev NothelixMacros + JSON3 into the default env (re-run after a Julia version change)
 setup-lsp:
-    #!/usr/bin/env sh
-    set -eu
-    if command -v julia >/dev/null 2>&1; then
+    #!/usr/bin/env nu
+    if (which julia | is-not-empty) {
         # JSON3 is the kernel's runtime dependency, resolved against the user's
         # default env. A Julia version bump gives a fresh empty env, so ensure
         # it here. (@cell/@markdown markers no longer need a package — JETLS
         # masks them, so there is nothing else to install.)
-        echo "Ensuring default-env deps (JSON3)..."
-        julia --startup-file=no --history-file=no --quiet --project=@v#.# -e 'using Pkg
-            haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
-    else
-        echo "julia not on PATH — skipping Julia env setup (re-run setup-lsp after installing Julia)"
-    fi
+        print "Ensuring default-env deps (JSON3)..."
+        let ensure_json3 = 'using Pkg
+        haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
+        julia --startup-file=no --history-file=no --quiet "--project=@v#.#" -e $ensure_json3
+    } else {
+        print "julia not on PATH — skipping Julia env setup (re-run setup-lsp after installing Julia)"
+    }
 
 # build without installing
 build profile="release":
@@ -142,19 +154,26 @@ build profile="release":
 
 # build the docs-site WebAssembly bundle into docs/assets/eng/wasm
 build-wasm:
-    #!/usr/bin/env sh
-    set -eu
-    out="{{ nothelix_root }}/docs/assets/eng/wasm"
-    cargo build -p libnothelix --no-default-features --features wasm \
-        --target wasm32-unknown-unknown --release
-    mkdir -p "$out"
-    wasm-bindgen "{{ nothelix_root }}/target/wasm32-unknown-unknown/release/nothelix.wasm" \
-        --out-dir "$out" --out-name nothelix --target web --no-typescript
-    wasm-opt -Oz --enable-reference-types --enable-multivalue --enable-sign-ext \
-        --enable-mutable-globals --enable-nontrapping-float-to-int --enable-bulk-memory \
-        "$out/nothelix_bg.wasm" -o "$out/nothelix_bg.wasm.opt"
-    mv "$out/nothelix_bg.wasm.opt" "$out/nothelix_bg.wasm"
-    echo "wasm: $(wc -c < "$out/nothelix_bg.wasm") bytes"
+    #!/usr/bin/env nu
+    let out = "{{ nothelix_root }}/docs/assets/eng/wasm"
+    let bundle = $"($out)/nothelix_bg.wasm"
+    let optimised = $"($bundle).opt"
+    let opt_flags = [
+        "-Oz"
+        "--enable-reference-types"
+        "--enable-multivalue"
+        "--enable-sign-ext"
+        "--enable-mutable-globals"
+        "--enable-nontrapping-float-to-int"
+        "--enable-bulk-memory"
+    ]
+    cargo build -p libnothelix --no-default-features --features wasm --target wasm32-unknown-unknown --release
+    mkdir $out
+    wasm-bindgen "{{ nothelix_root }}/target/wasm32-unknown-unknown/release/nothelix.wasm" --out-dir $out --out-name nothelix --target web --no-typescript
+    wasm-opt ...$opt_flags $bundle -o $optimised
+    mv $optimised $bundle
+    let size = (ls $bundle | get 0.size | into int)
+    print $"wasm: ($size) bytes"
 
 # regenerate docs/_includes/engine/ and the README gallery regions from the shared snapshot fixtures
 gallery:
@@ -170,15 +189,14 @@ test:
 # it lacks helix's native builtins, so it can't resolve `require-builtin
 # helix/core/*` or check `helix.static.*` arities.
 check:
-    #!/usr/bin/env sh
-    set -eu
-    echo "── clippy ──"
+    #!/usr/bin/env nu
+    print "── clippy ──"
     cargo clippy -p libnothelix --all-targets -- -D warnings
-    echo "── nextest ──"
-    command -v cargo-nextest >/dev/null 2>&1 || cargo install --locked cargo-nextest
+    print "── nextest ──"
+    if (which cargo-nextest | is-empty) { cargo install --locked cargo-nextest }
     cargo nextest run -p libnothelix
-    echo "── plugin load ──"
-    "{{ nothelix_root }}/scripts/check-plugin.sh"
+    print "── plugin load ──"
+    ^"{{ nothelix_root }}/scripts/check-plugin.sh"
 
 # remove the installed dylib and plugin symlinks
 uninstall:
@@ -186,7 +204,7 @@ uninstall:
     rm -f "{{ steel_native }}/libnothelix.so"
     rm -f "{{ steel_cogs }}/nothelix.scm"
     rm -f "{{ steel_cogs }}/nothelix"
-    @echo "Uninstalled nothelix"
+    @print "Uninstalled nothelix"
 
 # list available recipes
 default:
