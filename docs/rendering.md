@@ -67,7 +67,14 @@ value is drawn through the image protocol instead of as braille. Under `auto`
 or `braille` a UnicodePlots value renders as braille text and any other figure
 renders as a raster image.
 
-<!-- SCREENSHOT NEEDED: a braille UnicodePlots cell rendered as coloured text -->
+The block below is that braille grid at 120 columns by 40 rows, written straight
+out of the engine by `just gallery` from the same fixture its snapshot tests run
+against. Colour is applied by the fork as it paints, so the text here is
+monochrome while the shape is exactly the one your terminal gets.
+
+```text
+{% include engine/braille-chart-120x40.txt %}
+```
 
 ## Inline math becomes Unicode
 
@@ -132,6 +139,15 @@ Display math renders on open and refreshes on save. The conversion uses
 [MiTeX](credits.md), and [Architecture](architecture.md#mathematics-rendering)
 covers the layout strategy. Try it live on the [Playground](playground.md).
 
+One command runs before any of that. `:format-math-buffer` takes a rotation
+matrix crammed onto a single `$$` line and splits the file itself across lines,
+so the source you edit already has the shape of the equation you read. The block
+below is the engine's own output, written by `just gallery`.
+
+```text
+{% include engine/math-reflow-pmatrix.txt %}
+```
+
 ## Tables
 
 A Markdown pipe table written as comment lines renders as a typeset image,
@@ -183,3 +199,11 @@ Typst and PDF export use the same LaTeX-to-Typst machinery
 the equation that lands in the PDF. Pipe tables become native Typst `#table()`
 blocks, and headings, inline math, and non-ASCII text carry across verbatim.
 Watch it run on the [Playground](playground.md).
+
+A Markdown cell converts like this, written straight out of the engine by
+`just gallery`. Nothing is left behind as a stray fragment of Markdown, so the
+output compiles the moment you hand it to Typst.
+
+```text
+{% include engine/typst-export.txt %}
+```

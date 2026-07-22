@@ -63,6 +63,12 @@ The kernel emits runtime errors as structured JSON. libnothelix folds source con
 
 Take `no method matching (Matrix)(::Vector{ComplexF64})` as an example. The enriched message points to the variable in scope that holds the stray `Vector{ComplexF64}`, and to the in-scope value `Matrix()` would have accepted.
 
+Here is a real `MethodError` block, written straight out of the engine by `just gallery`. A signature too long to read in one line becomes a list of your own argument names against the types they actually hold, which is the difference between guessing and knowing which argument is wrong.
+
+```text
+{% include engine/error-long-message.txt %}
+```
+
 ## Mathematics rendering
 
 Inline math runs through a single-pass Unicode scanner. It walks the text inside each `$ … $` region and produces overlay pairs that swap LaTeX constructs for Unicode glyphs. The pass is linear with no pathological cases.
@@ -70,6 +76,18 @@ Inline math runs through a single-pass Unicode scanner. It walks the text inside
 Display math needs real typesetting, and it takes two steps. First nothelix converts the LaTeX to Typst through [MiTeX](credits.md). Then it compiles that to SVG, rasterises it, and draws the result as a Kitty image. MiTeX's output is not standalone Typst. It targets MiTeX's own package runtime, so nothelix vendors that scope and evaluates each conversion against it, which lets bare Typst compile the result.
 
 One detail shapes the whole approach. The fork paints images over real buffer cells and does not reserve phantom rows, because an earlier scheme that did reserve them broke scrolling and cursor navigation. The plugin therefore has to supply real blank lines equal to an image's height. Display math handles this as a dims-first cycle. It renders once to measure the natural height, performs one atomic whole-buffer rewrite that reserves exactly that many blank lines, and then places the image.
+
+Both halves of that cycle are measurable rather than guessed at. The sizing pass turns a compiled equation's point dimensions into the terminal rows and columns it will occupy, and flags anything wider than the viewport instead of clipping it. These are the numbers the plugin acts on, written by `just gallery` at a 120 by 40 viewport.
+
+```text
+{% include engine/math-image-grid-120x40.txt %}
+```
+
+The reservation then lands in the buffer as real blank comment lines, one for every row the image needs. A least-squares document comes back like this. The tall stacked system is given dozens of rows, the one-line normal equations are given none at all, and that difference is exactly why the measurement has to come first.
+
+```text
+{% include engine/math-reserve-120x40.txt %}
+```
 
 The full reasoning lives in `docs/dev/math-rendering-strategy.md`.
 

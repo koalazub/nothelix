@@ -85,6 +85,15 @@ The first found the import in an earlier cell, the second found the assignment.
 Either way the fix is one cell away, and `:execute-cells-above` runs everything
 down to the cursor in one go.
 
+Failures that have nothing to do with cell order get the same care. Julia indexes
+from one, so the block below turns a `BoundsError` into the range you can
+actually use, names the collection's real length, and folds the stdlib frames
+away so the line that is yours stays at the top of the call chain.
+
+```text
+{% include engine/error-bounds.txt %}
+```
+
 ## Current limitations
 
 - Julia is the only supported kernel. Python is planned.

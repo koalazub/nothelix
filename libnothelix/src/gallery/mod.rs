@@ -1,6 +1,8 @@
 mod fixtures;
+mod inject;
 
 pub use fixtures::{DOCS_VIEWPORT, VIEWPORTS, Viewport};
+pub use inject::inject_regions;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;

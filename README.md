@@ -6,6 +6,20 @@ Nothelix puts notebooks inside Helix. Cells run against a live Julia kernel, plo
 
 One buffer, twice. The top pane is the LaTeX you typed. The bottom is what you read a moment later, once concealment has swapped each construct for its Unicode form. The file on disk still holds the LaTeX, and it comes back on the line you are editing.
 
+The block below is not a transcription. `just gallery` writes it straight out of the rendering engine, from the same fixture the snapshot tests pin, so this README cannot drift from what the buffer draws.
+
+<!-- gallery:conceal-fourier -->
+```text
+# ## The Fourier transform
+#
+# The forward transform is f̂(ξ) = ∫_-∞^∞ f(x)   e^-2π i x ξ   dx
+# and the inverse is f(x) = ∫_-∞^∞ f̂(ξ)   e^2π i x ξ   dξ.
+#
+# Parseval's theorem states ∫ |f(x)|²   dx = ∫ |f̂(ξ)|²   dξ, so the
+# transform preserves energy: ‖f‖₂ = ‖f̂‖₂ for every f ∈ L²(ℝ).
+```
+<!-- /gallery -->
+
 ## What you get
 
 - **Notebooks that behave like source.** A notebook is Julia with `@cell` markers. It diffs, greps, and edits with the motions you already use, and `:convert-notebook` and `:sync-to-ipynb` move it to and from `.ipynb` when a collaborator needs that.
@@ -53,7 +67,21 @@ You also need Julia 1.9 or newer on your PATH, via [juliaup](https://julialang.o
 
 `<space>nj` opens the navigator. Every cell shows as index, kind, and label, with a live preview. Type a number to jump, or press `/` to fuzzy-search the labels. Labels come from a marker comment first, then Apple's on-device model if you opt in on macOS 26 or newer, then the cell's first meaningful line. A seventy-cell tutorial reads like a table of contents.
 
-Cell errors get the same treatment. When a cell fails on an undefined symbol, nothelix scans the sibling cells, finds where that symbol is assigned, and tells you which `@cell` to run first. `MethodError` gets the in-scope variables whose types match the failing signature.
+Cell errors get the same treatment. A failure never hands you a bare stacktrace. When a cell fails on an undefined symbol, nothelix scans the sibling cells, finds where that symbol is assigned, and names the cell to run first, so the fix is one cell away instead of a search.
+
+<!-- gallery:error-undefined-variable -->
+```text
+error[E004]: `A` is not defined
+  --> cell 5, line 1
+   |
+  1 | vals, vecs = eigen(A)
+   | ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = `A` is defined in @cell 2 (Build A) — run @cell 2 first, or run every cell above this one
+```
+<!-- /gallery -->
+
+`MethodError` is handled the same way, listing the in-scope variables whose types match the failing signature so you can see which argument is wrong.
 
 ## Status
 

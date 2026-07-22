@@ -156,7 +156,7 @@ build-wasm:
     mv "$out/nothelix_bg.wasm.opt" "$out/nothelix_bg.wasm"
     echo "wasm: $(wc -c < "$out/nothelix_bg.wasm") bytes"
 
-# regenerate docs/_includes/engine/ from the shared snapshot fixtures
+# regenerate docs/_includes/engine/ and the README gallery regions from the shared snapshot fixtures
 gallery:
     cargo run -p libnothelix --bin gen-gallery
 
