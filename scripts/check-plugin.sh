@@ -4,11 +4,15 @@
 # builtins, so it can't resolve `require-builtin helix/core/*` or check
 # `helix.static.*` arities; only the real binary can.
 #
-# Signal: a sentinel file written by init.scm *after* the require. Steel
-# aborts evaluation on any load error (FreeIdentifier, BadSyntax,
-# ArityMismatch), so the post-require write never runs and the file stays
-# absent. No log scraping, no output parsing — the verdict is the file's
-# existence. Helix is a TUI, so `expect` only supplies a PTY and quits it.
+# Signal: a sentinel file written by init.scm *after* the shim require and
+# a forced full-graph load. nothelix.scm is now a thin lazy shim, so the
+# gate calls (nothelix-load) to compile nothelix/main.scm's whole module
+# graph — otherwise the gate would pass on the shim alone and stop
+# protecting the plugin. Steel aborts evaluation on any load error
+# (FreeIdentifier, BadSyntax, ArityMismatch), so the post-load write never
+# runs and the file stays absent. No log scraping, no output parsing — the
+# verdict is the file's existence. Helix is a TUI, so `expect` only
+# supplies a PTY and quits it.
 set -euo pipefail
 
 command -v hx >/dev/null || { echo "hx not on PATH"; exit 2; }
@@ -22,6 +26,7 @@ trap 'rm -rf "$cfg"' EXIT
 mkdir -p "$cfg/helix"
 cat > "$cfg/helix/init.scm" <<EOF
 (require "nothelix.scm")
+(nothelix-load)
 (let ((p (open-output-file "$sentinel")))
   (write-string "ok" p)
   (close-output-port p))
