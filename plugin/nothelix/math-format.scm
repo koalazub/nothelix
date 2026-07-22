@@ -2,6 +2,7 @@
 
 (require "common.scm")
 (require "conceal.scm")
+(require "cursor-restore.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require "helix/ext.scm")
@@ -40,11 +41,15 @@
           (set-status! "format-math: no single-line math envs to expand"))
         #false]
        [else
+        (define anchor (compute-cursor-anchor doc-id))
         (define r (helix.static.range 0 doc-len))
         (define sel (helix.static.range->selection r))
         (helix.static.set-current-selection-object! sel)
         (helix.static.replace-selection-with rewritten)
-        (helix.static.collapse_selection)
+        (move-cursor-to-anchor! doc-id
+                                (list-ref anchor 0)
+                                (list-ref anchor 1)
+                                (list-ref anchor 2))
         (when commit? (helix.static.commit-changes-to-history))
         (schedule-reconceal 50)
         (set-status!

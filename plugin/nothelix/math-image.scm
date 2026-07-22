@@ -1,6 +1,7 @@
 ;;; math-image.scm - Render LaTeX display math as inline SVG images.
 
 (require "common.scm")
+(require "cursor-restore.scm")
 (require "debug.scm")
 (require "string-utils.scm")
 (require "image-cache.scm")
@@ -450,13 +451,17 @@
   (string-join (map (lambda (r) (number->string (result->natural-rows r))) results) ","))
 
 (define (reserve-buffer-math-lines! doc-id reserved)
+  (define anchor (compute-cursor-anchor doc-id))
   (define rope (editor->text doc-id))
   (define doc-len (text.rope-len-chars rope))
   (define r (helix.static.range 0 doc-len))
   (define sel (helix.static.range->selection r))
   (helix.static.set-current-selection-object! sel)
   (helix.static.replace-selection-with reserved)
-  (helix.static.collapse_selection)
+  (move-cursor-to-anchor! doc-id
+                          (list-ref anchor 0)
+                          (list-ref anchor 1)
+                          (list-ref anchor 2))
   (helix.static.commit-changes-to-history)
   (schedule-reconceal 50))
 
