@@ -12,6 +12,7 @@ use super::operators::{is_big_operator, is_math_operator};
 use super::overlay::Overlay;
 use super::script::Script;
 use super::symbol_table::symbol;
+#[cfg(any(feature = "native", test))]
 use crate::error::{Error, Result, ffi};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -457,16 +458,17 @@ impl<'a> Scanner<'a> {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[cfg(any(feature = "native", test))]
 pub fn latex_overlays(text: String) -> String {
     latex_overlays_with_options(text, false)
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[cfg(any(feature = "native", test))]
 pub fn latex_overlays_with_options(text: String, hide_math_layout: bool) -> String {
     ffi(overlays_json(&text, ScannerOptions { hide_math_layout }))
 }
 
+#[cfg(any(feature = "native", test))]
 fn overlays_json(text: &str, options: ScannerOptions) -> Result<String> {
     serde_json::to_string(&Scanner::new(text, options).scan()).map_err(|source| Error::Json {
         subject: "latex conceal overlays",

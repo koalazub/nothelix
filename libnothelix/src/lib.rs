@@ -1,13 +1,17 @@
-#![allow(clippy::needless_pass_by_value)]
-#![cfg_attr(not(feature = "native"), allow(dead_code))]
+#![cfg_attr(
+    not(any(feature = "native", feature = "wasm")),
+    allow(dead_code, unused_imports)
+)]
 
 pub mod error;
 pub mod error_format;
 mod math_corpus;
 pub use math_corpus::CORPUS;
-mod markdown_overlays;
 mod typst_export;
 mod unicode;
+
+#[cfg(feature = "native")]
+mod markdown_overlays;
 
 #[cfg(feature = "render")]
 mod math_format;

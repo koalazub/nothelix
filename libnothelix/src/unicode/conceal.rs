@@ -1,30 +1,15 @@
-use std::ops::Range;
-
 use serde_json::json;
 
 use super::char_offsets::CharOffsets;
 use super::math_regions::find_math_regions;
-use super::overlay::CharOffsetTsv;
 use super::scanner::{ScannerOptions, scan_region};
 use crate::error::{Result, ffi};
 
-const COMMENT_PREFIX: &str = "# ";
-const DISPLAY_FENCE: &str = "$$";
+#[cfg(feature = "native")]
+pub use comments::compute_conceal_overlays_for_comments_with_options;
 
-#[allow(clippy::needless_pass_by_value)]
 pub fn compute_conceal_overlays(text: String) -> String {
     ffi(document_overlays_json(&text))
-}
-
-#[allow(clippy::needless_pass_by_value)]
-pub fn compute_conceal_overlays_for_comments_with_options(
-    text: String,
-    hide_math_layout: bool,
-) -> String {
-    ffi(comment_overlays_tsv(
-        &text,
-        ScannerOptions { hide_math_layout },
-    ))
 }
 
 fn document_overlays_json(text: &str) -> Result<String> {
@@ -47,143 +32,165 @@ fn document_overlays_json(text: &str) -> Result<String> {
     Ok(json!(overlays).to_string())
 }
 
-fn comment_overlays_tsv(text: &str, options: ScannerOptions) -> Result<String> {
-    let offsets = CharOffsets::of(text);
-    let lines = line_starts(text);
-    let mut tsv = CharOffsetTsv::new(&offsets);
+#[cfg(feature = "native")]
+mod comments {
+    use std::ops::Range;
 
-    let mut i = 0;
-    while i < lines.len() {
-        let (line_start, line) = lines[i];
-        let Some(content) = comment_content(line) else {
-            i += 1;
-            continue;
-        };
-        if content.trim() == DISPLAY_FENCE
-            && let Some(close) = display_block_close(&lines, i)
-        {
-            i = close + 1;
-            continue;
-        }
-        if !content.is_empty() {
-            conceal_comment_content(
-                content,
-                line_start + COMMENT_PREFIX.len(),
-                options,
-                &mut tsv,
-            )?;
-        }
-        i += 1;
+    use super::super::overlay::CharOffsetTsv;
+    use super::{CharOffsets, Result, ScannerOptions, ffi, find_math_regions, scan_region};
+
+    const COMMENT_PREFIX: &str = "# ";
+    const DISPLAY_FENCE: &str = "$$";
+
+    pub fn compute_conceal_overlays_for_comments_with_options(
+        text: String,
+        hide_math_layout: bool,
+    ) -> String {
+        ffi(comment_overlays_tsv(
+            &text,
+            ScannerOptions { hide_math_layout },
+        ))
     }
 
-    Ok(tsv.into_rows())
-}
+    fn comment_overlays_tsv(text: &str, options: ScannerOptions) -> Result<String> {
+        let offsets = CharOffsets::of(text);
+        let lines = line_starts(text);
+        let mut tsv = CharOffsetTsv::new(&offsets);
 
-fn conceal_comment_content(
-    content: &str,
-    content_start: usize,
-    options: ScannerOptions,
-    tsv: &mut CharOffsetTsv,
-) -> Result<()> {
-    let bytes = content.as_bytes();
-    let regions = find_math_regions(content);
-
-    for &(start, end) in &regions {
-        if end <= start || is_display_region(bytes, start) {
-            continue;
+        let mut i = 0;
+        while i < lines.len() {
+            let (line_start, line) = lines[i];
+            let Some(content) = comment_content(line) else {
+                i += 1;
+                continue;
+            };
+            if content.trim() == DISPLAY_FENCE
+                && let Some(close) = display_block_close(&lines, i)
+            {
+                i = close + 1;
+                continue;
+            }
+            if !content.is_empty() {
+                conceal_comment_content(
+                    content,
+                    line_start + COMMENT_PREFIX.len(),
+                    options,
+                    &mut tsv,
+                )?;
+            }
+            i += 1;
         }
-        for byte in opening_delimiter(bytes, start)
-            .into_iter()
-            .chain(closing_delimiter(bytes, end))
-            .flatten()
-        {
+
+        Ok(tsv.into_rows())
+    }
+
+    fn conceal_comment_content(
+        content: &str,
+        content_start: usize,
+        options: ScannerOptions,
+        tsv: &mut CharOffsetTsv,
+    ) -> Result<()> {
+        let bytes = content.as_bytes();
+        let regions = find_math_regions(content);
+
+        for &(start, end) in &regions {
+            if end <= start || is_display_region(bytes, start) {
+                continue;
+            }
+            for byte in opening_delimiter(bytes, start)
+                .into_iter()
+                .chain(closing_delimiter(bytes, end))
+                .flatten()
+            {
+                tsv.hide(content_start + byte)?;
+            }
+            for (offset, replacement) in scan_region(&content[start..end], options) {
+                tsv.push(content_start + start + offset, &replacement)?;
+            }
+        }
+
+        for byte in markdown_escapes(bytes, &regions) {
             tsv.hide(content_start + byte)?;
         }
-        for (offset, replacement) in scan_region(&content[start..end], options) {
-            tsv.push(content_start + start + offset, &replacement)?;
+        Ok(())
+    }
+
+    fn comment_content(line: &str) -> Option<&str> {
+        line.trim_end_matches('\n')
+            .trim_end_matches('\r')
+            .strip_prefix(COMMENT_PREFIX)
+    }
+
+    fn display_block_close(lines: &[(usize, &str)], open: usize) -> Option<usize> {
+        for (j, &(_, line)) in lines.iter().enumerate().skip(open + 1) {
+            match comment_content(line) {
+                Some(body) if body.trim() == DISPLAY_FENCE => return Some(j),
+                Some(_) => {}
+                None => return None,
+            }
         }
-    }
-
-    for byte in markdown_escapes(bytes, &regions) {
-        tsv.hide(content_start + byte)?;
-    }
-    Ok(())
-}
-
-fn comment_content(line: &str) -> Option<&str> {
-    line.trim_end_matches('\n')
-        .trim_end_matches('\r')
-        .strip_prefix(COMMENT_PREFIX)
-}
-
-fn display_block_close(lines: &[(usize, &str)], open: usize) -> Option<usize> {
-    for (j, &(_, line)) in lines.iter().enumerate().skip(open + 1) {
-        match comment_content(line) {
-            Some(body) if body.trim() == DISPLAY_FENCE => return Some(j),
-            Some(_) => {}
-            None => return None,
-        }
-    }
-    None
-}
-
-fn is_display_region(bytes: &[u8], start: usize) -> bool {
-    start >= 2 && bytes[start - 1] == b'$' && bytes[start - 2] == b'$'
-}
-
-fn opening_delimiter(bytes: &[u8], start: usize) -> Option<Range<usize>> {
-    if start >= 2
-        && matches!(
-            (bytes[start - 2], bytes[start - 1]),
-            (b'\\', b'(') | (b'$', b'$')
-        )
-    {
-        Some(start - 2..start)
-    } else if start >= 1 && bytes[start - 1] == b'$' {
-        Some(start - 1..start)
-    } else {
         None
     }
-}
 
-fn closing_delimiter(bytes: &[u8], end: usize) -> Option<Range<usize>> {
-    if end + 1 < bytes.len() && matches!((bytes[end], bytes[end + 1]), (b'\\', b')') | (b'$', b'$'))
-    {
-        Some(end..end + 2)
-    } else if end < bytes.len() && bytes[end] == b'$' {
-        Some(end..end + 1)
-    } else {
-        None
+    fn is_display_region(bytes: &[u8], start: usize) -> bool {
+        start >= 2 && bytes[start - 1] == b'$' && bytes[start - 2] == b'$'
     }
-}
 
-fn markdown_escapes(bytes: &[u8], regions: &[(usize, usize)]) -> Vec<usize> {
-    let mut escapes = Vec::new();
-    let mut j = 0;
-    while j + 1 < bytes.len() {
-        if bytes[j] == b'\\'
-            && matches!(bytes[j + 1], b'(' | b')' | b'[' | b']')
-            && !regions.iter().any(|&(start, end)| {
-                (start.saturating_sub(2)..(end + 2).min(bytes.len())).contains(&j)
-            })
+    fn opening_delimiter(bytes: &[u8], start: usize) -> Option<Range<usize>> {
+        if start >= 2
+            && matches!(
+                (bytes[start - 2], bytes[start - 1]),
+                (b'\\', b'(') | (b'$', b'$')
+            )
         {
-            escapes.push(j);
-            j += 2;
-            continue;
+            Some(start - 2..start)
+        } else if start >= 1 && bytes[start - 1] == b'$' {
+            Some(start - 1..start)
+        } else {
+            None
         }
-        j += 1;
     }
-    escapes
-}
 
-fn line_starts(text: &str) -> Vec<(usize, &str)> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for line in text.split('\n') {
-        lines.push((start, line));
-        start += line.len() + 1;
+    fn closing_delimiter(bytes: &[u8], end: usize) -> Option<Range<usize>> {
+        if end + 1 < bytes.len()
+            && matches!((bytes[end], bytes[end + 1]), (b'\\', b')') | (b'$', b'$'))
+        {
+            Some(end..end + 2)
+        } else if end < bytes.len() && bytes[end] == b'$' {
+            Some(end..end + 1)
+        } else {
+            None
+        }
     }
-    lines
+
+    fn markdown_escapes(bytes: &[u8], regions: &[(usize, usize)]) -> Vec<usize> {
+        let mut escapes = Vec::new();
+        let mut j = 0;
+        while j + 1 < bytes.len() {
+            if bytes[j] == b'\\'
+                && matches!(bytes[j + 1], b'(' | b')' | b'[' | b']')
+                && !regions.iter().any(|&(start, end)| {
+                    (start.saturating_sub(2)..(end + 2).min(bytes.len())).contains(&j)
+                })
+            {
+                escapes.push(j);
+                j += 2;
+                continue;
+            }
+            j += 1;
+        }
+        escapes
+    }
+
+    fn line_starts(text: &str) -> Vec<(usize, &str)> {
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for line in text.split('\n') {
+            lines.push((start, line));
+            start += line.len() + 1;
+        }
+        lines
+    }
 }
 
 #[cfg(test)]

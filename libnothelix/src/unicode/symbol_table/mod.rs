@@ -13,12 +13,10 @@ pub(super) fn symbol(name: &str) -> Option<&'static str> {
     julia_repl::lookup(name).or_else(|| unicode_math_aliases::lookup(name))
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub fn unicode_lookup(name: String) -> String {
     symbol(&name).unwrap_or_default().to_string()
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub fn unicode_completions_for_prefix(prefix: String) -> String {
     let matches: Vec<_> = julia_repl::SYMBOLS
         .iter()

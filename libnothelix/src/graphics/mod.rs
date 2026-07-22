@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 pub(crate) mod apc;
 pub(crate) mod png;
 mod protocol;

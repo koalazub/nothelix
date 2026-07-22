@@ -85,7 +85,6 @@ fn parse_math_spans(text: &str) -> Vec<MathSpan> {
     spans
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub fn parse_math_spans_json(text: String) -> String {
     let spans = parse_math_spans(&text);
     let mut rows = String::with_capacity(spans.len() * 64 + text.len());

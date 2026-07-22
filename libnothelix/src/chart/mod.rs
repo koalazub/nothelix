@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 mod braille;
 mod plot;
 mod series;

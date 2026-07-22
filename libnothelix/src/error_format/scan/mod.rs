@@ -1,5 +1,6 @@
 mod brackets;
 mod cursor;
+#[cfg(feature = "native")]
 mod ident;
 
 pub(super) use brackets::{find_matching_paren, split_top_level_commas};

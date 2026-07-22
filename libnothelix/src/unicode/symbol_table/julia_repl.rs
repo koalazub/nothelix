@@ -1,5 +1,3 @@
-#![allow(clippy::unicode_not_nfc)]
-
 pub(super) static SYMBOLS: &[(&str, &str)] = &[
     ("0/3", "↉"),
     ("1/", "⅟"),

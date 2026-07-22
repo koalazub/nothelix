@@ -346,7 +346,7 @@ mod tests {
 
     const PNG: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
-    fn notebook_of(cells: Value) -> Value {
+    fn notebook_of(cells: &Value) -> Value {
         json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": cells})
     }
 
@@ -439,7 +439,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "code",
                 "execution_count": 7,
                 "metadata": {},
@@ -469,7 +469,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "code",
                 "execution_count": 7,
                 "metadata": {"tags": ["important"]},
@@ -505,7 +505,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "code",
                 "execution_count": 3,
                 "metadata": {},
@@ -535,7 +535,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "code",
                 "execution_count": null,
                 "metadata": {},
@@ -572,7 +572,7 @@ mod tests {
         std::fs::write(dir.path().join("diagram.png"), PNG).unwrap();
         write_json(
             &ipynb,
-            &notebook_of(json!([{"cell_type": "markdown", "metadata": {}, "source": []}])),
+            &notebook_of(&json!([{"cell_type": "markdown", "metadata": {}, "source": []}])),
         );
         write_jl(
             &jl,
@@ -603,7 +603,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{"cell_type": "markdown", "metadata": {}, "source": []}])),
+            &notebook_of(&json!([{"cell_type": "markdown", "metadata": {}, "source": []}])),
         );
         write_jl(
             &jl,
@@ -685,7 +685,7 @@ mod tests {
         let jl = dir.path().join("nb.jl");
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "code",
                 "id": "keep-me_1",
                 "execution_count": null,
@@ -756,7 +756,7 @@ mod tests {
         let encoded = BASE64.encode(PNG);
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "markdown",
                 "id": "md0",
                 "metadata": {},
@@ -809,7 +809,7 @@ mod tests {
         let encoded = BASE64.encode(PNG);
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "markdown",
                 "id": "md0",
                 "metadata": {},
@@ -892,7 +892,7 @@ mod tests {
         let encoded = BASE64.encode(PNG);
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "markdown",
                 "id": "md0",
                 "metadata": {},
@@ -942,7 +942,7 @@ mod tests {
         let encoded = BASE64.encode(PNG);
         write_json(
             &ipynb,
-            &notebook_of(json!([{
+            &notebook_of(&json!([{
                 "cell_type": "markdown",
                 "id": "md0",
                 "metadata": {},
@@ -1008,7 +1008,7 @@ mod tests {
         let bytes_b: [u8; 4] = [9, 8, 7, 6];
         write_json(
             &ipynb,
-            &notebook_of(json!([
+            &notebook_of(&json!([
                 {"cell_type": "markdown", "metadata": {}, "source": ["first"],
                  "attachments": {"fig.png": {"image/png": BASE64.encode(bytes_a)}}},
                 {"cell_type": "markdown", "metadata": {}, "source": ["second"],

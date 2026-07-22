@@ -12,7 +12,6 @@ const MAX_RESERVE_LINES: usize = 64;
 
 /// Rewrite each display block to reserve `spec`-many natural rows of blank
 /// lines; `spec` is one row count per block in enumeration order.
-#[allow(clippy::needless_pass_by_value)]
 pub fn reserve_math_lines(text: String, spec: String) -> String {
     let formatted = format_math(text);
     let specs: Vec<usize> = spec

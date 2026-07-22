@@ -16,7 +16,6 @@ const BLOCK_ENVS: &[&str] = &[
 
 /// Canonicalise a document's math comments: expand single-line block envs into
 /// multi-line `$$` blocks and split crammed `$$`-block lines. Idempotent.
-#[allow(clippy::needless_pass_by_value)]
 pub fn format_math(text: String) -> String {
     let mut out = String::new();
     let lines: Vec<&str> = text.split('\n').collect();

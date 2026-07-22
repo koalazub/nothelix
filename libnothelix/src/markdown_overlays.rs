@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 use comrak::nodes::{AstNode, LineColumn, ListType, NodeValue, Sourcepos};
 use comrak::{Arena, Options, parse_document};
 

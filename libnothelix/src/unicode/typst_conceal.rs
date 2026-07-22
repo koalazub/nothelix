@@ -167,7 +167,6 @@ fn scan_content(content: &str, base: usize, overlays: &mut Vec<Overlay>) {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
 pub fn typst_overlays_to_tsv(text: String) -> String {
     ffi(typst_overlay_rows(&text))
 }

@@ -47,9 +47,9 @@ impl PollReply {
 }
 
 pub(crate) fn compile_in_parallel(
-    blocks: String,
+    blocks: &str,
     font_size_pt: isize,
-    text_color: String,
+    text_color: &str,
     render_block: RenderBlock,
 ) -> String {
     use rayon::prelude::*;
@@ -58,7 +58,7 @@ pub(crate) fn compile_in_parallel(
         .split(BATCH_SEP)
         .collect::<Vec<_>>()
         .par_iter()
-        .map(|block| render_block((*block).to_string(), font_size_pt, text_color.clone()))
+        .map(|block| render_block((*block).to_string(), font_size_pt, text_color.to_string()))
         .collect::<Vec<String>>()
         .join(&BATCH_SEP.to_string())
 }
@@ -86,7 +86,7 @@ pub(crate) fn spawn(
     drop(registry);
 
     std::thread::spawn(move || {
-        let joined = compile_in_parallel(blocks, font_size_pt, text_color, render_block);
+        let joined = compile_in_parallel(&blocks, font_size_pt, &text_color, render_block);
         if let Ok(mut registry) = jobs().lock() {
             registry.insert(
                 job_id,

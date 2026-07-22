@@ -2,7 +2,9 @@ use std::borrow::Cow;
 
 use serde::Serialize;
 
+#[cfg(feature = "native")]
 use super::char_offsets::CharOffsets;
+#[cfg(feature = "native")]
 use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,11 +31,13 @@ impl Overlay {
     }
 }
 
+#[cfg(feature = "native")]
 pub(super) struct CharOffsetTsv<'a> {
     offsets: &'a CharOffsets,
     rows: String,
 }
 
+#[cfg(feature = "native")]
 impl<'a> CharOffsetTsv<'a> {
     pub fn new(offsets: &'a CharOffsets) -> Self {
         Self {

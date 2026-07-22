@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 use crate::error::{Error, Result, ffi};
 use std::fs;
 use std::io::ErrorKind;

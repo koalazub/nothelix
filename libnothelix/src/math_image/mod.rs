@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 mod cache;
 mod color;
 mod compile;
@@ -85,7 +83,7 @@ fn write_pdf(typst_source: &str, out_path: &str) -> Result<()> {
 }
 
 #[cfg(all(test, feature = "native"))]
-fn render_math_batch(blocks: String, font_size_pt: isize, text_color: String) -> String {
+fn render_math_batch(blocks: &str, font_size_pt: isize, text_color: &str) -> String {
     batch::compile_in_parallel(blocks, font_size_pt, text_color, render_math_to_svg)
 }
 
@@ -227,7 +225,7 @@ mod tests {
         let small = "x";
         let wide = r"\widetilde{G}^{-1}(\omega) = \frac{1}{\pi} \begin{bmatrix} \pi - \omega & -i \\ \omega & i \end{bmatrix}";
         let input = format!("{small}{BATCH_SEP}{wide}");
-        let out = render_math_batch(input, 14, "e8e8e8".to_string());
+        let out = render_math_batch(&input, 14, "e8e8e8");
         let parts: Vec<&str> = out.split(BATCH_SEP).collect();
         assert_eq!(parts.len(), 2, "two results for two blocks");
         assert!(
@@ -250,7 +248,7 @@ mod tests {
 
     #[test]
     fn batch_single_block_has_one_result() {
-        let out = render_math_batch("alpha".to_string(), 14, "e8e8e8".to_string());
+        let out = render_math_batch("alpha", 14, "e8e8e8");
         assert!(
             !out.contains(BATCH_SEP),
             "single block has no separator: {out}"
@@ -262,7 +260,7 @@ mod tests {
     fn batch_block_matches_single_render() {
         let latex = r"\alpha + \beta";
         let single = render_math_to_svg(latex.to_string(), 14, "ddccbb".to_string());
-        let batched = render_math_batch(latex.to_string(), 14, "ddccbb".to_string());
+        let batched = render_math_batch(latex, 14, "ddccbb");
         assert_eq!(single, batched);
     }
 }

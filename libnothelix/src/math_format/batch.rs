@@ -10,7 +10,6 @@ use crate::math_image::BATCH_SEP;
 
 /// The LaTeX of every display-math block, `BATCH_SEP`-joined in document order;
 /// `""` when the document has no display math.
-#[allow(clippy::needless_pass_by_value)]
 pub fn math_block_latex_batch(text: String) -> String {
     let formatted = format_math(text);
     let lines: Vec<&str> = formatted.split('\n').collect();
