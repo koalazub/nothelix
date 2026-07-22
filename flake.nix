@@ -113,7 +113,7 @@
           cargoLock = {
             lockFile = "${helix-fork}/Cargo.lock";
             outputHashes = {
-              "steel-core-0.8.2" = "sha256-TP1hmlju7h7ce0dnSKuIMk7XK5kcloqiyR+sxumNsQk=";
+              "steel-core-0.8.2" = "sha256-x+/tqIcuD/1orXOnAg97UUbeeuYitr0ke3F/OY0lM+U=";
             };
           };
 
