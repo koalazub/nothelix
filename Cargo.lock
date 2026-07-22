@@ -3191,7 +3191,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "steel-core"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=b67efd5c262962226424148bb87abefaf4109c5a#b67efd5c262962226424148bb87abefaf4109c5a"
+source = "git+https://github.com/mattwparas/steel.git?rev=3a418c9ea586c1862a8c3a49d6a998436afc8957#3a418c9ea586c1862a8c3a49d6a998436afc8957"
 dependencies = [
  "abi_stable",
  "arc-swap",
@@ -3246,7 +3246,7 @@ dependencies = [
 [[package]]
 name = "steel-derive"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=b67efd5c262962226424148bb87abefaf4109c5a#b67efd5c262962226424148bb87abefaf4109c5a"
+source = "git+https://github.com/mattwparas/steel.git?rev=3a418c9ea586c1862a8c3a49d6a998436afc8957#3a418c9ea586c1862a8c3a49d6a998436afc8957"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3256,7 +3256,7 @@ dependencies = [
 [[package]]
 name = "steel-gen"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=b67efd5c262962226424148bb87abefaf4109c5a#b67efd5c262962226424148bb87abefaf4109c5a"
+source = "git+https://github.com/mattwparas/steel.git?rev=3a418c9ea586c1862a8c3a49d6a998436afc8957#3a418c9ea586c1862a8c3a49d6a998436afc8957"
 dependencies = [
  "codegen",
  "serde",
@@ -3265,7 +3265,7 @@ dependencies = [
 [[package]]
 name = "steel-parser"
 version = "0.8.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=b67efd5c262962226424148bb87abefaf4109c5a#b67efd5c262962226424148bb87abefaf4109c5a"
+source = "git+https://github.com/mattwparas/steel.git?rev=3a418c9ea586c1862a8c3a49d6a998436afc8957#3a418c9ea586c1862a8c3a49d6a998436afc8957"
 dependencies = [
  "compact_str",
  "dashmap",
@@ -3286,7 +3286,7 @@ dependencies = [
 [[package]]
 name = "steel-quickscope"
 version = "0.3.2"
-source = "git+https://github.com/mattwparas/steel.git?rev=b67efd5c262962226424148bb87abefaf4109c5a#b67efd5c262962226424148bb87abefaf4109c5a"
+source = "git+https://github.com/mattwparas/steel.git?rev=3a418c9ea586c1862a8c3a49d6a998436afc8957#3a418c9ea586c1862a8c3a49d6a998436afc8957"
 dependencies = [
  "indexmap 2.14.0",
  "smallvec",
