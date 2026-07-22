@@ -1,0 +1,17 @@
+= Spectral analysis
+
+The *power spectrum* of a signal $s \(t \)$ is $| hat(s )\(xi \)| ^(2 )$, and its integral is the total _energy_.
+
+#table(
+  columns: 3,
+  [window], [leakage], [main lobe],
+  [rectangular], [high], [narrow],
+  [hann], [low], [wide],
+)
+
++ Window the signal.
++ Take the transform.
++ Square the magnitude.
+
+See `DSP.welch_pgram` for the averaged estimator.
+

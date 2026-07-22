@@ -1,0 +1,12 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+# The ramp is defined piecewise.
+# $$
+# \begin{cases}
+# x^2 & \text{if } x \geq 0 \\
+# -x^2 & \text{otherwise}
+# \end{cases}
+# $$
+# It is continuously differentiable at the origin.

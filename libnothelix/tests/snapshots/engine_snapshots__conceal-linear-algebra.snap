@@ -1,0 +1,11 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+# ## The symmetric eigenproblem
+#
+# For A ∈ ℝ^n × n with Aᵀ = A there is an orthogonal Q such that
+# Qᵀ A Q = Λ and Λ = diag(λ₁, …, λₙ).
+#
+# Every eigenpair satisfies A 𝐯ᵢ = λᵢ 𝐯ᵢ with ‖𝐯ᵢ‖₂ = 1,
+# the spectral norm is ‖A‖₂ = maxᵢ |λᵢ|, and tr(A) = ∑ᵢ λᵢ.

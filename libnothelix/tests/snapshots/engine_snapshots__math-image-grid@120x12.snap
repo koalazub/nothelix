@@ -1,0 +1,10 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+viewport 120 cols x 12 rows
+equation            width_pt  height_pt   rows   cols  wider_than_viewport
+inline-identity        180.0       14.0      2     51  no
+stacked-fraction       220.0      180.0     12     29  no
+block-matrix           340.0      420.0     12     19  no
+wide-alignment         900.0       40.0      4    180  yes

@@ -63,6 +63,28 @@ terminal.
 | Kernel reports "not ready" after a Julia upgrade | Fresh default env is missing kernel deps | Re-run `just setup-lsp`, then restart |
 | macOS editor dies on first feature use | Rebuild invalidated the dylib code signature | Run `just install`, which copies then re-signs |
 
+## Guided cell errors
+
+A failed cell does not hand you the raw Julia stacktrace. Nothelix rewrites it
+into a guided block that names the cell and the line, underlines the offending
+source, and says what to do next. When the failure is an undefined symbol, the
+engine scans the notebook's other cells and names the one to run.
+
+Both blocks below are written straight out of the engine by `just gallery`, from
+the same fixtures its snapshot tests run against.
+
+```text
+{% include engine/error-undefined-symbol.txt %}
+```
+
+```text
+{% include engine/error-undefined-variable.txt %}
+```
+
+The first found the import in an earlier cell, the second found the assignment.
+Either way the fix is one cell away, and `:execute-cells-above` runs everything
+down to the cursor in one go.
+
 ## Current limitations
 
 - Julia is the only supported kernel. Python is planned.

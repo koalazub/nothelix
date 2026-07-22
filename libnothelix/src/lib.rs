@@ -32,6 +32,8 @@ pub mod animation;
 #[cfg(feature = "native")]
 mod chart;
 #[cfg(feature = "native")]
+pub mod gallery;
+#[cfg(feature = "native")]
 mod graphics;
 #[cfg(feature = "native")]
 mod health;

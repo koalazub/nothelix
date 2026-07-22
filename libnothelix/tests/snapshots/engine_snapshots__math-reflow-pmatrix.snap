@@ -1,0 +1,12 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+# Rotating by $\theta$ in the plane.
+# $$
+# R(\theta) =
+# \begin{pmatrix}
+# \cos\theta & -\sin\theta \\
+# \sin\theta & \cos\theta
+# \end{pmatrix}
+# $$

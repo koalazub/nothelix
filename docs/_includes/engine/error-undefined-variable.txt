@@ -1,0 +1,7 @@
+error[E004]: `A` is not defined
+  --> cell 5, line 1
+   |
+  1 | vals, vecs = eigen(A)
+   | ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = `A` is defined in @cell 2 (Build A) — run @cell 2 first, or run every cell above this one

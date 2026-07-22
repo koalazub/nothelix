@@ -1,0 +1,18 @@
+error[E001]: index out of bounds — Julia is 1-indexed
+  --> cell 7, line 3
+   |
+  3 |     smallest = eigenvalues[0]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   | BoundsError: attempt to access 4-element Vector{Float64} at index [0]
+   |
+   = help: Use v[1] for the first element, not v[0].
+   = example:
+   |   before: v[0]
+   |   after:  v[1]
+   |
+   = note: `smallest` has 4 elements (valid indices: 1 to 4)
+   |
+   = note: call chain:
+   |   → spectral_gap() at cell line 3
+   |     → eigen() at …/LinearAlgebra/src/symmetric.jl:611
+   |     → [1 more stdlib frames]

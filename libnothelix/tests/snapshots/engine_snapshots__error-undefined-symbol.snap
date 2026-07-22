@@ -1,0 +1,11 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+error[E004]: `eigen` is not defined
+  --> cell 5, line 1
+   |
+  1 | vals, vecs = eigen(A)
+   | ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = `eigen` comes from `LinearAlgebra` — run @cell 0 (`using LinearAlgebra`) first

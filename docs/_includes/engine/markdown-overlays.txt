@@ -1,0 +1,14 @@
+O	2	
+O	3	
+S	4	21	markup.heading.1
+O	30	
+O	31	
+O	46	
+O	47	
+S	32	46	markup.bold
+O	123	
+O	130	
+S	124	130	markup.italic
+O	330	
+O	346	
+S	331	346	markup.raw.inline

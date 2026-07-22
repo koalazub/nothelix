@@ -1,0 +1,42 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+@markdown 0
+# ## Least squares
+#
+# The normal equations are
+# $$
+# A^\top A \hat{x} = A^\top b
+# $$
+#
+# which unroll into the stacked system
+# $$
+# \begin{pmatrix}
+# a_{11} & a_{12} \\
+# a_{21} & a_{22}
+# \end{pmatrix}
+# \begin{pmatrix}
+# x_1 \\
+# x_2
+# \end{pmatrix}
+# =
+# \begin{pmatrix}
+# b_1 \\
+# b_2
+# \end{pmatrix}
+# $$
+#
+# with residual
+# $$
+# r = b - A \hat{x}
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# $$

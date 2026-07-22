@@ -1,0 +1,7 @@
+# ## The Fourier transform
+#
+# The forward transform is f̂(ξ) = ∫_-∞^∞ f(x)   e^-2π i x ξ   dx
+# and the inverse is f(x) = ∫_-∞^∞ f̂(ξ)   e^2π i x ξ   dξ.
+#
+# Parseval's theorem states ∫ |f(x)|²   dx = ∫ |f̂(ξ)|²   dξ, so the
+# transform preserves energy: ‖f‖₂ = ‖f̂‖₂ for every f ∈ L²(ℝ).

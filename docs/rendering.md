@@ -80,8 +80,22 @@ as read.
 ![Fourier transform LaTeX before and after conceal](assets/img/fourier-conceal.png)
 
 The concealed pane is the engine's exact output, and those lines are pinned
-byte-for-byte by unit tests. For camera-ready typesetting, put the same formula
-in a `$$ … $$` block and it renders as a Typst image instead.
+byte-for-byte by snapshot tests. The block below is not a transcription. It is
+written straight out of the same engine by `just gallery`, from the same fixture
+the snapshot tests run, so the page cannot drift from what the editor draws.
+
+```text
+{% include engine/conceal-fourier.txt %}
+```
+
+A linear-algebra cell goes the same way, matrices, norms, and all.
+
+```text
+{% include engine/conceal-linear-algebra.txt %}
+```
+
+For camera-ready typesetting, put the same formula in a `$$ … $$` block and it
+renders as a Typst image instead.
 
 | Command | What it does |
 |---|---|

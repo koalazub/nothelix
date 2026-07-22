@@ -17,6 +17,11 @@ name = "nothelix-animation-smoke"
 path = "src/bin/animation_smoke.rs"
 required-features = ["native"]
 
+[[bin]]
+name = "gen-gallery"
+path = "src/bin/gen_gallery.rs"
+required-features = ["native"]
+
 [dependencies]
 mitex = "0.2.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -71,6 +76,7 @@ lottie = []
 [dev-dependencies]
 tempfile = "3.10"
 png = "0.18"
+insta = "1.48.0"
 
 [[bench]]
 name = "animation_perf"

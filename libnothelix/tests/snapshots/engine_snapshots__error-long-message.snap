@@ -1,0 +1,20 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+error[E008]: no method `solve` for these argument types
+  --> cell 11, line 4
+   |
+  4 |     x = solve(K, f, Val(:cholesky), (tol = 1e-10, maxiter = 500, verbose = true))
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | MethodError: no method matching solve(::SparseMatrixCSC{Float64, Int64}, ::Vector{Float64}, ::Val{:cholesky}, ::NamedTup…
+   |
+   = help: Check argument types with typeof(). The function exists but doesn't
+   = help: accept these types.
+   |
+   = note: argument types:
+   |   `K` is SparseMatrixCSC{Float64, Int64}
+   |   `f` is Vector{Float64}
+   |   `Val(:cholesky)` is Val{:cholesky}
+   |   `(tol = 1e-10, maxiter = 500, verbose = true)` is NamedTuple{(:tol, :maxiter, :verbose), Tuple{Float64, Int64, Bool}}
+   = help: check types with: typeof(K), typeof(f), typeof(Val(:cholesky)), typeof((tol = 1e-10, maxiter = 500, verbose = true))
