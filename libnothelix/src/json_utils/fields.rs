@@ -1,4 +1,5 @@
 use super::document;
+use crate::error::{Result, ffi};
 use serde_json::Value;
 
 fn as_text(value: &Value) -> String {
@@ -25,36 +26,49 @@ fn as_flag(value: &Value) -> String {
 }
 
 pub fn json_get(json_str: String, key: String) -> String {
-    document(&json_str)
-        .and_then(|doc| doc.get(&key).map(as_text))
-        .unwrap_or_default()
+    ffi(field(&json_str, &key))
+}
+
+fn field(json_str: &str, key: &str) -> Result<String> {
+    let doc = document("json-get", json_str)?;
+    Ok(doc.get(key).map_or_else(String::new, as_text))
 }
 
 pub fn json_get_bool(json_str: String, key: String) -> String {
-    document(&json_str)
-        .and_then(|doc| doc.get(&key).map(as_flag))
-        .unwrap_or_else(|| "false".to_string())
+    ffi(flag(&json_str, &key))
+}
+
+fn flag(json_str: &str, key: &str) -> Result<String> {
+    let doc = document("json-get-bool", json_str)?;
+    Ok(doc.get(key).map_or_else(|| "false".to_string(), as_flag))
 }
 
 pub fn json_get_many(json_str: String, keys_csv: String) -> String {
-    let keys = keys_csv.split(',');
-    let Some(doc) = document(&json_str) else {
-        return "\t".repeat(keys.count().saturating_sub(1));
-    };
-    keys.map(|key| {
-        doc.get(key.trim())
-            .map_or_else(String::new, as_text_unless_null)
-    })
-    .collect::<Vec<_>>()
-    .join("\t")
+    ffi(tab_separated_fields(&json_str, &keys_csv))
+}
+
+fn tab_separated_fields(json_str: &str, keys_csv: &str) -> Result<String> {
+    let doc = document("json-get-many", json_str)?;
+    Ok(keys_csv
+        .split(',')
+        .map(|key| {
+            doc.get(key.trim())
+                .map_or_else(String::new, as_text_unless_null)
+        })
+        .collect::<Vec<_>>()
+        .join("\t"))
 }
 
 pub fn json_get_plot_data(json_str: String) -> String {
-    document(&json_str)
-        .and_then(|doc| doc.get("plot_data").cloned())
-        .filter(Value::is_array)
-        .map(|plot_data| plot_data.to_string())
-        .unwrap_or_default()
+    ffi(plot_data(&json_str))
+}
+
+fn plot_data(json_str: &str) -> Result<String> {
+    let doc = document("json-get-plot-data", json_str)?;
+    Ok(doc
+        .get("plot_data")
+        .filter(|plot_data| plot_data.is_array())
+        .map_or_else(String::new, Value::to_string))
 }
 
 #[cfg(test)]
@@ -98,8 +112,22 @@ mod tests {
     }
 
     #[test]
-    fn json_get_invalid_json() {
-        assert_eq!(json_get("not json".into(), "key".into()), "");
+    fn a_malformed_document_is_reported_not_confused_with_an_absent_field() {
+        let absent = json_get(r#"{"name": "hello"}"#.into(), "key".into());
+        let malformed = json_get("not json".into(), "key".into());
+        assert_eq!(absent, "");
+        assert!(malformed.starts_with("ERROR: json-get: invalid JSON: "), "{malformed}");
+    }
+
+    #[test]
+    fn a_malformed_document_is_reported_by_the_bool_accessor_too() {
+        let absent = json_get_bool(r#"{"other": 1}"#.into(), "flag".into());
+        let malformed = json_get_bool("not json".into(), "flag".into());
+        assert_eq!(absent, "false");
+        assert!(
+            malformed.starts_with("ERROR: json-get-bool: invalid JSON: "),
+            "{malformed}"
+        );
     }
 
     #[test]
@@ -117,14 +145,26 @@ mod tests {
     }
 
     #[test]
-    fn json_get_many_invalid_json() {
+    fn json_get_many_reports_a_malformed_document_instead_of_blank_fields() {
         let result = json_get_many("not json".into(), "a,b".into());
-        assert_eq!(result, "\t");
+        assert!(
+            result.starts_with("ERROR: json-get-many: invalid JSON: "),
+            "{result}"
+        );
     }
 
     #[test]
     fn plot_data_is_empty_unless_an_array_is_present() {
         assert_eq!(json_get_plot_data(r#"{"plot_data": 3}"#.into()), "");
         assert_eq!(json_get_plot_data(r#"{"plot_data": [1]}"#.into()), "[1]");
+    }
+
+    #[test]
+    fn plot_data_reports_a_malformed_document() {
+        let result = json_get_plot_data("not json".into());
+        assert!(
+            result.starts_with("ERROR: json-get-plot-data: invalid JSON: "),
+            "{result}"
+        );
     }
 }

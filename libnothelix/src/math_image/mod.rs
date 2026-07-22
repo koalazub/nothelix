@@ -68,7 +68,7 @@ pub fn start_render_batch(blocks: String, font_size_pt: isize, text_color: Strin
 
 #[cfg(feature = "native")]
 pub fn poll_render_batch(job_id: String) -> String {
-    batch::poll(&job_id).into_string()
+    crate::error::ffi(batch::poll(&job_id).map(|reply| reply.to_string()))
 }
 
 #[cfg(feature = "native")]
@@ -115,7 +115,12 @@ mod tests {
         let parts: Vec<&str> = reply.split(BATCH_SEP).collect();
         assert_eq!(parts.len(), 2, "expected 2 results, got: {reply}");
         assert!(parts.iter().all(|p| p.starts_with('{')), "got: {reply}");
-        assert_eq!(poll_render_batch(job), "ERROR:expired");
+        let collected_twice = poll_render_batch(job);
+        assert!(
+            collected_twice.starts_with("ERROR: math render jobs: job "),
+            "{collected_twice}"
+        );
+        assert!(collected_twice.ends_with("expired or was already collected"));
     }
 
     #[test]

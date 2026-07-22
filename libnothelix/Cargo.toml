@@ -51,7 +51,7 @@ inventory = { version = "0.3", optional = true }
 steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "3a418c9ea586c1862a8c3a49d6a998436afc8957", features = ["dylibs", "sync"], optional = true }
 abi_stable = { version = "0.11", optional = true }
 
-wasm-bindgen = { version = "=0.2.118", optional = true }
+wasm-bindgen = { version = "=0.2.121", optional = true }
 
 [features]
 default = ["native"]

@@ -1,4 +1,5 @@
 use super::document;
+use crate::error::{Result, ffi};
 use serde_json::Value;
 use std::fmt;
 
@@ -79,19 +80,19 @@ fn strings_at(value: &Value, key: &str) -> Vec<String> {
 }
 
 pub fn json_get_text_plots(json_str: String) -> String {
-    let Some(plots) = document(&json_str)
-        .as_ref()
-        .and_then(|doc| doc.get("text_plots"))
-        .and_then(Value::as_array)
-        .map(|plots| plots.iter().map(Plot::read).collect::<Vec<_>>())
-    else {
-        return String::new();
+    ffi(text_plots(&json_str))
+}
+
+fn text_plots(json_str: &str) -> Result<String> {
+    let doc = document("json-get-text-plots", json_str)?;
+    let Some(plots) = doc.get("text_plots").and_then(Value::as_array) else {
+        return Ok(String::new());
     };
-    plots
+    Ok(plots
         .iter()
-        .map(Plot::to_string)
+        .map(|plot| Plot::read(plot).to_string())
         .collect::<Vec<_>>()
-        .join(&PLOT_SEP.to_string())
+        .join(&PLOT_SEP.to_string()))
 }
 
 #[cfg(test)]
@@ -137,6 +138,15 @@ mod tests {
         let out = json_get_text_plots(json.to_string());
         let parts: Vec<&str> = out.split('\u{1e}').collect();
         assert_eq!(parts, vec!["A\u{1d}", "B\u{1d}0,0,1,3"]);
+    }
+
+    #[test]
+    fn text_plots_reports_a_malformed_document_instead_of_an_empty_blob() {
+        let result = json_get_text_plots("not json".to_string());
+        assert!(
+            result.starts_with("ERROR: json-get-text-plots: invalid JSON: "),
+            "{result}"
+        );
     }
 
     #[test]

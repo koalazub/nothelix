@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -29,19 +30,13 @@ fn next_job_id() -> u64 {
 pub(crate) enum PollReply {
     Pending,
     Ready(String),
-    BadJobId,
-    Expired,
-    LockPoisoned,
 }
 
-impl PollReply {
-    pub(crate) fn into_string(self) -> String {
+impl fmt::Display for PollReply {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pending => "PENDING".to_string(),
-            Self::Ready(results) => results,
-            Self::BadJobId => "ERROR:bad-job-id".to_string(),
-            Self::Expired => "ERROR:expired".to_string(),
-            Self::LockPoisoned => "ERROR:lock-poisoned".to_string(),
+            Self::Pending => f.write_str("PENDING"),
+            Self::Ready(results) => f.write_str(results),
         }
     }
 }
@@ -101,22 +96,27 @@ pub(crate) fn spawn(
     Ok(job_id.to_string())
 }
 
-pub(crate) fn poll(job_id: &str) -> PollReply {
-    let Ok(id) = job_id.trim().parse::<u64>() else {
-        return PollReply::BadJobId;
-    };
-    let Ok(mut registry) = jobs().lock() else {
-        return PollReply::LockPoisoned;
-    };
+pub(crate) fn poll(job_id: &str) -> Result<PollReply> {
+    let trimmed = job_id.trim();
+    let id = trimmed.parse::<u64>().map_err(|_| Error::Malformed {
+        subject: SUBJECT,
+        detail: format!("`{trimmed}` is not a job id"),
+    })?;
+    let mut registry = jobs()
+        .lock()
+        .map_err(|_| Error::LockPoisoned { subject: SUBJECT })?;
     match registry.remove(&id) {
         Some(BatchJob {
             results: Some(results),
             ..
-        }) => PollReply::Ready(results),
+        }) => Ok(PollReply::Ready(results)),
         Some(pending) => {
             registry.insert(id, pending);
-            PollReply::Pending
+            Ok(PollReply::Pending)
         }
-        None => PollReply::Expired,
+        None => Err(Error::Malformed {
+            subject: SUBJECT,
+            detail: format!("job {id} expired or was already collected"),
+        }),
     }
 }

@@ -1,5 +1,6 @@
 use super::document;
-use abi_stable::std_types::RVec;
+use crate::error::{Result, ffi};
+use abi_stable::std_types::{RString, RVec};
 use base64::Engine as _;
 use serde_json::Value;
 use std::path::Path;
@@ -120,25 +121,35 @@ fn every_image_base64(value: &Value, kernel_dir: &str) -> Vec<String> {
 }
 
 pub fn json_get_animated_mime(json_str: String) -> String {
-    document(&json_str)
-        .as_ref()
-        .and_then(first_animated_mime)
-        .unwrap_or_default()
+    ffi(animated_mime(&json_str))
+}
+
+fn animated_mime(json_str: &str) -> Result<String> {
+    let doc = document("json-get-animated-mime", json_str)?;
+    Ok(first_animated_mime(&doc).unwrap_or_default())
 }
 
 pub fn json_get_first_image_bytes(json_str: String, kernel_dir: String) -> FFIValue {
-    let bytes = document(&json_str)
-        .as_ref()
-        .and_then(first_image_data)
-        .and_then(|data| Payload::of(&data)?.bytes(&kernel_dir))
-        .unwrap_or_default();
-    FFIValue::ByteVector(RVec::from(bytes))
+    match first_image_bytes(&json_str, &kernel_dir) {
+        Ok(bytes) => FFIValue::ByteVector(RVec::from(bytes)),
+        Err(failure) => FFIValue::StringV(RString::from(ffi(Err(failure)))),
+    }
+}
+
+fn first_image_bytes(json_str: &str, kernel_dir: &str) -> Result<Vec<u8>> {
+    let doc = document("json-get-first-image-bytes", json_str)?;
+    Ok(first_image_data(&doc)
+        .and_then(|data| Payload::of(&data)?.bytes(kernel_dir))
+        .unwrap_or_default())
 }
 
 pub fn json_get_all_images(json_str: String, kernel_dir: String) -> String {
-    document(&json_str)
-        .map(|doc| every_image_base64(&doc, &kernel_dir).join("\n"))
-        .unwrap_or_default()
+    ffi(all_images(&json_str, &kernel_dir))
+}
+
+fn all_images(json_str: &str, kernel_dir: &str) -> Result<String> {
+    let doc = document("json-get-all-images", json_str)?;
+    Ok(every_image_base64(&doc, kernel_dir).join("\n"))
 }
 
 #[cfg(test)]
@@ -231,5 +242,33 @@ mod tests {
     fn all_images_no_images_key() {
         let json = r#"{"stdout": "hello"}"#;
         assert_eq!(json_get_all_images(json.into(), String::new()), "");
+    }
+
+    #[test]
+    fn a_malformed_document_is_reported_by_every_image_accessor() {
+        let all = json_get_all_images("not json".into(), String::new());
+        let mime = json_get_animated_mime("not json".into());
+        assert!(
+            all.starts_with("ERROR: json-get-all-images: invalid JSON: "),
+            "{all}"
+        );
+        assert!(
+            mime.starts_with("ERROR: json-get-animated-mime: invalid JSON: "),
+            "{mime}"
+        );
+    }
+
+    #[test]
+    fn first_image_bytes_reports_a_malformed_document_instead_of_empty_bytes() {
+        let absent = json_get_first_image_bytes(r#"{"stdout":"hi"}"#.into(), String::new());
+        let malformed = json_get_first_image_bytes("not json".into(), String::new());
+        assert!(matches!(absent, FFIValue::ByteVector(bytes) if bytes.is_empty()));
+        let FFIValue::StringV(reported) = malformed else {
+            panic!("a malformed document must not be reported as empty bytes");
+        };
+        assert!(
+            reported.starts_with("ERROR: json-get-first-image-bytes: invalid JSON: "),
+            "{reported}"
+        );
     }
 }
