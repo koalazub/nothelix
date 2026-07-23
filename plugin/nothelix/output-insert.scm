@@ -27,6 +27,7 @@
                           json-get-first-image-bytes
                           json-get-animated-mime
                           json-get-plot-data
+                          json-get-notes
                           json-get-text-plots
                           kitty-placeholder-payload
                           kitty-placeholder-rows
@@ -37,7 +38,7 @@
 (require "nothelix/animation.scm")
 
 (provide update-cell-output cell-marker-and-code-end clear-cell-output!
-         take-first-n images-truncated?)
+         take-first-n images-truncated? notes-blob->group)
 
 ;;@doc
 ;; Strip a trailing newline and split `text` into a list of plain lines; "" yields '().
@@ -72,6 +73,13 @@
 ;; #t iff `raw-count` images exceed the per-cell `cap`, i.e. some images will be dropped.
 (define (images-truncated? raw-count cap)
   (> raw-count cap))
+
+(define (notes-blob->group notes-blob)
+  (if (and notes-blob
+           (> (string-length notes-blob) 0)
+           (not (string-starts-with? notes-blob "ERROR:")))
+      (string-split notes-blob "\n")
+      '()))
 
 ;;@doc
 ;; Clear a cell's prior output: virtual text rows at its anchor, any stale
@@ -296,7 +304,8 @@
      (when (> (string-length (string-trim filtered-stderr)) 0)
        (set! text-lines (append text-lines (cons "stderr:" (text->plain-lines filtered-stderr)))))
 
-     (define stored-text-lines text-lines)
+     (define notes-group (notes-blob->group (json-get-notes result-json)))
+     (define stored-text-lines (append notes-group text-lines))
      (define stdout-group
        (if (> (string-length stdout-text) 0) (text->plain-lines stdout-text) '()))
      (define repr-group
@@ -309,7 +318,7 @@
            '()))
      (define render-lines
        (assign-cycling-bars
-         (append (list stdout-group repr-group stderr-group) text-plot-styled-groups)))
+         (append (list notes-group stdout-group repr-group stderr-group) text-plot-styled-groups)))
 
      (when (and anchor-line
                 (not (null? render-lines))

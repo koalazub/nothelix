@@ -1,6 +1,6 @@
 module CellRegistry
 
-export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type
+export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type, provenance_notes
 
 # Cell state structure
 mutable struct Cell
@@ -18,11 +18,12 @@ mutable struct Cell
     plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
+    notes::Vector{String}
     status::Symbol  # :pending, :running, :done, :error
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, :pending)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()
@@ -153,6 +154,22 @@ function in_scope_variables_by_type()::Dict{String, Vector{Dict{String, Any}}}
         push!(get!(() -> Dict{String, Any}[], out, typ), entry)
     end
     out
+end
+
+function provenance_notes(cell_idx::Int, uses)::Vector{String}
+    notes = String[]
+    for v in sort!(collect(uses))
+        haskey(VARIABLE_SOURCES, v) || continue
+        writer = VARIABLE_SOURCES[v]
+        writer == cell_idx && continue
+        haskey(CELLS, writer) || continue
+        if !(v in CELLS[writer].defines)
+            push!(notes, "note: $(v) was last assigned by cell $(writer), whose current code no longer assigns it")
+        elseif writer > cell_idx
+            push!(notes, "note: $(v) was last assigned by cell $(writer), below this cell")
+        end
+    end
+    notes
 end
 
 end # module

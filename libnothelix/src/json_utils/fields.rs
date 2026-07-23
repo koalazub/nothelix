@@ -59,6 +59,25 @@ fn tab_separated_fields(json_str: &str, keys_csv: &str) -> Result<String> {
         .join("\t"))
 }
 
+pub fn json_get_notes(json_str: String) -> String {
+    ffi(notes(&json_str))
+}
+
+fn notes(json_str: &str) -> Result<String> {
+    let doc = document("json-get-notes", json_str)?;
+    Ok(doc
+        .get("notes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default())
+}
+
 pub fn json_get_plot_data(json_str: String) -> String {
     ffi(plot_data(&json_str))
 }
@@ -167,6 +186,36 @@ mod tests {
         let result = json_get_plot_data("not json".into());
         assert!(
             result.starts_with("ERROR: json-get-plot-data: invalid JSON: "),
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn notes_absent_returns_empty() {
+        assert_eq!(json_get_notes(r#"{"stdout": "hi"}"#.into()), "");
+    }
+
+    #[test]
+    fn notes_array_joins_with_newlines() {
+        let json = r#"{"notes": ["note: A below", "note: B stale"]}"#;
+        assert_eq!(json_get_notes(json.into()), "note: A below\nnote: B stale");
+    }
+
+    #[test]
+    fn notes_not_an_array_returns_empty() {
+        assert_eq!(json_get_notes(r#"{"notes": "oops"}"#.into()), "");
+    }
+
+    #[test]
+    fn notes_empty_array_returns_empty() {
+        assert_eq!(json_get_notes(r#"{"notes": []}"#.into()), "");
+    }
+
+    #[test]
+    fn notes_reports_a_malformed_document_instead_of_an_empty_blob() {
+        let result = json_get_notes("not json".into());
+        assert!(
+            result.starts_with("ERROR: json-get-notes: invalid JSON: "),
             "{result}"
         );
     }

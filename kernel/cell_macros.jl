@@ -32,6 +32,7 @@ macro cell(index, exec_count, body)
         cell.defines = defines
         cell.uses = uses
         cell.status = :running
+        cell.notes = CellRegistry.provenance_notes(cell_idx, uses)
         CellRegistry.CELLS[cell_idx] = cell
 
         # Update variable sources
@@ -115,6 +116,8 @@ function execute_cell(cell_idx::Int, code::String; plot_mode::String="auto")
     cell.defines = analysis.defines
     cell.uses = analysis.uses
 
+    cell.notes = CellRegistry.provenance_notes(cell_idx, cell.uses)
+
     # Update variable sources for defines
     for var in cell.defines
         CellRegistry.VARIABLE_SOURCES[var] = cell_idx
@@ -182,6 +185,10 @@ function get_cell_result_json(cell_idx::Int)
         "stderr" => cell.stderr,
         "has_error" => cell.error !== nothing,
     )
+
+    if !isempty(cell.notes)
+        result["notes"] = cell.notes
+    end
 
     if cell.error !== nothing
         result["error"] = sprint(showerror, cell.error)

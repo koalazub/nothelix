@@ -6,6 +6,7 @@
 
 (require "test-framework.scm")
 (require "../nothelix/output-insert.scm")
+(require "../nothelix/output-render.scm")
 (require "../nothelix/image-cache.scm")
 
 (provide run-output-insert-tests)
@@ -76,5 +77,31 @@
   (assert-equal ids-before (ids-for-cell 7 slots)
                 "cell-img->image-id is unaffected by growing plots-per-cell")
   (set-plots-per-cell! default-ppc)
+
+  (assert-equal '() (notes-blob->group "")
+                "notes-blob->group: empty blob -> no note rows")
+  (assert-equal '() (notes-blob->group #false)
+                "notes-blob->group: #false blob -> no note rows")
+  (assert-equal '() (notes-blob->group "ERROR: json-get-notes: invalid JSON: x")
+                "notes-blob->group: an ERROR reply never fabricates a note row")
+  (assert-equal (list "note: A was last assigned by cell 76, below this cell")
+                (notes-blob->group "note: A was last assigned by cell 76, below this cell")
+                "notes-blob->group: single note -> one row")
+  (assert-equal (list "note: A below" "note: B stale")
+                (notes-blob->group "note: A below\nnote: B stale")
+                "notes-blob->group: newline-joined notes split into rows")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series0" "note: A below")
+          (list "bar" "ui.virtual.output.series1" "out line"))
+    (assign-cycling-bars
+      (list (notes-blob->group "note: A below") (list "out line")))
+    "notes group renders as its own bar group (series0), shifting stdout to series1")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.series0" "out line"))
+    (assign-cycling-bars
+      (list (notes-blob->group "") (list "out line")))
+    "no notes: empty notes group consumes no color, stdout stays series0")
 
   (print-test-suite-footer "output-insert"))

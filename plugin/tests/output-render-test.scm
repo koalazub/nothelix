@@ -158,7 +158,7 @@
     "assign-cycling-bars: empty groups are dropped and do not consume a color")
 
   (assert-equal
-    (list (list "bar" "ui.virtual.output.series1"
+    (list (list "bar" "ui.virtual.output.series0"
                 (list (list "AA" "ui.virtual.output.series2"))))
     (assign-cycling-bars
       (list '() (list (list (list "AA" "ui.virtual.output.series2")))))

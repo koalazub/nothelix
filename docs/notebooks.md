@@ -118,6 +118,15 @@ The first run is slow while Julia precompiles imports. Later runs reuse the warm
 kernel, and state persists between cells the way it does in a REPL. Output
 appears inline below each cell as execution finishes.
 
+Because the kernel is a persistent REPL, running a single cell reads whatever the
+session currently holds. When a cell reads a global whose last value in this
+session was written by a cell lower in the document, or by a cell whose current
+code no longer assigns it, nothelix appends a note row to that cell's output. The
+note reads like `note: A was last assigned by cell 76, below this cell` and warns
+you that an earlier out-of-order run may have left the wrong value in scope.
+Running the notebook top to bottom writes every global in document order, so a
+clean run produces no notes.
+
 See [Rendering](rendering.md) for how figures and math reach the buffer.
 
 ## Output and undo

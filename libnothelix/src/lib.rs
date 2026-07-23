@@ -180,6 +180,7 @@ mod steel_bindings {
                 json_utils::json_get_first_image_bytes,
             );
             module.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
+            module.register_fn("json-get-notes", json_utils::json_get_notes);
             module.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
             module.register_fn("json-get-all-images", json_utils::json_get_all_images);
             module.register_fn("json-get-text-plots", json_utils::json_get_text_plots);
