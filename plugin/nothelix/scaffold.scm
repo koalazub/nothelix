@@ -149,7 +149,9 @@
   #true)
 
 ;;@doc
-;; On space in a notebook file, expand a complete `@<word> ` line via the markdown direct expander or the cell-type picker.
+;; On space in a notebook file, expand an exact `@cell `, `@md `/`@mark `/`@markdown `,
+;; or `@typst ` line into its marker. Any other `@word` is Julia code (`@show`,
+;; `@time`, …) and is left alone.
 (define (maybe-expand-cell-marker! char)
   (when (char=? char #\space)
     (define focus (editor-focus))
@@ -168,14 +170,14 @@
                          " next-idx=" (number->string next-idx)
                          " line-idx=" (number->string line-idx)))
         (cond
+          [(string=? word "cell")
+           (expand-code-marker! next-idx (file-lang path))]
           [(or (string=? word "md")
                (string=? word "mark")
                (string=? word "markdown"))
            (expand-markdown-marker! next-idx)]
           [(string=? word "typst")
-           (expand-typst-marker! next-idx)]
-          [else
-           (open-cell-type-picker line-idx next-idx (file-lang path))])))))
+           (expand-typst-marker! next-idx)])))))
 
 ;; Cell-type picker
 
