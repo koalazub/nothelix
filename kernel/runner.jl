@@ -370,5 +370,5 @@ while true
         log_error("Error in main loop: $e")
     end
 
-    sleep(0.05)  # 50ms polling interval
+    sleep(0.005)
 end

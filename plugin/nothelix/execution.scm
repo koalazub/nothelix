@@ -67,7 +67,7 @@
 ;;@doc
 ;; Poll for execution result with exponential backoff (100ms -> 500ms).
 (define (poll-for-result kernel-dir jl-path cell-index)
-  (poll-for-result-with-delay kernel-dir jl-path cell-index 100))
+  (poll-for-result-with-delay kernel-dir jl-path cell-index 20))
 
 (define (poll-for-result-with-delay kernel-dir jl-path cell-index delay-ms)
   (define result-json (kernel-poll-result kernel-dir))
@@ -75,7 +75,7 @@
   (cond
     [(equal? status "pending")
      (update-spinner-frame)
-     (define next-delay (min 500 (+ delay-ms 50)))
+     (define next-delay (min 200 (+ delay-ms 30)))
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
@@ -101,7 +101,7 @@
 
   (save-cursor-for-restore! doc-id)
   (helix.write)
-  (enqueue-thread-local-callback-with-delay 100
+  (enqueue-thread-local-callback-with-delay 20
     (lambda () (on-ready doc-id path current-line))))
 
 ;;@doc
@@ -157,7 +157,7 @@
 
       (cond
         [(equal? start-status "started")
-          (enqueue-thread-local-callback-with-delay 100
+          (enqueue-thread-local-callback-with-delay 20
             (lambda () (poll-for-result kernel-dir path cell-index)))]
         [else
          (define err (let ([e (json-get start-result "error")]) (if (> (string-length e) 0) e "Unknown error")))
@@ -277,7 +277,7 @@
         (define start-status (json-get start-result "status"))
 
         (if (equal? start-status "started")
-            (enqueue-thread-local-callback-with-delay 100
+            (enqueue-thread-local-callback-with-delay 20
               (lambda () (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)))
             (let ()
               (define err (json-get start-result "error"))
@@ -292,7 +292,7 @@
   (helix.redraw))
 
 (define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)
-  (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line 100))
+  (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line 20))
 
 (define (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line delay-ms)
   (define result-json (kernel-poll-result kernel-dir))
@@ -300,13 +300,13 @@
   (cond
     [(equal? status "pending")
      (update-spinner-frame)
-     (define next-delay (min 500 (+ delay-ms 50)))
+     (define next-delay (min 200 (+ delay-ms 30)))
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
      (update-cell-output result-json jl-path cell-idx kernel-dir)
      (restore-cursor-for! doc-id)
-     (enqueue-thread-local-callback-with-delay 10
+     (enqueue-thread-local-callback-with-delay 0
        (lambda () (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)))]))
 
 ;;@doc
