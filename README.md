@@ -23,7 +23,7 @@ The block below is not a transcription. `just gallery` writes it straight out of
 ## What you get
 
 - **Notebooks that behave like source.** A notebook is Julia with `@cell` markers. It diffs, greps, and edits with the motions you already use, and `:convert-notebook` and `:sync-to-ipynb` move it to and from `.ipynb` when a collaborator needs that.
-- **Results where the cell is.** Text output, plots, Markdown tables, and display equations render in the buffer. No browser and no second pane.
+- **Results where the cell is.** Text output, plots, Markdown tables, and display equations render in the buffer. No browser and no second pane. `<space>ny` puts a cell's output on the system clipboard.
 - **A kernel that stays warm.** One kernel per notebook, keyed to the file path. State persists across cells the way it does in a REPL, survives closing the buffer and restarting Helix, and runs in the notebook's own directory so relative paths to your data resolve.
 - **Math that reads like math.** Inline `$…$` LaTeX conceals to Unicode as you read. Display `$$…$$` blocks and pipe tables compile through Typst and draw as typeset images.
 - **One command to hand it over.** `:export-markdown`, `:export-typst`, and `:export-pdf` produce Markdown, a Typst source file, or a finished PDF. No LaTeX distribution required.

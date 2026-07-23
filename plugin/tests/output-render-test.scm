@@ -137,6 +137,13 @@
                 (decode-stored-rows legacy-raw "canonH" "otherH")
                 "decode-stored-rows: a real edit matches neither hash and drops the stored rows")
 
+  (assert-equal (list "stdout line")
+                (decode-stored-rows raw-with-plots (stored-source-hash raw-with-plots))
+                "decode-stored-rows: decoding against the stored hash recovers rows even when the source has changed since the run")
+  (assert-equal #false
+                (decode-stored-rows "" (stored-source-hash ""))
+                "decode-stored-rows: an empty store entry decodes to #false under the self-hash form")
+
   (assert-true (hash-accepted? "H" "H" "L")
                "hash-accepted?: the current canonical hash matches")
   (assert-true (hash-accepted? "L" "H" "L")

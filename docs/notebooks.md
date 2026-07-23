@@ -98,10 +98,13 @@ with autofill instead of typing markers by hand.
 
 | You type | You get |
 |---|---|
-| `@cell<space>` | A picker for code or markdown, then the marker stamped with the next index |
-| `@md<space>` (or `@mark`, `@markdown`) | A markdown cell, no picker |
-| `@<anything><space>` | The same picker, forgiving of typos like `@code` or `@c` |
-| `<space>nn` | The picker with nothing typed |
+| `@cell<space>` | The marker stamped with the next index |
+| `@md<space>` (or `@mark`, `@markdown`) | A markdown cell |
+| `@typst<space>` | A typst cell |
+| `<space>nn` | The cell-type picker |
+
+Only these exact words expand, so Julia macros like `@show` or `@time` at the
+start of a line stay untouched.
 
 You never type a cell index or `:julia` by hand.
 
@@ -161,6 +164,10 @@ Text output renders as virtual rows below the cell. It is not buffer text, so it
 never enters undo and is never written into the `.jl` file. Editing a cell and
 running it is one `u` away from a clean slate, because the run itself leaves
 nothing to undo.
+
+Because output is not buffer text, you cannot select it with editor motions.
+`<space>ny` (`:copy-cell-output`) puts the cell's output on the system
+clipboard instead.
 
 <!-- SCREENSHOT NEEDED: virtual-row text output sitting below a cell, showing output that is not buffer text -->
 

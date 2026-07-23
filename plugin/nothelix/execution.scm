@@ -36,6 +36,7 @@
          execute-cells-above
          cancel-cell
          cell-state
+         copy-cell-output
          restore-cell-outputs-on-open!
          render-cached-images
          sync-images-to-markers!
@@ -457,6 +458,37 @@
           (if (null? input-lines)
               (string-append header " (no tracked inputs)")
               (string-join (cons header input-lines) " | ")))])]))
+
+;;@doc
+;; Copy the rendered output of the cell under the cursor to the system
+;; clipboard. Reads the output store, so it copies exactly what is shown
+;; even for a cell edited since its last run.
+(define (copy-cell-output)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (cond
+    [(not (and path (string-suffix? path ".jl")))
+     (set-status! "copy-cell-output: only runs on .jl notebook files")]
+    [else
+     (define rope (editor->text doc-id))
+     (define total (text.rope-len-lines rope))
+     (define (get-line idx) (doc-get-line rope total idx))
+     (define cell-start (find-cell-start-line get-line (current-line-number)))
+     (define idx (marker-line-cell-index (get-line cell-start)))
+     (cond
+       [(not idx) (set-status! "copy-cell-output: no cell at cursor")]
+       [else
+        (define raw (store-get-for path (cell-id idx)))
+        (define rows (decode-stored-rows raw (stored-source-hash raw)))
+        (cond
+          [(or (not rows) (null? rows))
+           (set-status! (string-append "cell " (number->string idx)
+                                       ": no output to copy — run it first"))]
+          [else
+           (set-register! #\+ (list (string-join rows "\n")))
+           (set-status! (string-append "cell " (number->string idx) ": copied "
+                                       (number->string (length rows)) " line(s)"))])])]))
 
 ;;@doc
 ;; Re-render every cell's output from the output store on document open,

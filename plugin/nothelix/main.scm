@@ -54,7 +54,7 @@
 
 (provide convert-notebook sync-to-ipynb export-markdown export-typst export-pdf
          execute-cell execute-all-cells execute-cells-above cancel-cell
-         cell-state
+         cell-state copy-cell-output
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
          view-chart
@@ -219,6 +219,7 @@
                   ("a" ":select-cell")
                   ("i" ":select-cell-code")
                   ("o" ":select-output")
+                  ("y" ":copy-cell-output")
                   ("=" ":plot-grow")
                   ("-" ":plot-shrink"))
              ("p" ":animation-toggle-at-cursor")))))
@@ -241,6 +242,7 @@
     "execute-cells-above" "Run every code cell from the top to the current cell."
     "cancel-cell"         "Interrupt the currently running cell."
     "cell-state"          "Show the provenance table (inputs + freshness) for the cell under the cursor."
+    "copy-cell-output"    "Copy the cell's rendered output to the system clipboard."
 
     ;; Cell navigation / selection
     "next-cell"        "Jump to the next cell."

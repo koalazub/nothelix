@@ -30,6 +30,7 @@ out of your way in ordinary buffers.
 | `:execute-all-cells` | Run every code cell, top to bottom |
 | `:execute-cells-above` | Run every code cell from the top down to the current one |
 | `:cancel-cell` | Interrupt the currently running cell |
+| `:copy-cell-output` | Copy the cell's rendered output to the system clipboard |
 
 ## Navigation and selection
 
@@ -132,6 +133,7 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `<space>na` | `:select-cell` |
 | `<space>ni` | `:select-cell-code` |
 | `<space>no` | `:select-output` |
+| `<space>ny` | `:copy-cell-output` |
 | `<space>n=` | `:plot-grow` |
 | `<space>n-` | `:plot-shrink` |
 | `<space>p` | `:animation-toggle-at-cursor` |
@@ -154,10 +156,13 @@ press space.
 
 | You type | You get |
 |---|---|
-| `@cell<space>` | The code or markdown picker, then `@cell N :julia` stamped with the next index |
+| `@cell<space>` | `@cell N :julia` stamped with the next index |
 | `@md<space>`, `@mark<space>`, `@markdown<space>` | `@markdown N`, with the cursor parked after `# ` on the next line |
 | `@typst<space>` | `@typst N`, with the cursor parked after `# ` on the next line |
-| `@<anything><space>` | The same picker as `@cell`, forgiving of typos like `@code` or `@c` |
+
+Only these exact words expand. Any other `@word` is Julia code (`@show`,
+`@time`, …) and is left alone; `:new-cell` opens the cell-type picker when you
+want one.
 
 For the source-level anatomy of these markers, including the persistent label you
 can pin to a marker line, see [Notebooks](notebooks.md). When a command misbehaves,
