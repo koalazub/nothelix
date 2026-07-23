@@ -15,11 +15,15 @@
          series-scope
          assign-cycling-bars)
 
+(define (pad-output-rows rows)
+  (if (null? rows) rows (append (list "") rows (list ""))))
+
 (define (try-set-output-lines-below! line-idx lines)
+  (define padded (pad-output-rows lines))
   (with-handler
     (lambda (_) #false)
     (eval `(begin (require-builtin helix/core/static as hs.)
-                  (hs.set-output-lines-below! *helix.cx* ,line-idx ',lines)))
+                  (hs.set-output-lines-below! *helix.cx* ,line-idx ',padded)))
     #true))
 
 (define (try-clear-output-lines-at! line-idx)
