@@ -79,6 +79,7 @@
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
+     (clear-running-cell!)
      (update-cell-output result-json jl-path cell-index kernel-dir)
      (refresh-provenance-surfaces! (editor->doc-id (editor-focus)) jl-path)]))
 
@@ -152,6 +153,7 @@
       (helix.redraw)
 
       (set! *executing-kernel-dir* kernel-dir)
+      (set-running-cell! cell-index)
       (define start-result (kernel-execute-cell-start kernel-dir cell-index code (plot-mode)))
       (define start-status (json-get start-result "status"))
 
@@ -166,6 +168,7 @@
            (set! *kernels* (hash-remove *kernels* path)))
          (render-cell-error! (- cell-code-end 1) (cell-id cell-index) (cell-source-hash code) err)
          (set! *executing-kernel-dir* #false)
+         (clear-running-cell!)
          (helix.redraw)]))))
 
 ;;@doc
@@ -180,7 +183,8 @@
          (set-status! result)
          (begin
            (set-status! "Cell execution interrupted")
-           (set! *executing-kernel-dir* #f)))]))
+           (set! *executing-kernel-dir* #f)
+           (clear-running-cell!)))]))
 
 ;;@doc
 ;; Execute all cells in the notebook top-to-bottom (.jl converted files only).
@@ -273,6 +277,7 @@
         (helix.redraw)
 
         (set! *executing-kernel-dir* kernel-dir)
+        (set-running-cell! cell-idx)
         (define start-result (kernel-execute-cell-start kernel-dir cell-idx cell-code (plot-mode)))
         (define start-status (json-get start-result "status"))
 
@@ -282,6 +287,7 @@
             (let ()
               (define err (json-get start-result "error"))
               (set! *executing-kernel-dir* #false)
+              (clear-running-cell!)
               (handle-execution-error cell-code-end err cell-idx cell-code)
               (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line))))))
 
@@ -304,6 +310,7 @@
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
     [else
+     (clear-running-cell!)
      (update-cell-output result-json jl-path cell-idx kernel-dir)
      (restore-cursor-for! doc-id)
      (enqueue-thread-local-callback-with-delay 0

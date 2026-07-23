@@ -133,7 +133,9 @@ function execute_cell(cell_idx::Int, code::String; plot_mode::String="auto")
 
     # Execute at TRUE top level with output capture
     # This is how Jupyter does it - include_string runs at module top level
+    elapsed_ns = time_ns()
     captured = OutputCapture.capture_toplevel(Main, code; plot_mode=plot_mode)
+    cell.duration = round(Int, (time_ns() - elapsed_ns) / 1_000_000)
 
     # Store results in cell
     cell.outputs = captured.return_value

@@ -14,6 +14,8 @@
          cell-state-for
          cell-state-record-state
          cell-state-record-inputs
+         cell-state-record-duration
+         cell-duration-for
          cell-glyph-for
          cell-state-glyph
          cell-state-nonfresh?
@@ -21,12 +23,18 @@
          cell-state-tag-text
          apply-edited-overrides!
          marker-line-cell-index
-         input-freshness-word)
+         input-freshness-word
+         set-running-cell!
+         clear-running-cell!
+         cell-running?)
 
 (define *cell-states* (box (hash)))
+(define *running-cell* (box #false))
 
 (define (cell-state-record-state rec) (car rec))
 (define (cell-state-record-inputs rec) (cadr rec))
+(define (cell-state-record-duration rec)
+  (if (>= (length rec) 3) (list-ref rec 2) #false))
 
 (define (parse-state-inputs blob)
   (if (equal? blob "")
@@ -52,10 +60,14 @@
                   (loop (cdr lines) acc)
                   (let ([idx (string->number (car parts))]
                         [state (cadr parts)]
-                        [inputs-blob (if (>= (length parts) 3) (list-ref parts 2) "")])
+                        [inputs-blob (if (>= (length parts) 3) (list-ref parts 2) "")]
+                        [dur-blob (if (>= (length parts) 4) (list-ref parts 3) "")])
                     (loop (cdr lines)
                           (if idx
-                              (hash-insert acc idx (list state (parse-state-inputs inputs-blob)))
+                              (hash-insert acc idx
+                                (list state
+                                      (parse-state-inputs inputs-blob)
+                                      (if (equal? dur-blob "") #false (string->number dur-blob))))
                               acc)))))))))
 
 (define (set-cell-states! h) (set-box! *cell-states* h))
@@ -76,8 +88,19 @@
         (set-box! *cell-states* h)
         (let* ([idx (car xs)]
                [prev (hash-try-get h idx)]
-               [inputs (if prev (cell-state-record-inputs prev) '())])
-          (loop (cdr xs) (hash-insert h idx (list "edited-since-run" inputs)))))))
+               [inputs (if prev (cell-state-record-inputs prev) '())]
+               [duration (if prev (cell-state-record-duration prev) #false)])
+          (loop (cdr xs) (hash-insert h idx (list "edited-since-run" inputs duration)))))))
+
+(define (cell-duration-for idx)
+  (define rec (cell-state-for idx))
+  (if rec (cell-state-record-duration rec) #false))
+
+(define (set-running-cell! idx) (set-box! *running-cell* idx))
+(define (clear-running-cell!) (set-box! *running-cell* #false))
+(define (cell-running? idx)
+  (define r (unbox *running-cell*))
+  (and r (equal? r idx)))
 
 (define (cell-state-nonfresh? state)
   (not (or (equal? state "fresh") (equal? state ""))))

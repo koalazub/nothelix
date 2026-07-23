@@ -19,7 +19,7 @@
                           slm-summary-for))
 
 (provide cell-picker cell-summary kind-tag picker-scroll-offset
-         fuzzy-score fuzzy-filter)
+         fuzzy-score fuzzy-filter format-duration picker-glyph picker-duration)
 
 (struct CellPickerState (cells view selected digits query filtering?) #:mutable)
 
@@ -246,9 +246,51 @@
       (string-append (substring s 0 (max 0 (- n 1))) "…")
       s))
 
+(define (pad-right s n)
+  (if (>= (string-length s) n)
+      s
+      (string-append s (make-string (- n (string-length s)) #\space))))
+
 (define (pad-idx n)
   (define s (number->string n))
   (if (< (string-length s) 2) (string-append " " s) s))
+
+(define *running-marker* "▸")
+
+;;@doc
+;; Terse run-time for a picker row: sub-second as whole ms (12ms), a second
+;; or longer as one-decimal seconds (1.4s), blank when the cell never ran.
+(define (format-duration ms)
+  (cond
+    [(not ms) ""]
+    [(< ms 1000) (string-append (number->string ms) "ms")]
+    [else
+     (let* ([tenths (quotient (+ ms 50) 100)]
+            [whole (quotient tenths 10)]
+            [frac (remainder tenths 10)])
+       (string-append (number->string whole) "." (number->string frac) "s"))]))
+
+;;@doc
+;; Glyph-column content for a cell: the running marker while it executes,
+;; otherwise its freshness glyph.
+(define (picker-glyph idx)
+  (if (cell-running? idx) *running-marker* (cell-glyph-for idx)))
+
+;;@doc
+;; Duration-column content for a cell: blank while it runs, otherwise its
+;; formatted last run time.
+(define (picker-duration idx)
+  (if (cell-running? idx) "" (format-duration (cell-duration-for idx))))
+
+;;@doc
+;; Lay out one picker row: left content truncated to leave room for a
+;; right-aligned duration column so the duration is never pushed off.
+(define (compose-picker-row left dur width)
+  (if (or (not dur) (equal? dur ""))
+      (truncate-to left width)
+      (let* ([dur-w (string-length dur)]
+             [avail (max 0 (- width dur-w 1))])
+        (string-append (pad-right (truncate-to left avail) avail) " " dur))))
 
 (define (picker-theme-styles)
   (list
@@ -304,19 +346,18 @@
       (when (and (< i (length cells)) (< (- i scroll-offset) visible-rows))
         (let* ([cell (list-ref cells i)]
                [kind-label (list-ref cell 1)]
+               [idx (list-ref cell 2)]
                [user-label (if (>= (length cell) 5) (list-ref cell 4) "")]
                [summary (if (>= (length cell) 6) (list-ref cell 5) "")]
                [row-style (if (= i selected) selected-style text-style)]
                [snippet (if (> (string-length user-label) 0) user-label summary)]
-               [glyph (cell-glyph-for (list-ref cell 2))]
-               [row-text
-                (truncate-to
-                  (string-append (if (equal? glyph "") " " glyph) " "
-                                 (pad-idx (list-ref cell 2)) " "
-                                 (kind-tag kind-label)
-                                 (if (> (string-length snippet) 0) "  " "")
-                                 snippet)
-                  (- list-width 4))])
+               [glyph (picker-glyph idx)]
+               [left (string-append (if (equal? glyph "") " " glyph) " "
+                                    (pad-idx idx) " "
+                                    (kind-tag kind-label)
+                                    (if (> (string-length snippet) 0) "  " "")
+                                    snippet)]
+               [row-text (compose-picker-row left (picker-duration idx) (- list-width 4))])
           (frame-set-string! buf (+ x 2) (+ y (- i scroll-offset) 1) row-text row-style)
           (loop (+ i 1)))))
 

@@ -72,4 +72,21 @@
   (assert-equal "" (cell-glyph-for 57) "glyph column: an unclassified cell shows no glyph")
   (clear-cell-states!)
 
+  (assert-equal "" (format-duration #false) "duration: a never-run cell is blank")
+  (assert-equal "12ms" (format-duration 12) "duration: sub-second is whole ms")
+  (assert-equal "999ms" (format-duration 999) "duration: just under a second stays ms")
+  (assert-equal "1.0s" (format-duration 1000) "duration: one second is one-decimal seconds")
+  (assert-equal "1.4s" (format-duration 1400) "duration: seconds shown to one decimal")
+  (assert-equal "1.5s" (format-duration 1450) "duration: seconds round to one decimal")
+  (assert-equal "12.3s" (format-duration 12340) "duration: multi-second stays one decimal")
+
+  (set-cell-states! (parse-cell-states "58\tfresh\t\t1400"))
+  (assert-equal "1.4s" (picker-duration 58) "column: an idle cell shows its formatted duration")
+  (assert-equal "" (picker-glyph 58) "column: an idle fresh cell shows no glyph")
+  (set-running-cell! 58)
+  (assert-equal "▸" (picker-glyph 58) "column: the running cell shows the marker")
+  (assert-equal "" (picker-duration 58) "column: the running cell shows no duration")
+  (clear-running-cell!)
+  (clear-cell-states!)
+
   (print-test-suite-footer "picker"))

@@ -21,10 +21,11 @@ mutable struct Cell
     notes::Vector{String}
     status::Symbol  # :pending, :running, :done, :error
     run_seq::Int
+    duration::Union{Int, Nothing}  # wall time of the last run in whole ms, nothing until run
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending, 0)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending, 0, nothing)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()
@@ -223,6 +224,7 @@ function classify_all()::Dict{String, Any}
         out[string(idx)] = Dict{String, Any}(
             "state" => cell_state_from_inputs(inputs),
             "inputs" => inputs,
+            "duration" => cell.duration,
         )
     end
     out

@@ -226,7 +226,9 @@ trust the directory.
 ## The cell navigator
 
 `<space>nj` opens a two-pane picker. Every cell shows as `index · type · label`,
-with a live preview of the selected cell.
+with a live preview of the selected cell. A right-aligned column shows each cell's
+last run time, terse as `12ms` or `1.4s` and blank until it runs, and the cell
+running right now shows a small marker in place of its state glyph.
 
 ![Cell navigator with on-device labels](assets/img/cell-picker-slm.png)
 

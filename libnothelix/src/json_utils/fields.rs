@@ -109,8 +109,12 @@ fn cell_states(json_str: &str) -> Result<String> {
                         .join(";")
                 })
                 .unwrap_or_default();
+            let duration = entry
+                .get("duration")
+                .and_then(Value::as_i64)
+                .map_or_else(String::new, |ms| ms.to_string());
             let key = idx.parse::<i64>().unwrap_or(i64::MAX);
-            (key, format!("{idx}\t{state}\t{inputs}"))
+            (key, format!("{idx}\t{state}\t{inputs}\t{duration}"))
         })
         .collect();
     rows.sort_by_key(|(key, _)| *key);
@@ -271,26 +275,38 @@ mod tests {
     #[test]
     fn cell_states_emit_one_sorted_line_per_cell() {
         let json = r#"{"cell_states": {
-            "3": {"state": "out-of-order", "inputs": [{"name": "A", "writer": 5, "rel": "below"}]},
-            "0": {"state": "fresh", "inputs": []}
+            "3": {"state": "out-of-order", "inputs": [{"name": "A", "writer": 5, "rel": "below"}], "duration": 1400},
+            "0": {"state": "fresh", "inputs": [], "duration": 12}
         }}"#;
         assert_eq!(
             json_get_cell_states(json.into()),
-            "0\tfresh\t\n3\tout-of-order\tA,5,below"
+            "0\tfresh\t\t12\n3\tout-of-order\tA,5,below\t1400"
+        );
+    }
+
+    #[test]
+    fn cell_states_leave_a_never_run_duration_blank() {
+        let json = r#"{"cell_states": {
+            "0": {"state": "fresh", "inputs": []},
+            "1": {"state": "fresh", "inputs": [], "duration": null}
+        }}"#;
+        assert_eq!(
+            json_get_cell_states(json.into()),
+            "0\tfresh\t\t\n1\tfresh\t\t"
         );
     }
 
     #[test]
     fn cell_states_join_multiple_inputs_with_semicolons() {
         let json = r#"{"cell_states": {
-            "7": {"state": "stale-input", "inputs": [
+            "7": {"state": "stale-input", "duration": 34, "inputs": [
                 {"name": "A", "writer": 2, "rel": "stale"},
                 {"name": "B", "writer": 4, "rel": "fresh"}
             ]}
         }}"#;
         assert_eq!(
             json_get_cell_states(json.into()),
-            "7\tstale-input\tA,2,stale;B,4,fresh"
+            "7\tstale-input\tA,2,stale;B,4,fresh\t34"
         );
     }
 
