@@ -5,9 +5,11 @@
 (require "helix/editor.scm")
 
 (#%require-dylib "libnothelix"
-                 (only-in nothelix output-store-put output-store-get output-store-clear))
+                 (only-in nothelix
+                          output-store-put output-store-get output-store-clear
+                          canonical-cell-hash))
 
-(provide workspace-id cell-id cell-source-hash
+(provide workspace-id cell-id cell-source-hash legacy-source-hash hash-accepted?
          store-put! store-get-for store-clear!
          json-escape-string outputs-json-for-cell
          encode-outputs+rows decode-stored-rows
@@ -30,8 +32,25 @@
   (string-append "cell-" (number->string cell-index)))
 
 ;;@doc
-;; djb2 hash of the cell's source, used to detect stale stored output.
-(define (cell-source-hash code) (number->string (djb2-hash code)))
+;; Canonical hash of the cell's source, used to detect stale stored output.
+;; Canonicalising folds the render pipeline's in-place rewrites (math reflow
+;; and height-reservation padding) to a fixed point first, so a cell that was
+;; only mechanically reshaped after its last run still hashes the same.
+(define (cell-source-hash code) (number->string (canonical-cell-hash code)))
+
+;;@doc
+;; Pre-canonical hash of the cell's source: the raw djb2 the store wrote before
+;; canonical hashing landed. Kept only so a stored value from the prior scheme
+;; is still recognised on the first reopen after upgrade (one launch of grace).
+(define (legacy-source-hash code) (number->string (djb2-hash code)))
+
+;;@doc
+;; A stored hash matches the current cell when it equals the current canonical
+;; hash, or — for a value written before canonical hashing — the current legacy
+;; hash. A genuinely edited cell changes both forms, so it matches neither.
+(define (hash-accepted? stored canonical legacy)
+  (or (equal? stored canonical)
+      (and legacy (equal? stored legacy))))
 
 (define (store-put! id source-hash outputs-json)
   (output-store-put (workspace-id) id source-hash outputs-json))
@@ -72,12 +91,12 @@
       base))
 
 ;;@doc
-;; Shared header parse for a stored raw "<hash>\t<body>" value: verifies
-;; the hash against `current-hash` and strips the JSON prefix + rows
-;; marker, returning whatever follows (rows blob, optionally followed by
-;; the text-plots marker + blob) — or #false (missing, stale, or no rows
-;; marker at all).
-(define (stored-body-remainder raw current-hash)
+;; Shared header parse for a stored raw "<hash>\t<body>" value: accepts the
+;; hash when it matches `current-hash` (or the migration `legacy-hash`), then
+;; strips the JSON prefix + rows marker, returning whatever follows (rows blob,
+;; optionally followed by the text-plots marker + blob) — or #false (missing,
+;; stale, or no rows marker at all).
+(define (stored-body-remainder raw current-hash legacy-hash)
   (if (or (not raw) (equal? raw ""))
       #false
       (let ([hash+body (split-once raw "\t")])
@@ -85,7 +104,7 @@
             #false
             (let ([stored-hash (car hash+body)]
                   [body (cadr hash+body)])
-              (if (not (equal? stored-hash current-hash))
+              (if (not (hash-accepted? stored-hash current-hash legacy-hash))
                   #false
                   (let ([marker (string-append "\n" *rows-sep-line* "\n")])
                     (let ([json+rows (split-once body marker)])
@@ -105,22 +124,29 @@
 ;;@doc
 ;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
 ;; source hash, return the stored text rows when the hash matches and the
-;; body carries a rows blob, or #false (missing, stale, or no rows).
-(define (decode-stored-rows raw current-hash)
-  (define remainder (stored-body-remainder raw current-hash))
+;; body carries a rows blob, or #false (missing, stale, or no rows). An
+;; optional trailing `legacy-hash` grants the one-launch migration grace.
+(define (decode-stored-rows raw current-hash . legacy-hash)
+  (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
       (let ([rows-blob (car (split-rows-and-text-plots remainder))])
         (if (equal? rows-blob "") '() (string-split rows-blob "\n")))))
 
 ;;@doc
+;; The trailing legacy hash for the two-argument decode callers: the head of
+;; the rest list, or #false when none was supplied.
+(define (opt-legacy rest) (if (null? rest) #false (car rest)))
+
+;;@doc
 ;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
 ;; source hash, return the stored text-plots blob (the same shape
 ;; `json-get-text-plots` returns, decodable by `decode-text-plots-blob`)
 ;; when the hash matches and a blob was stored, or #false (missing, stale,
-;; or no text-plots).
-(define (decode-stored-text-plots-blob raw current-hash)
-  (define remainder (stored-body-remainder raw current-hash))
+;; or no text-plots). An optional trailing `legacy-hash` grants the
+;; one-launch migration grace.
+(define (decode-stored-text-plots-blob raw current-hash . legacy-hash)
+  (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
       (let ([tp-blob (cdr (split-rows-and-text-plots remainder))])

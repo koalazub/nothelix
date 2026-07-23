@@ -126,6 +126,35 @@
   (assert-equal #false (decode-stored-rows raw-with-plots "stale-hash")
                 "decode-stored-rows: #false on a stale (mismatched) hash")
 
+  (define legacy-raw (string-append "legacyH" "\t" encoded-with-plots))
+  (assert-equal (list "stdout line")
+                (decode-stored-rows legacy-raw "canonH" "legacyH")
+                "decode-stored-rows: legacy-stored rows accepted under the migration grace")
+  (assert-equal one-plot-blob
+                (decode-stored-text-plots-blob legacy-raw "canonH" "legacyH")
+                "decode-stored-text-plots-blob: legacy-stored blob accepted under the migration grace")
+  (assert-equal #false
+                (decode-stored-rows legacy-raw "canonH" "otherH")
+                "decode-stored-rows: a real edit matches neither hash and drops the stored rows")
+
+  (assert-true (hash-accepted? "H" "H" "L")
+               "hash-accepted?: the current canonical hash matches")
+  (assert-true (hash-accepted? "L" "H" "L")
+               "hash-accepted?: the legacy hash matches during the grace window")
+  (assert-false (hash-accepted? "X" "H" "L")
+                "hash-accepted?: an unrelated hash matches neither form")
+  (assert-false (hash-accepted? "L" "H" #false)
+                "hash-accepted?: no grace is granted without a legacy hash")
+
+  (define math-cell "# $$\n# E=mc^2\n# $$")
+  (define math-cell-padded "# $$\n# E=mc^2\n# \n# \n# \n# $$")
+  (assert-equal (cell-source-hash math-cell)
+                (cell-source-hash math-cell-padded)
+                "cell-source-hash: reservation padding is invisible to the canonical hash")
+  (assert-false (equal? (cell-source-hash math-cell)
+                        (cell-source-hash "# $$\n# E=mc^3\n# $$"))
+                "cell-source-hash: a real edit to the math still changes the hash")
+
   (assert-equal "ui.virtual.output.series0" (series-scope 0)
                 "series-scope 0 -> series0")
   (assert-equal "ui.virtual.output.series7" (series-scope 7)

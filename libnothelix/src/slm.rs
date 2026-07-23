@@ -35,7 +35,7 @@ pub fn djb2_hash_ffi(s: String) -> isize {
     djb2_hash(&s) as isize
 }
 
-fn djb2_hash(s: &str) -> i64 {
+pub(crate) fn djb2_hash(s: &str) -> i64 {
     let mut h: i64 = 5381;
     for c in s.chars() {
         h = (h * 33 + i64::from(c as u32)) % 2_147_483_647;

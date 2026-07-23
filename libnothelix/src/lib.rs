@@ -58,7 +58,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 27;
+pub const NOTHELIX_FFI_VERSION: u32 = 28;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -147,6 +147,7 @@ mod steel_bindings {
             module.register_fn("render-typst-to-pdf", math_image::render_typst_to_pdf);
             module.register_fn("format-math", math_format::format_math);
             module.register_fn("reserve-math-lines", math_format::reserve_math_lines);
+            module.register_fn("canonical-cell-hash", math_format::canonical_cell_hash);
             module.register_fn(
                 "math-block-latex-batch",
                 math_format::math_block_latex_batch,

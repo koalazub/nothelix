@@ -383,9 +383,10 @@
                  (define idx (car pair))
                  (define stored-hash (stored-source-hash (store-get-for path (cell-id idx))))
                  (define current (cell-source-hash (cdr pair)))
+                 (define legacy (legacy-source-hash (cdr pair)))
                  (define baseline (session-baseline-for idx))
                  (and stored-hash
-                      (not (equal? stored-hash current))
+                      (not (hash-accepted? stored-hash current legacy))
                       (or (not baseline) (not (equal? baseline current)))
                       idx))
                cells)))
@@ -484,11 +485,12 @@
             (define code (string-join (extract-cell-code get-line marker-line code-end) "\n"))
             (define stored (store-get-for path (cell-id cell-idx)))
             (define hash (cell-source-hash code))
+            (define legacy (legacy-source-hash code))
             (set-session-baseline! cell-idx hash)
-            (define rows (decode-stored-rows stored hash))
+            (define rows (decode-stored-rows stored hash legacy))
             (define text-plot-groups
               (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
-                   (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash) ""))))
+                   (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash legacy) ""))))
             (when (or (list? rows) (not (null? text-plot-groups)))
               (try-set-output-lines-below! anchor-line
                 (assign-cycling-bars

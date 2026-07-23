@@ -8,10 +8,12 @@
 
 mod batch;
 mod blocks;
+mod canonical;
 mod comment;
 mod reflow;
 mod reserve;
 
 pub use batch::math_block_latex_batch;
+pub use canonical::canonical_cell_hash;
 pub use reflow::format_math;
 pub use reserve::reserve_math_lines;
