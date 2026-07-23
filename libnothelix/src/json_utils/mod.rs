@@ -5,7 +5,10 @@ mod text_plots;
 use crate::error::{Error, Result};
 use serde_json::Value;
 
-pub use fields::{json_get, json_get_bool, json_get_many, json_get_notes, json_get_plot_data};
+pub use fields::{
+    json_get, json_get_bool, json_get_cell_states, json_get_many, json_get_notes,
+    json_get_plot_data,
+};
 pub use images::{json_get_all_images, json_get_animated_mime, json_get_first_image_bytes};
 pub use text_plots::json_get_text_plots;
 

@@ -10,6 +10,7 @@
 (require "output-render-test.scm")
 (require "param-tweak-test.scm")
 (require "picker-test.scm")
+(require "cell-state-test.scm")
 (require "legacy-migration-test.scm")
 (require "cursor-restore-test.scm")
 (require "../nothelix/math-image.scm")
@@ -25,6 +26,7 @@
          run-output-render-tests
          run-param-tweak-tests
          run-picker-tests
+         run-cell-state-tests
          run-legacy-migration-tests
          run-cursor-restore-tests)
 
@@ -48,6 +50,7 @@
       (cons "output-render" (run-output-render-tests))
       (cons "param-tweak" (run-param-tweak-tests))
       (cons "picker" (run-picker-tests))
+      (cons "cell-state" (run-cell-state-tests))
       (cons "legacy-migration" (run-legacy-migration-tests))
       (cons "cursor-restore" (run-cursor-restore-tests))))
 

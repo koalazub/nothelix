@@ -2,6 +2,7 @@
 
 (require "test-framework.scm")
 (require "../nothelix/picker.scm")
+(require "../nothelix/cell-state.scm")
 
 (provide run-picker-tests)
 
@@ -65,5 +66,10 @@
   (assert-equal (list cell-a) (car (fuzzy-filter both "pseudo")) "filter: narrows to matches")
   (assert-equal 0 (cdr (fuzzy-filter both "pseudo")) "filter: best row selected")
   (assert-equal '() (car (fuzzy-filter both "zzz")) "filter: no matches yields empty view")
+
+  (set-cell-states! (parse-cell-states "58\tout-of-order\tA,5,below"))
+  (assert-equal "↕" (cell-glyph-for 58) "glyph column: a classified cell shows its status glyph")
+  (assert-equal "" (cell-glyph-for 57) "glyph column: an unclassified cell shows no glyph")
+  (clear-cell-states!)
 
   (print-test-suite-footer "picker"))

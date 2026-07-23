@@ -78,6 +78,49 @@ fn notes(json_str: &str) -> Result<String> {
         .unwrap_or_default())
 }
 
+pub fn json_get_cell_states(json_str: String) -> String {
+    ffi(cell_states(&json_str))
+}
+
+fn cell_states(json_str: &str) -> Result<String> {
+    let doc = document("json-get-cell-states", json_str)?;
+    let Some(obj) = doc.get("cell_states").and_then(Value::as_object) else {
+        return Ok(String::new());
+    };
+    let mut rows: Vec<(i64, String)> = obj
+        .iter()
+        .map(|(idx, entry)| {
+            let state = entry
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("fresh");
+            let inputs = entry
+                .get("inputs")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|inp| {
+                            let name = inp.get("name").and_then(Value::as_str)?;
+                            let writer = inp.get("writer").and_then(Value::as_i64)?;
+                            let rel = inp.get("rel").and_then(Value::as_str)?;
+                            Some(format!("{name},{writer},{rel}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(";")
+                })
+                .unwrap_or_default();
+            let key = idx.parse::<i64>().unwrap_or(i64::MAX);
+            (key, format!("{idx}\t{state}\t{inputs}"))
+        })
+        .collect();
+    rows.sort_by_key(|(key, _)| *key);
+    Ok(rows
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
 pub fn json_get_plot_data(json_str: String) -> String {
     ffi(plot_data(&json_str))
 }
@@ -216,6 +259,51 @@ mod tests {
         let result = json_get_notes("not json".into());
         assert!(
             result.starts_with("ERROR: json-get-notes: invalid JSON: "),
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn cell_states_absent_returns_empty() {
+        assert_eq!(json_get_cell_states(r#"{"stdout": "hi"}"#.into()), "");
+    }
+
+    #[test]
+    fn cell_states_emit_one_sorted_line_per_cell() {
+        let json = r#"{"cell_states": {
+            "3": {"state": "out-of-order", "inputs": [{"name": "A", "writer": 5, "rel": "below"}]},
+            "0": {"state": "fresh", "inputs": []}
+        }}"#;
+        assert_eq!(
+            json_get_cell_states(json.into()),
+            "0\tfresh\t\n3\tout-of-order\tA,5,below"
+        );
+    }
+
+    #[test]
+    fn cell_states_join_multiple_inputs_with_semicolons() {
+        let json = r#"{"cell_states": {
+            "7": {"state": "stale-input", "inputs": [
+                {"name": "A", "writer": 2, "rel": "stale"},
+                {"name": "B", "writer": 4, "rel": "fresh"}
+            ]}
+        }}"#;
+        assert_eq!(
+            json_get_cell_states(json.into()),
+            "7\tstale-input\tA,2,stale;B,4,fresh"
+        );
+    }
+
+    #[test]
+    fn cell_states_not_an_object_returns_empty() {
+        assert_eq!(json_get_cell_states(r#"{"cell_states": []}"#.into()), "");
+    }
+
+    #[test]
+    fn cell_states_reports_a_malformed_document() {
+        let result = json_get_cell_states("not json".into());
+        assert!(
+            result.starts_with("ERROR: json-get-cell-states: invalid JSON: "),
             "{result}"
         );
     }

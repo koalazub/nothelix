@@ -183,9 +183,10 @@ gallery:
 test:
     cargo nextest run -p libnothelix
 
-# run the Julia kernel tests (AST sets + registry provenance notes)
+# run the Julia kernel tests (AST sets + registry provenance notes + classifier)
 test-kernel:
     julia "{{ nothelix_root }}/kernel/provenance_test.jl"
+    julia "{{ nothelix_root }}/kernel/classify_test.jl"
 
 # static gate: run before committing. Rust lints + tests, then load the
 # plugin in a REAL hx binary to catch Steel load errors (FreeIdentifier,

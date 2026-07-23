@@ -164,4 +164,23 @@
       (list '() (list (list (list "AA" "ui.virtual.output.series2")))))
     "assign-cycling-bars: a styled span-list row is wrapped intact")
 
+  (assert-equal "ui.virtual.output.stale" (stale-bar-scope)
+                "stale-bar-scope: the dimmed scope name")
+
+  (assert-equal '() (assign-stale-bars '())
+                "assign-stale-bars: no groups -> no rows")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.stale" "a0")
+          (list "bar" "ui.virtual.output.stale" "a1")
+          (list "bar" "ui.virtual.output.stale" "b0"))
+    (assign-stale-bars (list (list "a0" "a1") (list "b0")))
+    "assign-stale-bars: every group's rows share the single dimmed scope")
+
+  (assert-equal
+    (list (list "bar" "ui.virtual.output.stale" "g0")
+          (list "bar" "ui.virtual.output.stale" "g1"))
+    (assign-stale-bars (list (list "g0") '() (list "g1")))
+    "assign-stale-bars: empty groups are dropped, no cycling")
+
   (print-test-suite-footer "output-render"))

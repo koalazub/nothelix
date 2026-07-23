@@ -13,7 +13,9 @@
          ansi-color->scope
          text-plot->styled-rows
          series-scope
-         assign-cycling-bars)
+         assign-cycling-bars
+         stale-bar-scope
+         assign-stale-bars)
 
 (define (pad-output-rows rows)
   (if (null? rows) rows (append (list "") rows (list ""))))
@@ -90,6 +92,13 @@
         (let ([scope (series-scope i)])
           (loop (cdr gs) (+ i 1)
                 (cons (map (lambda (r) (bar-row scope r)) (car gs)) acc))))))
+
+(define (stale-bar-scope) "ui.virtual.output.stale")
+
+(define (assign-stale-bars groups)
+  (apply append
+    (map (lambda (g) (map (lambda (r) (bar-row (stale-bar-scope) r)) g))
+         (filter (lambda (g) (not (null? g))) groups))))
 
 (define (tp-span-row sp) (list-ref sp 0))
 (define (tp-span-start sp) (list-ref sp 1))

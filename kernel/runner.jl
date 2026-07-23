@@ -160,7 +160,8 @@ function handle_execute_cell(cmd::Dict)
             cell_result = CellMacros.get_cell_result_json(cell_idx)
             write_response(Dict(
                 "status" => "ok",
-                "cell" => cell_result
+                "cell" => cell_result,
+                "cell_states" => CellRegistry.classify_all()
             ))
         else
             log_error("Cell $cell_idx failed: $(result.error)")

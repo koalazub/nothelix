@@ -13,7 +13,8 @@
          encode-outputs+rows decode-stored-rows
          encode-outputs+rows+text-plots
          decode-stored-text-plots-blob
-         decode-text-plots-blob)
+         decode-text-plots-blob
+         stored-source-hash)
 
 ;;@doc
 ;; The current document's path, used as the workspace key for the output store.
@@ -41,6 +42,12 @@
 (define (store-get-for path id) (output-store-get (if path path "unknown") id))
 
 (define (store-clear! id) (output-store-clear (workspace-id) id))
+
+(define (stored-source-hash raw)
+  (if (or (not raw) (equal? raw ""))
+      #false
+      (let ([parts (split-once raw "\t")])
+        (if (list? parts) (car parts) #false))))
 
 (define *rows-sep-line* "###NOTHELIX-OUTPUT-ROWS###")
 (define *text-plots-sep-line* "###NOTHELIX-TEXT-PLOTS###")

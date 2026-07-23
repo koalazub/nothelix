@@ -32,6 +32,7 @@ macro cell(index, exec_count, body)
         cell.defines = defines
         cell.uses = uses
         cell.status = :running
+        cell.run_seq = CellRegistry.next_run_seq!()
         cell.notes = CellRegistry.provenance_notes(cell_idx, uses)
         CellRegistry.CELLS[cell_idx] = cell
 
@@ -109,6 +110,7 @@ function execute_cell(cell_idx::Int, code::String; plot_mode::String="auto")
     cell = CellRegistry.Cell(cell_idx)
     cell.code_string = code
     cell.status = :running
+    cell.run_seq = CellRegistry.next_run_seq!()
     CellRegistry.CELLS[cell_idx] = cell
 
     # Analyze dependencies from code (before execution)

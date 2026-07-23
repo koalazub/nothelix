@@ -58,7 +58,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 25;
+pub const NOTHELIX_FFI_VERSION: u32 = 26;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -181,6 +181,7 @@ mod steel_bindings {
             );
             module.register_fn("json-get-plot-data", json_utils::json_get_plot_data);
             module.register_fn("json-get-notes", json_utils::json_get_notes);
+            module.register_fn("json-get-cell-states", json_utils::json_get_cell_states);
             module.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
             module.register_fn("json-get-all-images", json_utils::json_get_all_images);
             module.register_fn("json-get-text-plots", json_utils::json_get_text_plots);

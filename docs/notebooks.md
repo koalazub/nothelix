@@ -127,6 +127,32 @@ you that an earlier out-of-order run may have left the wrong value in scope.
 Running the notebook top to bottom writes every global in document order, so a
 clean run produces no notes.
 
+## Cell freshness
+
+After each run nothelix classifies every executed cell against the live session
+and marks the ones that are no longer trustworthy. A clean top to bottom run
+leaves every cell fresh and shows nothing. The states are these.
+
+| State | Meaning | Glyph |
+|---|---|---|
+| fresh | Every input came from a cell above, unchanged since it ran | none |
+| out-of-order | An input was last written by a cell below this one | `↕` |
+| stale-input | A writer cell re-ran after this cell last ran | `○` |
+| orphan-input | An input has no cell that still assigns it | `∅` |
+| edited-since-run | The cell's own source changed after its last run | `✎` |
+
+A non-fresh cell shows a short note on its marker line, such as `uses A from
+cell 76, below` or `input A changed in cell 74`. Its output gutter bars render
+dimmed through the `ui.virtual.output.stale` theme scope, so a stale result
+reads as stale from across the room. The cell navigator adds the same glyph as a
+one-column status marker per row, which turns it into a whole-notebook freshness
+overview. Style the dimmed scope in your theme to control how faded stale output
+looks, and it falls back to the default output style when the theme leaves it
+unset.
+
+Run `:cell-state` to print the full provenance for the cell under the cursor,
+one line per input naming the variable, its writer cell, and its freshness.
+
 See [Rendering](rendering.md) for how figures and math reach the buffer.
 
 ## Output and undo

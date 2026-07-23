@@ -14,6 +14,7 @@
 (require "kernel.scm")
 (require "spinner.scm")
 (require "stale-tags.scm")
+(require "cell-state.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -34,6 +35,7 @@
          execute-all-cells
          execute-cells-above
          cancel-cell
+         cell-state
          restore-cell-outputs-on-open!
          render-cached-images
          sync-images-to-markers!
@@ -41,7 +43,8 @@
          find-cell-start-line
          find-cell-code-end
          extract-cell-code
-         find-cell-marker-by-index)
+         find-cell-marker-by-index
+         refresh-provenance-surfaces!)
 
 ;;@doc
 ;; Render a kernel-start failure as virtual error rows at the cell's anchor
@@ -76,7 +79,8 @@
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
-     (update-cell-output result-json jl-path cell-index kernel-dir)]))
+     (update-cell-output result-json jl-path cell-index kernel-dir)
+     (refresh-provenance-surfaces! (editor->doc-id (editor-focus)) jl-path)]))
 
 ;; Shared preflight: saved .jl notebook, cursor saved, kernel keyed by path.
 (define (with-saved-notebook command-name on-ready)
@@ -216,6 +220,7 @@
         (restore-cursor-for! doc-id)
         (clear-cursor-restore! doc-id)
         (helix.static.collapse_selection)
+        (refresh-provenance-surfaces! doc-id notebook-path)
         (set-status! (string-append "✓ Executed " (number->string total-count) " cells")))
       (let ([current-idx (car remaining-indices)]
             [rest-indices (cdr remaining-indices)])
@@ -352,6 +357,83 @@
     (for-each (lambda (r) (delete-line-range (car r) (cdr r) #false)) bottom-up)
     (try-commit-output-changes!)))
 
+(define (scan-doc-cells rope total)
+  (define (get-line idx) (doc-get-line rope total idx))
+  (let loop ([i 0] [acc '()])
+    (if (>= i total)
+        (reverse acc)
+        (let ([line (get-line i)])
+          (if (cell-marker? line)
+              (let* ([idx (marker-line-cell-index line)]
+                     [code-end (find-cell-code-end get-line total (+ i 1))]
+                     [code (string-join (extract-cell-code get-line i code-end) "\n")])
+                (loop (+ i 1) (if idx (cons (cons idx code) acc) acc)))
+              (loop (+ i 1) acc))))))
+
+(define (compute-edited-cells path cells)
+  (filter (lambda (x) x)
+          (map (lambda (pair)
+                 (define idx (car pair))
+                 (define stored-hash (stored-source-hash (store-get-for path (cell-id idx))))
+                 (and stored-hash
+                      (not (equal? stored-hash (cell-source-hash (cdr pair))))
+                      idx))
+               cells)))
+
+(define (refresh-stale-tags! doc-id)
+  (define rope (editor->text doc-id))
+  (define total (text.rope-len-lines rope))
+  (define (get-line idx) (doc-get-line rope total idx))
+  (let loop ([i 0])
+    (when (< i total)
+      (define line (get-line i))
+      (when (cell-marker? line)
+        (clear-stale-tag-for-line! i)
+        (define idx (marker-line-cell-index line))
+        (define rec (and idx (cell-state-for idx)))
+        (when (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
+          (try-set-stale-tag! i
+            (cell-state-tag-text (cell-state-record-state rec)
+                                 (cell-state-record-inputs rec)))))
+      (loop (+ i 1)))))
+
+(define (refresh-provenance-surfaces! doc-id path)
+  (define rope (editor->text doc-id))
+  (define total (text.rope-len-lines rope))
+  (apply-edited-overrides! (compute-edited-cells path (scan-doc-cells rope total)))
+  (refresh-stale-tags! doc-id))
+
+(define (cell-state)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define path (editor-document->path doc-id))
+  (cond
+    [(not (and path (string-suffix? path ".jl")))
+     (set-status! "cell-state: only runs on .jl notebook files")]
+    [else
+     (define rope (editor->text doc-id))
+     (define total (text.rope-len-lines rope))
+     (define (get-line idx) (doc-get-line rope total idx))
+     (define cell-start (find-cell-start-line get-line (current-line-number)))
+     (define idx (marker-line-cell-index (get-line cell-start)))
+     (define rec (and idx (cell-state-for idx)))
+     (cond
+       [(not idx) (set-status! "cell-state: no cell at cursor")]
+       [(not rec)
+        (set-status! (string-append "cell " (number->string idx) ": fresh (nothing recorded)"))]
+       [else
+        (define header
+          (string-append "cell " (number->string idx) ": " (cell-state-record-state rec)))
+        (define input-lines
+          (map (lambda (inp)
+                 (string-append (car inp) " ← cell " (number->string (cadr inp))
+                                " (" (input-freshness-word (list-ref inp 2)) ")"))
+               (cell-state-record-inputs rec)))
+        (set-status!
+          (if (null? input-lines)
+              (string-append header " (no tracked inputs)")
+              (string-join (cons header input-lines) " | ")))])]))
+
 ;;@doc
 ;; Re-render every cell's output from the output store on document open,
 ;; skipping cells whose stored hash no longer matches their current source
@@ -387,4 +469,6 @@
               (try-set-output-lines-below! anchor-line
                 (assign-cycling-bars
                   (cons (if (list? rows) rows '()) text-plot-groups))))))
-        cell-indices))))
+        cell-indices)
+      (clear-cell-states!)
+      (refresh-provenance-surfaces! doc-id path))))

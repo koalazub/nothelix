@@ -187,10 +187,19 @@ fn flatten(parsed: &Value) -> String {
         "has_error":    cell["has_error"].as_bool().unwrap_or(false),
         "error":        cell.get("error").and_then(Value::as_str).unwrap_or(""),
     });
-    for field in ["images", "plot_data", "structured_error"] {
+    for field in [
+        "images",
+        "plot_data",
+        "structured_error",
+        "notes",
+        "text_plots",
+    ] {
         if let Some(value) = cell.get(field) {
             response[field] = value.clone();
         }
+    }
+    if let Some(states) = parsed.get("cell_states") {
+        response["cell_states"] = states.clone();
     }
     response.to_string()
 }
@@ -264,5 +273,26 @@ mod tests {
     fn poll_without_a_done_marker_is_pending() {
         let out = kernel_poll_result("/tmp/nothelix-poll-test-nonexistent".to_string());
         assert!(out.contains("\"status\":\"pending\""), "{out}");
+    }
+
+    #[test]
+    fn flatten_forwards_top_level_cell_states_and_cell_notes() {
+        let parsed = json!({
+            "status": "ok",
+            "cell": {
+                "stdout": "hi", "stderr": "", "output_repr": "3",
+                "has_error": false,
+                "notes": ["note: A below"],
+                "text_plots": [{"rows": ["x"], "spans": []}],
+            },
+            "cell_states": {
+                "0": {"state": "fresh", "inputs": []},
+                "3": {"state": "out-of-order", "inputs": [{"name": "A", "writer": 5, "rel": "below"}]},
+            },
+        });
+        let flat: Value = serde_json::from_str(&flatten(&parsed)).expect("flat json");
+        assert_eq!(flat["cell_states"]["3"]["state"], "out-of-order");
+        assert_eq!(flat["notes"][0], "note: A below");
+        assert_eq!(flat["text_plots"][0]["rows"][0], "x");
     }
 }

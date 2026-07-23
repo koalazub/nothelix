@@ -1,6 +1,6 @@
 module CellRegistry
 
-export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type, provenance_notes
+export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type, provenance_notes, next_run_seq!, classify_all
 
 # Cell state structure
 mutable struct Cell
@@ -20,10 +20,11 @@ mutable struct Cell
     stacktrace::Union{Vector, Nothing}
     notes::Vector{String}
     status::Symbol  # :pending, :running, :done, :error
+    run_seq::Int
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending, 0)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()
@@ -36,12 +37,20 @@ const VARIABLE_USERS = Dict{Symbol, Set{Int}}()  # var → set of cell indices t
 # this map tolerate "historical" info.
 const VARIABLE_TYPES = Dict{Symbol, String}()
 
+const RUN_SEQ = Ref{Int}(0)
+
+function next_run_seq!()::Int
+    RUN_SEQ[] += 1
+    RUN_SEQ[]
+end
+
 # Clear registry (useful for testing)
 function clear_registry()
     empty!(CELLS)
     empty!(VARIABLE_SOURCES)
     empty!(VARIABLE_USERS)
     empty!(VARIABLE_TYPES)
+    RUN_SEQ[] = 0
 end
 
 # Get cells that this cell depends on
@@ -170,6 +179,53 @@ function provenance_notes(cell_idx::Int, uses)::Vector{String}
         end
     end
     notes
+end
+
+function input_relationship(cell::Cell, v::Symbol)::String
+    writer = VARIABLE_SOURCES[v]
+    wcell = CELLS[writer]
+    if !(v in wcell.defines)
+        "orphan"
+    elseif writer > cell.index
+        "below"
+    elseif wcell.run_seq > cell.run_seq
+        "stale"
+    else
+        "fresh"
+    end
+end
+
+function cell_state_from_inputs(inputs)::String
+    rank = 0
+    for inp in inputs
+        r = inp["rel"]
+        rank = max(rank, r == "below" ? 3 : r == "orphan" ? 2 : r == "stale" ? 1 : 0)
+    end
+    rank == 3 ? "out-of-order" : rank == 2 ? "orphan-input" : rank == 1 ? "stale-input" : "fresh"
+end
+
+function classify_all()::Dict{String, Any}
+    out = Dict{String, Any}()
+    for (idx, cell) in CELLS
+        (cell.status === :done || cell.status === :error) || continue
+        inputs = Vector{Dict{String, Any}}()
+        for v in sort!(collect(cell.uses))
+            haskey(VARIABLE_SOURCES, v) || continue
+            writer = VARIABLE_SOURCES[v]
+            writer == idx && continue
+            haskey(CELLS, writer) || continue
+            push!(inputs, Dict{String, Any}(
+                "name" => string(v),
+                "writer" => writer,
+                "rel" => input_relationship(cell, v),
+            ))
+        end
+        out[string(idx)] = Dict{String, Any}(
+            "state" => cell_state_from_inputs(inputs),
+            "inputs" => inputs,
+        )
+    end
+    out
 end
 
 end # module

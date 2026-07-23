@@ -13,6 +13,7 @@
 (require "cell-boundaries.scm")
 (require "output-store.scm")
 (require "output-render.scm")
+(require "cell-state.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -159,6 +160,13 @@
   (define store-cell-id (cell-id cell-index))
   (define store-source-hash (cell-source-hash cell-code))
 
+  (refresh-cell-states-from-result! result-json)
+  (define (bars-for groups)
+    (define rec (cell-state-for cell-index))
+    (if (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
+        (assign-stale-bars groups)
+        (assign-cycling-bars groups)))
+
   (define render-ok? #false)
   (define (render-body)
   (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
@@ -177,7 +185,7 @@
      (define error-rows (text->plain-lines formatted))
      (when (and anchor-line
                 (not (try-set-output-lines-below! anchor-line
-                       (assign-cycling-bars (list error-rows)))))
+                       (bars-for (list error-rows)))))
        (insert-legacy-output-block! anchor-line error-rows))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows
@@ -317,7 +325,7 @@
            (cons "stderr:" (text->plain-lines filtered-stderr))
            '()))
      (define render-lines
-       (assign-cycling-bars
+       (bars-for
          (append (list notes-group stdout-group repr-group stderr-group) text-plot-styled-groups)))
 
      (when (and anchor-line

@@ -18,6 +18,7 @@
 (require "nothelix/string-utils.scm")
 (require "nothelix/debug.scm")
 (require "nothelix/common.scm")
+(require "nothelix/cell-state.scm")
 (require "nothelix/graphics.scm")
 (require "nothelix/kernel.scm")
 (require "nothelix/conversion.scm")
@@ -53,6 +54,7 @@
 
 (provide convert-notebook sync-to-ipynb export-markdown export-typst export-pdf
          execute-cell execute-all-cells execute-cells-above cancel-cell
+         cell-state
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
          view-chart
@@ -238,6 +240,7 @@
     "execute-all-cells"   "Run every code cell top-to-bottom."
     "execute-cells-above" "Run every code cell from the top to the current cell."
     "cancel-cell"         "Interrupt the currently running cell."
+    "cell-state"          "Show the provenance table (inputs + freshness) for the cell under the cursor."
 
     ;; Cell navigation / selection
     "next-cell"        "Jump to the next cell."

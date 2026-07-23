@@ -4,6 +4,7 @@
 (require "string-utils.scm")
 (require "image-cache.scm")
 (require "output-store.scm")
+(require "cell-state.scm")
 (require "project-config.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
@@ -307,9 +308,11 @@
                [summary (if (>= (length cell) 6) (list-ref cell 5) "")]
                [row-style (if (= i selected) selected-style text-style)]
                [snippet (if (> (string-length user-label) 0) user-label summary)]
+               [glyph (cell-glyph-for (list-ref cell 2))]
                [row-text
                 (truncate-to
-                  (string-append (pad-idx (list-ref cell 2)) " "
+                  (string-append (if (equal? glyph "") " " glyph) " "
+                                 (pad-idx (list-ref cell 2)) " "
                                  (kind-tag kind-label)
                                  (if (> (string-length snippet) 0) "  " "")
                                  snippet)
