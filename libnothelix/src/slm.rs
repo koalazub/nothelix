@@ -31,6 +31,10 @@ fn path_safe(key: &str) -> String {
         .collect()
 }
 
+pub fn djb2_hash_ffi(s: String) -> isize {
+    djb2_hash(&s) as isize
+}
+
 fn djb2_hash(s: &str) -> i64 {
     let mut h: i64 = 5381;
     for c in s.chars() {

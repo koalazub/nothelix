@@ -388,19 +388,17 @@
 (define (refresh-stale-tags! doc-id)
   (define rope (editor->text doc-id))
   (define total (text.rope-len-lines rope))
-  (define (get-line idx) (doc-get-line rope total idx))
   (define (next-marker-after i)
     (let scan ([j (+ i 1)])
       (cond
         [(>= j total) #false]
-        [(cell-marker? (get-line j)) j]
+        [(cell-marker-line? rope total j) j]
         [else (scan (+ j 1))])))
   (let loop ([i 0])
     (when (< i total)
-      (define line (get-line i))
-      (when (cell-marker? line)
+      (when (cell-marker-line? rope total i)
         (clear-stale-tag-for-line! i)
-        (define idx (marker-line-cell-index line))
+        (define idx (marker-line-cell-index (doc-get-line rope total i)))
         (define rec (and idx (cell-state-for idx)))
         (when (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
           (define state (cell-state-record-state rec))

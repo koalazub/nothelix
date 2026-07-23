@@ -58,7 +58,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 26;
+pub const NOTHELIX_FFI_VERSION: u32 = 27;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -292,6 +292,7 @@ mod steel_bindings {
             module.register_fn("output-store-get", output_store::output_store_get);
             module.register_fn("output-store-clear", output_store::output_store_clear);
             module.register_fn("slm-available", slm::slm_available);
+            module.register_fn("djb2-hash", slm::djb2_hash_ffi);
             module.register_fn("slm-refresh-summaries", slm::slm_refresh_summaries);
             module.register_fn("slm-summary-for", slm::slm_summary_for);
         }

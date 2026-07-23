@@ -15,7 +15,8 @@
                           kitty-placeholder-payload
                           kitty-placeholder-rows
                           save-image-to-cache!
-                          load-image-from-cache))
+                          load-image-from-cache
+                          djb2-hash))
 
 (provide cell-index->image-id
          cell-img->image-id
@@ -78,16 +79,6 @@
 ;; Derive a stable kitty image id from a cell index (legacy single-image callers).
 (define (cell-index->image-id cell-index)
   (cell-img->image-id cell-index 0))
-
-;;@doc
-;; djb2 string hash, kept below 2^31 for the kitty id space.
-(define (djb2-hash s)
-  (let loop ([i 0] [h 5381])
-    (if (>= i (string-length s))
-        h
-        (loop (+ i 1)
-              (modulo (+ (* h 33) (char->integer (string-ref s i)))
-                      2147483647)))))
 
 ;;@doc
 ;; Derive a stable kitty image id for any image path.
