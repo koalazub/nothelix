@@ -8,7 +8,15 @@
 
 (provide try-set-stale-tag!
          clear-stale-tag-for-line!
-         set-stale-tags-for-lines!)
+         set-stale-tags-for-lines!
+         try-set-stale-tag-above!)
+
+(define (try-set-stale-tag-above! line-idx text)
+  (with-handler
+    (lambda (_) (try-set-stale-tag! line-idx text))
+    (eval `(begin (require-builtin helix/core/static as hs.)
+                  (hs.set-stale-tags-above! *helix.cx* ,line-idx ',(list text))))
+    #true))
 
 (define (try-set-stale-tag! line-idx text)
   (with-handler

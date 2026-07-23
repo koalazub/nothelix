@@ -22,6 +22,8 @@
          cell-state-label
          cell-state-tag-text
          apply-edited-overrides!
+         set-session-baseline!
+         session-baseline-for
          marker-line-cell-index
          input-freshness-word
          set-running-cell!
@@ -30,6 +32,14 @@
 
 (define *cell-states* (box (hash)))
 (define *running-cell* (box #false))
+(define *session-baselines* (box (hash)))
+
+(define (set-session-baseline! idx hash-str)
+  (set-box! *session-baselines*
+            (hash-insert (unbox *session-baselines*) idx hash-str)))
+
+(define (session-baseline-for idx)
+  (hash-try-get (unbox *session-baselines*) idx))
 
 (define (cell-state-record-state rec) (car rec))
 (define (cell-state-record-inputs rec) (cadr rec))
@@ -128,7 +138,7 @@
 
 (define (cell-state-label state inputs)
   (cond
-    [(equal? state "edited-since-run") "✎ edited"]
+    [(equal? state "edited-since-run") "edited"]
     [(equal? state "out-of-order")
      (let ([inp (first-input-with-rel inputs "below")])
        (if inp

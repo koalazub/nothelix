@@ -48,7 +48,7 @@
   (assert-equal "A has no defining cell"
                 (cell-state-label "orphan-input" (list (list "A" 3 "orphan")))
                 "label: orphan-input wording")
-  (assert-equal "✎ edited"
+  (assert-equal "edited"
                 (cell-state-label "edited-since-run" '())
                 "label: edited-since-run wording")
   (assert-equal "  ↕ uses A from cell 76, below"

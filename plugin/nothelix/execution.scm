@@ -382,8 +382,11 @@
           (map (lambda (pair)
                  (define idx (car pair))
                  (define stored-hash (stored-source-hash (store-get-for path (cell-id idx))))
+                 (define current (cell-source-hash (cdr pair)))
+                 (define baseline (session-baseline-for idx))
                  (and stored-hash
-                      (not (equal? stored-hash (cell-source-hash (cdr pair))))
+                      (not (equal? stored-hash current))
+                      (or (not baseline) (not (equal? baseline current)))
                       idx))
                cells)))
 
@@ -413,7 +416,7 @@
             (and (equal? state "edited-since-run")
                  (cursor-inside-cell? i (next-marker-after i))))
           (when (not suppress?)
-            (try-set-stale-tag! i
+            (try-set-stale-tag-above! i
               (cell-state-tag-text state (cell-state-record-inputs rec))))))
       (loop (+ i 1)))))
 
@@ -481,6 +484,7 @@
             (define code (string-join (extract-cell-code get-line marker-line code-end) "\n"))
             (define stored (store-get-for path (cell-id cell-idx)))
             (define hash (cell-source-hash code))
+            (set-session-baseline! cell-idx hash)
             (define rows (decode-stored-rows stored hash))
             (define text-plot-groups
               (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
