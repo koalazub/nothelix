@@ -380,10 +380,21 @@
                       idx))
                cells)))
 
+(define (cursor-inside-cell? marker-line next-marker-line)
+  (define cur (current-line-number))
+  (and (>= cur marker-line)
+       (or (not next-marker-line) (< cur next-marker-line))))
+
 (define (refresh-stale-tags! doc-id)
   (define rope (editor->text doc-id))
   (define total (text.rope-len-lines rope))
   (define (get-line idx) (doc-get-line rope total idx))
+  (define (next-marker-after i)
+    (let scan ([j (+ i 1)])
+      (cond
+        [(>= j total) #false]
+        [(cell-marker? (get-line j)) j]
+        [else (scan (+ j 1))])))
   (let loop ([i 0])
     (when (< i total)
       (define line (get-line i))
@@ -392,9 +403,13 @@
         (define idx (marker-line-cell-index line))
         (define rec (and idx (cell-state-for idx)))
         (when (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
-          (try-set-stale-tag! i
-            (cell-state-tag-text (cell-state-record-state rec)
-                                 (cell-state-record-inputs rec)))))
+          (define state (cell-state-record-state rec))
+          (define suppress?
+            (and (equal? state "edited-since-run")
+                 (cursor-inside-cell? i (next-marker-after i))))
+          (when (not suppress?)
+            (try-set-stale-tag! i
+              (cell-state-tag-text state (cell-state-record-inputs rec))))))
       (loop (+ i 1)))))
 
 (define (refresh-provenance-surfaces! doc-id path)

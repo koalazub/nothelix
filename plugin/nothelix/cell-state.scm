@@ -105,7 +105,7 @@
 
 (define (cell-state-label state inputs)
   (cond
-    [(equal? state "edited-since-run") "edited since last run"]
+    [(equal? state "edited-since-run") "✎ edited"]
     [(equal? state "out-of-order")
      (let ([inp (first-input-with-rel inputs "below")])
        (if inp

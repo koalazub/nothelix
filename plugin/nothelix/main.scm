@@ -386,6 +386,10 @@
        (when (or fm-changed rc-changed)
          (helix.static.commit-changes-to-history))
        (save-resume-position!)
+       (let ([doc-id (editor->doc-id (editor-focus))])
+         (define path (editor-document->path doc-id))
+         (when (and path (string-suffix? path ".jl"))
+           (refresh-provenance-surfaces! doc-id path)))
        (schedule-reconceal 50)]
     [(member command-name *mutating-commands*)
      (renumber-cells!)
