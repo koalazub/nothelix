@@ -3,13 +3,12 @@
 (require "string-utils.scm")
 (require "common.scm")
 (require "cell-boundaries.scm")
-(require "stale-tags.scm")
 (require "execution.scm")
+(require "widgets.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require "helix/components.scm")
 (require-builtin helix/core/text as text.)
-(require (prefix-in helix.static. "helix/static.scm"))
 
 (provide parse-param-line
          format-number
@@ -165,26 +164,8 @@
        (loop (+ i 1) current-marker #true acc)]
       [else (loop (+ i 1) current-marker hit acc)])))
 
-;; Buffer rewrite — replace the target line's full text (in-place literal edit)
-
-(define (param-line-char-range rope total-lines line-idx)
-  (define start (text.rope-line->char rope line-idx))
-  (define end
-    (if (< (+ line-idx 1) total-lines)
-        (text.rope-line->char rope (+ line-idx 1))
-        (text.rope-len-chars rope)))
-  (cons start end))
-
-(define (rewrite-param-literal! doc-id line-idx new-line-text)
-  (define rope (editor->text doc-id))
-  (define total-lines (text.rope-len-lines rope))
-  (define rng (param-line-char-range rope total-lines line-idx))
-  (define r (helix.static.range (car rng) (cdr rng)))
-  (define sel (helix.static.range->selection r))
-  (helix.static.set-current-selection-object! sel)
-  (helix.static.replace-selection-with new-line-text)
-  (helix.static.collapse_selection)
-  (helix.static.commit-changes-to-history))
+;; Buffer rewrite — the target line's full-text replacement is the shared
+;; source-widget apply path (widgets.scm's rewrite-line-literal!).
 
 (define (build-param-line name new-value-str spec-suffix)
   (string-append name " = " new-value-str spec-suffix))
@@ -218,30 +199,10 @@
 
 (push-status-element! 'right (status-element param-readout-element))
 
-;; Debounced single re-run scheduler — nudging repeatedly coalesces into one
-;; execute-cell after 150ms of quiet, via a generation counter.
+;; Stale-line label for the downstream cells a nudge invalidates.
 
-(define *param-rerun-generation* (box 0))
-
-(define (schedule-param-rerun!)
-  (define gen (+ 1 (unbox *param-rerun-generation*)))
-  (set-box! *param-rerun-generation* gen)
-  (enqueue-thread-local-callback-with-delay 150
-    (lambda ()
-      (when (= gen (unbox *param-rerun-generation*))
-        (execute-cell)))))
-
-;; Stale-tag staging — each line goes through try-set-stale-tag!, which
-;; no-ops via its own with-handler on an hx without the Phase A fork builtins.
-
-(define (stage-stale-tags! doc-id param-line names)
-  (when (pair? names)
-    (define rope (editor->text doc-id))
-    (define total (text.rope-len-lines rope))
-    (define get-line (lambda (i) (doc-get-line rope total i)))
-    (define stale-lines (scan-stale-lines get-line total param-line names))
-    (define label (string-append "  ○ stale · " (string-join names ", ") " changed"))
-    (set-stale-tags-for-lines! stale-lines label)))
+(define (param-stale-label names)
+  (string-append "  ○ stale · " (string-join names ", ") " changed"))
 
 ;; :param-up / :param-down commands
 
@@ -278,13 +239,14 @@
         (define comment-half (split-on-first line #\#))
         (define spec-suffix (if comment-half (string-append "  #" (cdr comment-half)) ""))
         (define newline-suffix (if (string-suffix? line "\n") "\n" ""))
-        (rewrite-param-literal! doc-id tgt
+        (define new-line-text
           (string-append (build-param-line name new-str (string-trim-right spec-suffix)) newline-suffix))
         (define cell-start (find-cell-start-line get-line tgt))
         (define cell-end (find-cell-code-end get-line total (+ cell-start 1)))
         (define names (collect-assigned-names get-line cell-start cell-end))
-        (stage-stale-tags! doc-id cell-start names)
-        (schedule-param-rerun!)
+        (define stale-lines (scan-stale-lines get-line total cell-start names))
+        (apply-source-widget! doc-id tgt new-line-text stale-lines
+                              (param-stale-label names) execute-cell)
         (set-status! (string-append name " = " new-str))])]))
 
 ;;@doc
@@ -296,3 +258,16 @@
 ;; Decrease the @param at/above the cursor by one step, rewrite the literal,
 ;; stage downstream stale tags, and debounce a single cell re-run.
 (define (param-down) (nudge-param! -1))
+
+;; --- widget-kind registration (number: @param nudge) ---
+
+(define (discover-param-widgets scan)
+  (define total (WidgetScan-total scan))
+  (define get-line (WidgetScan-get-line scan))
+  (let loop ([i 0] [acc '()])
+    (if (>= i total)
+        (reverse acc)
+        (loop (+ i 1)
+              (if (parse-param-line (get-line i)) (cons (cons i #false) acc) acc)))))
+
+(register-widget-kind! 'number "param" "]p/[p nudge" discover-param-widgets)

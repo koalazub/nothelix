@@ -5,6 +5,7 @@
 (require "cell-boundaries.scm")
 (require "cursor-restore.scm")
 (require "image-cache.scm")
+(require "widgets.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/text as text.)
@@ -102,3 +103,18 @@
 ;; Shrink the @image plot block under the cursor by two canvas rows and re-render.
 (define (plot-shrink)
   (resize-plot-under-cursor 'shrink))
+
+;; --- widget-kind registration (size: @image plot canvas; modal-less) ---
+
+(define (discover-plot-widgets scan)
+  (define total (WidgetScan-total scan))
+  (define get-line (WidgetScan-get-line scan))
+  (let loop ([i 0] [acc '()])
+    (if (>= i total)
+        (reverse acc)
+        (loop (+ i 1)
+              (if (string-starts-with? (get-line i) "# @image ")
+                  (cons (cons i #false) acc)
+                  acc)))))
+
+(register-widget-kind! 'size "plot" ":plot-grow / :plot-shrink" discover-plot-widgets)

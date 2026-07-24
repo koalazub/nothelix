@@ -7,6 +7,7 @@
 (require "output-store.scm")
 (require "output-render.scm")
 (require "project-config.scm")
+(require "widgets.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
@@ -580,26 +581,14 @@
                         (ScrubState-duration-ms state)
                         (ScrubState-position-ms state)))
 
-(define (handle-scrub-event state event)
-  (define char (key-event-char event))
-  (cond
-    [(or (key-event-escape? event) (eqv? char #\q)) event-result/close]
-    [(key-event-enter? event)
-     (scrub-commit! state)
-     event-result/close]
-    [(or (eqv? char #\l) (key-event-right? event))
-     (scrub-seek! state 1)
-     event-result/consume]
-    [(or (eqv? char #\h) (key-event-left? event))
-     (scrub-seek! state -1)
-     event-result/consume]
-    [(or (eqv? char #\j) (key-event-down? event))
-     (scrub-step! state 1)
-     event-result/consume]
-    [(or (eqv? char #\k) (key-event-up? event))
-     (scrub-step! state -1)
-     event-result/consume]
-    [else event-result/consume]))
+;; The audio vtable for the shared modal shell: h/l seek, j/k step the ladder,
+;; Enter resumes playback at the scrubbed position, Esc leaves. render-scrub
+;; owns the popup so the bracket, sweep, and footer stay pixel-identical.
+(define scrub-vtable
+  (hash 'render render-scrub
+        'move   scrub-seek!
+        'step   scrub-step!
+        'apply  scrub-commit!))
 
 (define (open-scrub! wav duration cell start-pos)
   (define ladder (audio-seek-ladder))
@@ -607,10 +596,7 @@
   (define state
     (ScrubState wav duration cell start-pos init-idx
                 (waveform-playhead-col start-pos duration (waveform-cols))))
-  (push-component!
-    (overlaid
-      (new-component! "scrub-audio" state render-scrub
-        (hash "handle_event" handle-scrub-event)))))
+  (open-widget-modal! scrub-vtable state "scrub-audio"))
 
 (define (open-scrub-for-slot! slot)
   (define wav (slot-wav slot))
@@ -653,3 +639,24 @@
            (define art (car arts))
            (open-scrub! (audio-artifact-path art)
                         (audio-artifact-duration art) idx 0)])])]))
+
+;; --- widget-kind registration (scrub: an output widget on a cell's audio) ---
+
+(define (discover-audio-widgets scan)
+  (define path (WidgetScan-path scan))
+  (define total (WidgetScan-total scan))
+  (define get-line (WidgetScan-get-line scan))
+  (if (not path)
+      '()
+      (let loop ([i 0] [acc '()])
+        (if (>= i total)
+            (reverse acc)
+            (let ([line (get-line i)])
+              (if (cell-marker? line)
+                  (let ([idx (marker-line-cell-index line)])
+                    (if (and idx (cell-has-stored-audio? path idx))
+                        (loop (+ i 1) (cons (cons i idx) acc))
+                        (loop (+ i 1) acc)))
+                  (loop (+ i 1) acc)))))))
+
+(register-widget-kind! 'scrub "audio" "]a/[a seek · <space>ns scrub" discover-audio-widgets)

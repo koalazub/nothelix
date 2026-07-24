@@ -1,8 +1,10 @@
 ;;; animation.scm — animated media driver bridging fork events to libnothelix engines
 
+(require "widgets.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
+(require-builtin helix/core/text as text.)
 (require-builtin steel/time)
 
 (define *animation-ffi-warned?* #f)
@@ -235,3 +237,20 @@
   (when (not *first-hint-shown?*)
     (set! *first-hint-shown?* #t)
     (set-status! "animation playing — <space>p to pause")))
+
+;; --- widget-kind registration (toggle: an animation at the cursor; modal-less) ---
+
+(define (discover-animation-widgets scan)
+  (define doc-id (WidgetScan-doc-id scan))
+  (define rope (WidgetScan-rope scan))
+  (define len (text.rope-len-chars rope))
+  (let loop ([eids (hash-keys->list *animations*)] [acc '()])
+    (if (null? eids)
+        (reverse acc)
+        (let ([st (state-of (car eids))])
+          (define ci (and st (hash-try-get st 'char-idx)))
+          (if (and st (equal? (hash-try-get st 'doc-id) doc-id) ci (< ci len))
+              (loop (cdr eids) (cons (cons (text.rope-char->line rope ci) #false) acc))
+              (loop (cdr eids) acc))))))
+
+(register-widget-kind! 'toggle "animation" "<space>p toggle" discover-animation-widgets)

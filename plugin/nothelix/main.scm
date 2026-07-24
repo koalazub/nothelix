@@ -19,6 +19,7 @@
 (require "nothelix/debug.scm")
 (require "nothelix/common.scm")
 (require "nothelix/cell-state.scm")
+(require "nothelix/widgets.scm")
 (require "nothelix/graphics.scm")
 (require "nothelix/kernel.scm")
 (require "nothelix/conversion.scm")
@@ -59,6 +60,7 @@
          play-cell-audio stop-audio scrub-audio
          audio-seek-forward audio-seek-back
          next-cell previous-cell cell-picker
+         widget-walk-next widget-walk-prev
          select-cell select-cell-code select-output
          view-chart
          insert-image
@@ -214,8 +216,8 @@
 (define notebook-bindings
   (keymap
     (normal
-      ("]" ("l" ":next-cell") ("p" ":param-up") ("a" ":audio-seek-forward"))
-      ("[" ("l" ":previous-cell") ("p" ":param-down") ("a" ":audio-seek-back"))
+      ("]" ("l" ":next-cell") ("p" ":param-up") ("a" ":audio-seek-forward") ("w" ":widget-walk-next"))
+      ("[" ("l" ":previous-cell") ("p" ":param-down") ("a" ":audio-seek-back") ("w" ":widget-walk-prev"))
       (space ("n" ("r" ":execute-cell")
                   ("n" ":new-cell")
                   ("j" ":cell-picker")
@@ -257,6 +259,8 @@
     ;; Cell navigation / selection
     "next-cell"        "Jump to the next cell."
     "previous-cell"    "Jump to the previous cell."
+    "widget-walk-next" "Jump to the next widget (param/audio/plot/animation), naming its keys."
+    "widget-walk-prev" "Jump to the previous widget (param/audio/plot/animation), naming its keys."
     "cell-picker"      "Open the interactive cell navigator."
     "new-cell"         "Insert a new cell (code or markdown) at the cursor."
     "select-cell"      "Select around cell (header + code + output)."

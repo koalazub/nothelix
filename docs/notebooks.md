@@ -239,6 +239,7 @@ a notebook underneath.
 | `plots-per-cell` | Cap on stacked plots rendered per cell, from `1` to `256` | `32` |
 | `plot-mode` | Force `raster` or `braille` plot rendering, or `auto` to decide from the plotting backend | `auto` |
 | `slm-summaries` | Label picker rows with Apple's on-device model (macOS 26+, needs Apple Intelligence, falls back to first-line heuristics) | `false` |
+| `widgets` | Enable the `]w`/`[w` widget walk and the shared scrub-style modal; when `false` both no-op and the direct feature keys still work | `true` |
 | `julia-bin`, `julia-project` | Pin the Julia binary or environment for cells | PATH `julia` |
 
 `julia-bin` and `julia-project` execute code, so they take effect only after you
@@ -256,6 +257,8 @@ trust the directory.
 |---|---|---|
 | `:next-cell` | `]l` | Jump to the next cell |
 | `:previous-cell` | `[l` | Jump to the previous cell |
+| `:widget-walk-next` | `]w` | Jump to the next widget, naming its keys |
+| `:widget-walk-prev` | `[w` | Jump to the previous widget, naming its keys |
 | `:cell-picker` | `<space>nj` | Open an interactive cell navigator |
 | `:select-cell` | `<space>na` | Select the whole cell, header, code, and output |
 | `:select-cell-code` | `<space>ni` | Select only the code |

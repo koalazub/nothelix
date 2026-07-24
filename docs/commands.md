@@ -41,6 +41,8 @@ out of your way in ordinary buffers.
 |---|---|
 | `:next-cell` | Jump to the next cell |
 | `:previous-cell` | Jump to the previous cell |
+| `:widget-walk-next` | Jump to the next widget and name its keys in the status line |
+| `:widget-walk-prev` | Jump to the previous widget and name its keys in the status line |
 | `:cell-picker` | Open the interactive cell navigator |
 | `:new-cell` | Insert a new cell at the cursor and open the code or markdown picker |
 | `:select-cell` | Select the whole cell, meaning the header, the code, and the output |
@@ -132,6 +134,8 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `[p` | `:param-down` |
 | `]a` | `:audio-seek-forward` |
 | `[a` | `:audio-seek-back` |
+| `]w` | `:widget-walk-next` |
+| `[w` | `:widget-walk-prev` |
 | `<space>nr` | `:execute-cell` |
 | `<space>nn` | `:new-cell` |
 | `<space>nj` | `:cell-picker` |
@@ -156,6 +160,16 @@ step reaches, and the playhead sweeps to its new column on each move. Press
 keep playback as it was. Pressing `<space>ns` on the cell that is already
 playing opens the same popup. `]a` and `[a` seek without the popup, and pressing
 them in quick succession accelerates the step through the ladder.
+
+### Widget walk
+
+`]w` and `[w` walk the cursor between every widget in the notebook, wrapping at
+the ends. A widget is any interactive surface: a `# @param` knob, a cell's audio
+scrub, an `@image` plot's size, or an animation. Each jump names the widget and
+the keys that act on it in the status line, so the surface teaches itself. The
+walk and the scrub-style modal are gated by the `widgets` setting in
+`.nothelix.conf`; when it is `false` both no-op and the direct feature keys
+(`]p`/`[p`, `]a`/`[a`, the plot and animation commands) still work.
 
 ## Shorthands
 

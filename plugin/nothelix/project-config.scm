@@ -58,6 +58,8 @@
          set-audio-accel-window-ms!
          audio-sweep-ms
          set-audio-sweep-ms!
+         widgets-enabled?
+         set-widgets-enabled!
          maybe-apply-project-config!
          apply-project-config!
          find-project-config
@@ -159,6 +161,16 @@
 (define (audio-sweep-ms) (unbox *audio-sweep-ms*))
 (define (set-audio-sweep-ms! v)
   (when (and (exact-integer? v) (> v 0)) (set-box! *audio-sweep-ms* v)))
+
+;;@doc
+;; Whether the unified widget surfaces — the ]w/[w walk and the shared modal
+;; shell — are active. Defaults on; `widgets = false` in a project config turns
+;; them off, leaving the pre-widget feature keys (]p/[p, ]a/[a, plot/animation
+;; commands) untouched.
+(define *widgets-enabled* (box #true))
+(define (widgets-enabled?) (unbox *widgets-enabled*))
+(define (set-widgets-enabled! v)
+  (when (boolean? v) (set-box! *widgets-enabled* v)))
 
 (define (all-positive-numbers? lst)
   (cond
@@ -289,6 +301,8 @@
     (when (exact-integer? aaw) (set-audio-accel-window-ms! aaw)))
   (let ([asw (config-ref alist "audio-sweep-ms" #false)])
     (when (exact-integer? asw) (set-audio-sweep-ms! asw)))
+  (let ([we (config-ref alist "widgets" 'unset)])
+    (when (boolean? we) (set-widgets-enabled! we)))
   alist)
 
 ;; --- executable runtime (trust-gated) ---
