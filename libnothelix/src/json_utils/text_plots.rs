@@ -4,8 +4,8 @@ use serde_json::Value;
 use std::fmt;
 
 const PLOT_SEP: char = '\u{1e}';
-const SECTION_SEP: char = '\u{1d}';
-const SPAN_SEP: char = '\u{1f}';
+pub(crate) const SECTION_SEP: char = '\u{1d}';
+pub(crate) const SPAN_SEP: char = '\u{1f}';
 
 struct Span {
     row: i64,

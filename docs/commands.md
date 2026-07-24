@@ -33,6 +33,7 @@ out of your way in ordinary buffers.
 | `:copy-cell-output` | Copy the cell's rendered output to the system clipboard |
 | `:play-cell-audio` | Play the cell's wavplay audio through the system output (non-blocking) |
 | `:stop-audio` | Stop the audio clip that is currently playing |
+| `:scrub-audio` | Open scrub mode to seek the cell's audio by ear before resuming |
 
 ## Navigation and selection
 
@@ -129,6 +130,8 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `[l` | `:previous-cell` |
 | `]p` | `:param-up` |
 | `[p` | `:param-down` |
+| `]a` | `:audio-seek-forward` |
+| `[a` | `:audio-seek-back` |
 | `<space>nr` | `:execute-cell` |
 | `<space>nn` | `:new-cell` |
 | `<space>nj` | `:cell-picker` |
@@ -142,6 +145,17 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `<space>n-` | `:plot-shrink` |
 | `<space>p` | `:animation-toggle-at-cursor` |
 | `Tab` (insert mode, `.jl` only) | `:julia-tab-complete` |
+
+### Scrub mode
+
+`:scrub-audio` opens a small waveform popup over the cell. Press `h` and `l` to
+move the playhead back and forward by the current step, and `j` and `k` to make
+that step coarser or finer along the ladder. A dimmed bracket shows how far one
+step reaches, and the playhead sweeps to its new column on each move. Press
+`Enter` to resume playback from the playhead, or `Esc` (or `q`) to leave and
+keep playback as it was. Pressing `<space>ns` on the cell that is already
+playing opens the same popup. `]a` and `[a` seek without the popup, and pressing
+them in quick succession accelerates the step through the ladder.
 
 ## Shorthands
 

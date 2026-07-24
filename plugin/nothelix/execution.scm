@@ -10,6 +10,7 @@
 (require "output-insert.scm")
 (require "output-store.scm")
 (require "output-render.scm")
+(require "audio.scm")
 (require "project-config.scm")
 (require "kernel.scm")
 (require "spinner.scm")
@@ -523,10 +524,16 @@
             (define text-plot-groups
               (map (lambda (plot) (text-plot->styled-rows (car plot) (cdr plot)))
                    (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash legacy) ""))))
-            (when (or (list? rows) (not (null? text-plot-groups)))
+            (define waveform-group
+              (waveform-group-for (or (decode-stored-audio-blob stored hash legacy) "") -1 -1 -1))
+            (when (or (list? rows)
+                      (not (null? text-plot-groups))
+                      (not (null? waveform-group)))
               (try-set-output-lines-below! anchor-line
                 (assign-cycling-bars
-                  (cons (if (list? rows) rows '()) text-plot-groups))))))
+                  (append (list (if (list? rows) rows '()))
+                          text-plot-groups
+                          (if (null? waveform-group) '() (list waveform-group))))))))
         cell-indices)
       (clear-cell-states!)
       (refresh-provenance-surfaces! doc-id path))))

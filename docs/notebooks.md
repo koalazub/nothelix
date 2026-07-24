@@ -195,6 +195,22 @@ on that cell's row in the navigator while the clip runs. `<space>ns`
 (`:stop-audio`) stops whatever is playing. Starting a new clip stops the
 previous one, so only one plays at a time.
 
+A braille waveform of the clip renders under the cell, drawn from the samples in
+the WAV file with a header row that shows the length, the sample rate, and
+whether it is mono or stereo. While a clip plays, a playhead column advances
+across the waveform once a second, and it clears when the clip stops or ends.
+
+To move around inside a clip, `]a` and `[a` (`:audio-seek-forward` and
+`:audio-seek-back`) jump forward and back by the current step and resume from
+there. Press them in quick succession and the step grows through the ladder,
+from a tenth of a second up to half a minute, so a run of taps covers ground
+fast. For a finer touch, `:scrub-audio` (or `<space>ns` on the cell that is
+already playing) opens a waveform popup where `h` and `l` move the playhead,
+`j` and `k` change the step, `Enter` resumes from the playhead, and `Esc` leaves
+playback untouched. The autoplay, waveform height, seek ladder, acceleration
+window, and sweep length are all tunable through the display settings in
+`.nothelix.conf`.
+
 ## Kernel persistence
 
 One kernel runs per notebook, keyed to the file path and not to the buffer.

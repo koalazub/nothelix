@@ -1,18 +1,18 @@
 const DOT_BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
-pub(super) const BLANK: char = '\u{2800}';
+pub(crate) const BLANK: char = '\u{2800}';
 
 pub(super) const DOTS_PER_CELL_X: usize = 2;
 pub(super) const DOTS_PER_CELL_Y: usize = 4;
 
-pub(super) struct BrailleCanvas {
+pub(crate) struct BrailleCanvas {
     cols: usize,
     rows: usize,
     cells: Vec<u8>,
 }
 
 impl BrailleCanvas {
-    pub(super) fn new(cols: usize, rows: usize) -> Self {
+    pub(crate) fn new(cols: usize, rows: usize) -> Self {
         Self {
             cols,
             rows,
@@ -20,15 +20,15 @@ impl BrailleCanvas {
         }
     }
 
-    pub(super) fn dot_width(&self) -> usize {
+    pub(crate) fn dot_width(&self) -> usize {
         self.cols * DOTS_PER_CELL_X
     }
 
-    pub(super) fn dot_height(&self) -> usize {
+    pub(crate) fn dot_height(&self) -> usize {
         self.rows * DOTS_PER_CELL_Y
     }
 
-    pub(super) fn set(&mut self, px: usize, py: usize) {
+    pub(crate) fn set(&mut self, px: usize, py: usize) {
         let col = px / DOTS_PER_CELL_X;
         let row = py / DOTS_PER_CELL_Y;
         if col >= self.cols || row >= self.rows {
@@ -37,7 +37,7 @@ impl BrailleCanvas {
         self.cells[row * self.cols + col] |= DOT_BITS[py % DOTS_PER_CELL_Y][px % DOTS_PER_CELL_X];
     }
 
-    pub(super) fn lines(&self) -> Vec<String> {
+    pub(crate) fn lines(&self) -> Vec<String> {
         (0..self.rows)
             .map(|row| {
                 let start = row * self.cols;

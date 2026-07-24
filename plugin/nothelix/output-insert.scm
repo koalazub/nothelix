@@ -326,17 +326,20 @@
        (if (> (string-length (string-trim filtered-stderr)) 0)
            (cons "stderr:" (text->plain-lines filtered-stderr))
            '()))
+     (define audio-blob
+       (let ([b (json-get-audio result-json)])
+         (if (and (> (string-length b) 0) (not (string-starts-with? b "ERROR:"))) b "")))
+     (define waveform-group (waveform-group-for audio-blob -1 -1 -1))
      (define render-lines
        (bars-for
-         (append (list notes-group stdout-group repr-group stderr-group) text-plot-styled-groups)))
+         (append (list notes-group stdout-group repr-group stderr-group)
+                 text-plot-styled-groups
+                 (if (null? waveform-group) '() (list waveform-group)))))
 
      (when (and anchor-line
                 (not (null? render-lines))
                 (not (try-set-output-lines-below! anchor-line render-lines)))
        (insert-legacy-output-block! anchor-line stored-text-lines))
-     (define audio-blob
-       (let ([b (json-get-audio result-json)])
-         (if (and (> (string-length b) 0) (not (string-starts-with? b "ERROR:"))) b "")))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows+text-plots+audio
                    (outputs-json-for-cell stdout-text filtered-stderr output-repr "")

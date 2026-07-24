@@ -1,4 +1,4 @@
-mod braille;
+pub(crate) mod braille;
 mod plot;
 mod series;
 

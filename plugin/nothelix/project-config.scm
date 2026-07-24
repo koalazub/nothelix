@@ -48,6 +48,16 @@
          set-picker-jump!
          slm-summaries?
          set-slm-summaries!
+         audio-autoplay?
+         set-audio-autoplay!
+         audio-waveform-rows
+         set-audio-waveform-rows!
+         audio-seek-ladder
+         set-audio-seek-ladder!
+         audio-accel-window-ms
+         set-audio-accel-window-ms!
+         audio-sweep-ms
+         set-audio-sweep-ms!
          maybe-apply-project-config!
          apply-project-config!
          find-project-config
@@ -107,6 +117,63 @@
 (define (picker-jump) (unbox *picker-jump*))
 (define (set-picker-jump! v)
   (when (and (exact-integer? v) (> v 0) (<= v 100)) (set-box! *picker-jump* v)))
+
+;;@doc
+;; Whether a cell that produced audio auto-plays it on run. Defaults on;
+;; `audio-autoplay = false` in a project config suppresses the base layer's
+;; auto-play so a clip only sounds on an explicit `<space>ns`.
+(define *audio-autoplay* (box #true))
+(define (audio-autoplay?) (unbox *audio-autoplay*))
+(define (set-audio-autoplay! v)
+  (when (boolean? v) (set-box! *audio-autoplay* v)))
+
+;;@doc
+;; Braille rows drawn for a cell's waveform under its output. Defaults to 4;
+;; a project config may widen or narrow it within a sane 1..16 band.
+(define *audio-waveform-rows* (box 4))
+(define (audio-waveform-rows) (unbox *audio-waveform-rows*))
+(define (set-audio-waveform-rows! v)
+  (when (and (exact-integer? v) (> v 0) (<= v 16)) (set-box! *audio-waveform-rows* v)))
+
+;;@doc
+;; The seek-step ladder in milliseconds, coarsest last. Quick seeks and scrub
+;; mode escalate/step along it. Defaults to (100 500 1000 5000 30000).
+(define *audio-seek-ladder* (box (list 100 500 1000 5000 30000)))
+(define (audio-seek-ladder) (unbox *audio-seek-ladder*))
+(define (set-audio-seek-ladder! v)
+  (when (and (list? v) (not (null? v)) (all-positive-numbers? v))
+    (set-box! *audio-seek-ladder* v)))
+
+;;@doc
+;; Window in milliseconds within which repeated quick seeks escalate the step
+;; along the ladder; a longer gap resets to the base step. Defaults to 700.
+(define *audio-accel-window-ms* (box 700))
+(define (audio-accel-window-ms) (unbox *audio-accel-window-ms*))
+(define (set-audio-accel-window-ms! v)
+  (when (and (exact-integer? v) (> v 0)) (set-box! *audio-accel-window-ms* v)))
+
+;;@doc
+;; Duration in milliseconds of the scrub-mode playhead sweep between the old
+;; and new column, held constant regardless of seek distance. Defaults to 100.
+(define *audio-sweep-ms* (box 100))
+(define (audio-sweep-ms) (unbox *audio-sweep-ms*))
+(define (set-audio-sweep-ms! v)
+  (when (and (exact-integer? v) (> v 0)) (set-box! *audio-sweep-ms* v)))
+
+(define (all-positive-numbers? lst)
+  (cond
+    [(null? lst) #true]
+    [(and (number? (car lst)) (> (car lst) 0)) (all-positive-numbers? (cdr lst))]
+    [else #false]))
+
+;;@doc
+;; Parse a comma-separated "100,500,1000" config value into a list of positive
+;; numbers, or #false when any field is missing/non-numeric/non-positive.
+(define (parse-seek-ladder-value v)
+  (if (not (string? v))
+      #false
+      (let ([fields (map string->number (string-split v ","))])
+        (if (and (not (null? fields)) (all-positive-numbers? fields)) fields #false))))
 
 ;; --- path helpers (string-only; no new primitives) ---
 
@@ -212,6 +279,16 @@
     (when (boolean? co) (set-box! *conceal-on-open* co)))
   (let ([ss (config-ref alist "slm-summaries" 'unset)])
     (when (boolean? ss) (set-slm-summaries! ss)))
+  (let ([aa (config-ref alist "audio-autoplay" 'unset)])
+    (when (boolean? aa) (set-audio-autoplay! aa)))
+  (let ([awr (config-ref alist "audio-waveform-rows" #false)])
+    (when (exact-integer? awr) (set-audio-waveform-rows! awr)))
+  (let ([asl (parse-seek-ladder-value (config-ref alist "audio-seek-ladder" #false))])
+    (when asl (set-audio-seek-ladder! asl)))
+  (let ([aaw (config-ref alist "audio-accel-window-ms" #false)])
+    (when (exact-integer? aaw) (set-audio-accel-window-ms! aaw)))
+  (let ([asw (config-ref alist "audio-sweep-ms" #false)])
+    (when (exact-integer? asw) (set-audio-sweep-ms! asw)))
   alist)
 
 ;; --- executable runtime (trust-gated) ---

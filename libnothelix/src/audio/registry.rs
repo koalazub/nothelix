@@ -1,9 +1,16 @@
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::Instant;
 
-fn store() -> MutexGuard<'static, HashMap<u32, Child>> {
-    static STORE: OnceLock<Mutex<HashMap<u32, Child>>> = OnceLock::new();
+struct Entry {
+    child: Child,
+    started: Instant,
+    offset_ms: u64,
+}
+
+fn store() -> MutexGuard<'static, HashMap<u32, Entry>> {
+    static STORE: OnceLock<Mutex<HashMap<u32, Entry>>> = OnceLock::new();
     STORE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -11,14 +18,25 @@ fn store() -> MutexGuard<'static, HashMap<u32, Child>> {
 }
 
 pub fn insert(pid: u32, child: Child) {
-    store().insert(pid, child);
+    insert_at(pid, child, 0);
+}
+
+pub fn insert_at(pid: u32, child: Child, offset_ms: u64) {
+    store().insert(
+        pid,
+        Entry {
+            child,
+            started: Instant::now(),
+            offset_ms,
+        },
+    );
 }
 
 pub fn stop(pid: u32) -> bool {
     match store().remove(&pid) {
-        Some(mut child) => {
-            let _ = child.kill();
-            let _ = child.wait();
+        Some(mut entry) => {
+            let _ = entry.child.kill();
+            let _ = entry.child.wait();
             true
         }
         None => false,
@@ -26,20 +44,26 @@ pub fn stop(pid: u32) -> bool {
 }
 
 pub fn stop_all() {
-    for (_, mut child) in store().drain() {
-        let _ = child.kill();
-        let _ = child.wait();
+    for (_, mut entry) in store().drain() {
+        let _ = entry.child.kill();
+        let _ = entry.child.wait();
     }
 }
 
 pub fn playing(pid: u32) -> bool {
     let mut guard = store();
     let finished = match guard.get_mut(&pid) {
-        Some(child) => matches!(child.try_wait(), Ok(Some(_)) | Err(_)),
+        Some(entry) => matches!(entry.child.try_wait(), Ok(Some(_)) | Err(_)),
         None => return false,
     };
     if finished {
         guard.remove(&pid);
     }
     !finished
+}
+
+pub fn elapsed_ms(pid: u32) -> Option<u64> {
+    let guard = store();
+    let entry = guard.get(&pid)?;
+    Some(entry.offset_ms + entry.started.elapsed().as_millis() as u64)
 }
