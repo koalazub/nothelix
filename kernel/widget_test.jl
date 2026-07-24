@@ -144,4 +144,96 @@ end
         @test state_of(1) == "stale-input"
         @test CellRegistry.classify_all()["1"]["inputs"][1]["rel"] == "stale"
     end
+
+    @testset "a towidget method projects a struct onto the current cell" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[5] = CellRegistry.Cell(5)
+        CellRegistry.set_current_cell!(5)
+        @eval module ProjectMod
+            struct Dial
+                lo::Int
+                hi::Int
+                value::Int
+            end
+            nothelix_towidget(::Any) = nothing
+            nothelix_towidget(d::Dial) =
+                (kind = "slider", name = "gain", lo = d.lo, hi = d.hi, step = 1, current = d.value)
+        end
+        warning = KernelWidgets.project_result!(ProjectMod, ProjectMod.Dial(0, 10, 5))
+        @test warning === nothing
+        specs = CellRegistry.CELLS[5].widgets
+        @test length(specs) == 1
+        @test specs[1]["kind"] == "slider"
+        @test specs[1]["name"] == "gain"
+        @test specs[1]["params"] == "0:10:1"
+        @test specs[1]["current"] == "5"
+    end
+
+    @testset "the base towidget fallback projects nothing" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[5] = CellRegistry.Cell(5)
+        CellRegistry.set_current_cell!(5)
+        @eval module FallbackMod
+            nothelix_towidget(::Any) = nothing
+        end
+        warning = KernelWidgets.project_result!(FallbackMod, 42)
+        @test warning === nothing
+        @test isempty(CellRegistry.CELLS[5].widgets)
+    end
+
+    @testset "an unknown-kind projection warns, registers nothing, and the result survives" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[5] = CellRegistry.Cell(5)
+        CellRegistry.set_current_cell!(5)
+        @eval module UnknownKindMod
+            struct Blob end
+            nothelix_towidget(::Any) = nothing
+            nothelix_towidget(::Blob) = (kind = "mystery", name = "x")
+        end
+        survivor = UnknownKindMod.Blob()
+        warning = KernelWidgets.project_result!(UnknownKindMod, survivor)
+        @test warning !== nothing
+        @test occursin("unknown kind", warning)
+        @test isempty(CellRegistry.CELLS[5].widgets)
+        @test survivor isa UnknownKindMod.Blob
+    end
+
+    @testset "a bad-name projection warns and registers nothing" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[5] = CellRegistry.Cell(5)
+        CellRegistry.set_current_cell!(5)
+        @eval module BadNameMod
+            struct Blob end
+            nothelix_towidget(::Any) = nothing
+            nothelix_towidget(::Blob) = (kind = "slider", name = "bad name", lo = 0, hi = 1)
+        end
+        warning = KernelWidgets.project_result!(BadNameMod, BadNameMod.Blob())
+        @test warning !== nothing
+        @test occursin("invalid name", warning)
+        @test isempty(CellRegistry.CELLS[5].widgets)
+    end
+
+    @testset "nothelix_widget registers a validated choice spec directly" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[6] = CellRegistry.Cell(6)
+        CellRegistry.set_current_cell!(6)
+        KernelWidgets.register_spec!(Dict(
+            "kind" => "choice", "name" => "wave",
+            "options" => ["sin", "cos"], "current" => "cos"))
+        specs = CellRegistry.CELLS[6].widgets
+        @test length(specs) == 1
+        @test specs[1]["kind"] == "choice"
+        @test specs[1]["params"] == "sin|cos"
+        @test specs[1]["current"] == "cos"
+    end
+
+    @testset "nothelix_widget ignores a malformed spec and registers nothing" begin
+        CellRegistry.clear_registry()
+        CellRegistry.CELLS[6] = CellRegistry.Cell(6)
+        CellRegistry.set_current_cell!(6)
+        redirect_stderr(devnull) do
+            KernelWidgets.register_spec!(Dict("kind" => "slider", "name" => "g"))
+        end
+        @test isempty(CellRegistry.CELLS[6].widgets)
+    end
 end

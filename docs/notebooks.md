@@ -115,6 +115,30 @@ still runs under `julia notebook.jl`, and the rows persist with the cell's outpu
 so a reopen restores them. When the kernel is not running, a nudge says so and
 asks you to run the cell first.
 
+A library can make its own type show up as a widget without any nothelix call in
+the cell. Define one `nothelix_towidget` method that projects your object onto a
+kind, and a cell that returns one grows the row.
+
+    struct Knob
+        value::Int
+        lo::Int
+        hi::Int
+    end
+
+    nothelix_towidget(k::Knob) =
+        (kind = "slider", name = "level", lo = k.lo, hi = k.hi, step = 1, current = k.value)
+
+    # @cell 0
+    level = 5
+    Knob(level, 0, 10)
+
+The `Knob` still displays as itself and the slider row appears under the cell,
+driving `level` the same way a `nothelix_slider` call would. A kind nothelix does
+not know falls back to plain output with a warning in the cell's stderr, so an
+unknown projection never breaks the run. A library that would rather not define a
+method can register a spec imperatively with `nothelix_widget(Dict("kind" =>
+"choice", "name" => "wave", "options" => ["sin", "cos"]))`.
+
 ## Opening an existing notebook
 
 An `.ipynb` file is JSON, so convert it to a `.jl` first.

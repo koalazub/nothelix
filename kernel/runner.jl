@@ -143,6 +143,18 @@ nothelix_slider(name::AbstractString, lo::Real, hi::Real; step::Real=0) =
 nothelix_choice(name::AbstractString, options::AbstractVector{<:AbstractString}) =
     KernelWidgets.record_choice!(Main, name, options)
 
+nothelix_towidget(::Any) = nothing
+nothelix_widget(spec) = KernelWidgets.register_spec!(spec)
+
+function project_cell_result!(cell_idx::Int, value)
+    CellRegistry.set_current_cell!(cell_idx)
+    warning = KernelWidgets.project_result!(Main, value)
+    warning === nothing && return
+    haskey(CellRegistry.CELLS, cell_idx) || return
+    cell = CellRegistry.CELLS[cell_idx]
+    cell.stderr = isempty(cell.stderr) ? warning : cell.stderr * "\n" * warning
+end
+
 # Write output response
 function write_response(data::Dict)
     if HAS_MSGPACK
@@ -184,6 +196,7 @@ function handle_execute_cell(cmd::Dict)
             log_info("Variables in Main after cell $cell_idx: $main_vars")
             # Explicit check for common variables
             log_info("  t defined: $(isdefined(Main, :t)), y defined: $(isdefined(Main, :y))")
+            project_cell_result!(cell_idx, result.result)
             cell_result = CellMacros.get_cell_result_json(cell_idx)
             write_response(Dict(
                 "status" => "ok",
@@ -234,6 +247,8 @@ function handle_execute_reactive(cmd::Dict)
             return
         end
 
+        project_cell_result!(cell_idx, result.result)
+
         # Get and execute dependents in order
         dependents = CellRegistry.get_dependents(cell_idx)
         log_info("Dependents of cell $cell_idx: $dependents")
@@ -249,6 +264,8 @@ function handle_execute_reactive(cmd::Dict)
                 if !dep_result.success
                     log_error("Dependent cell $dep_idx failed")
                     # Continue executing other dependents
+                else
+                    project_cell_result!(dep_idx, dep_result.result)
                 end
             end
         end

@@ -63,6 +63,31 @@ original plan — instead of a ladder scrub, the nudged param shows a one-row
 slider track (value position in range plus its keys), rendered on demand above
 the line while its cell holds the cursor and cleared on leave.
 
+## Projection
+
+The kinds above are a closed vocabulary, but the producers are open. Any Julia
+library can make its own objects appear as widgets by defining one method of
+`nothelix_towidget`. The base method returns nothing for every value, so an
+ordinary result stays ordinary. A library adds a method for its own type that
+returns a NamedTuple or Dict naming a kind and a name, plus the fields that kind
+needs (`lo` and `hi` and an optional `step` for a slider, `options` for a
+choice), and any run whose cell returns that object grows the matching row.
+
+The kernel treats a projection exactly as it treats a `nothelix_slider` call. It
+validates that the kind is one it knows, the name is a plain identifier, and the
+params are well formed, then registers the spec on the cell through the same
+machinery. A projection it cannot recognise degrades to plain output; the kernel
+writes one warning line into the cell's stderr and the value still displays as it
+always would, so an unknown kind never eats a cell's real result. A library that
+would rather register a spec by hand than define a method calls `nothelix_widget`
+with the same NamedTuple or Dict and takes the same validation path.
+
+The vocabulary is the compatibility contract. A projection speaks in the kinds
+the plugin already renders, so a new library lights up a widget with no plugin
+change and no FFI change. The spec pipeline carries kind, name, params, and
+current, and it now takes three kinds of producer, the source annotation, the
+kernel call, and the library projection.
+
 ## Phases
 
 **Phase 1 (shipped with this document).** The contract extracted into
@@ -95,4 +120,6 @@ grammar, so `]p` and `[p` nudge a kernel slider and `]s` and `[s` cycle a kernel
 choice on the cell under the cursor, `<space>nc` opens the modal, and `]w` and
 `[w` walk onto them like any other widget. When the kernel is not running a nudge
 says so and asks you to run the cell first, and it never queues. This is
-Jupyter-style interactive output without leaving the source-file model.
+Jupyter-style interactive output without leaving the source-file model. These two
+calls are not the only way onto this pipeline; the Projection section above shows
+how any library reaches the same specs by returning its own object from a cell.
