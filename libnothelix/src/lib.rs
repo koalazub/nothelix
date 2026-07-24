@@ -25,6 +25,8 @@ pub use math_image::render_math_to_svg;
 #[cfg(feature = "native")]
 pub mod animation;
 #[cfg(feature = "native")]
+mod audio;
+#[cfg(feature = "native")]
 mod chart;
 #[cfg(feature = "native")]
 pub mod gallery;
@@ -58,7 +60,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 28;
+pub const NOTHELIX_FFI_VERSION: u32 = 29;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -186,6 +188,7 @@ mod steel_bindings {
             module.register_fn("json-get-animated-mime", json_utils::json_get_animated_mime);
             module.register_fn("json-get-all-images", json_utils::json_get_all_images);
             module.register_fn("json-get-text-plots", json_utils::json_get_text_plots);
+            module.register_fn("json-get-audio", json_utils::json_get_audio);
         }
     }
 
@@ -482,6 +485,18 @@ mod steel_bindings {
         }
     }
 
+    mod audio_playback {
+        use super::{FFIModule, RegisterFFIFn};
+        use crate::audio;
+
+        pub(super) fn register(module: &mut FFIModule) {
+            module.register_fn("audio-play", audio::audio_play);
+            module.register_fn("audio-stop", audio::audio_stop);
+            module.register_fn("audio-stop-all", audio::audio_stop_all);
+            module.register_fn("audio-playing", audio::audio_playing);
+        }
+    }
+
     const REGISTRARS: &[fn(&mut FFIModule)] = &[
         handshake::register,
         kernel_lifecycle::register,
@@ -498,6 +513,7 @@ mod steel_bindings {
         unicode_completion::register,
         julia_diagnostics::register,
         animation_playback::register,
+        audio_playback::register,
     ];
 
     pub(super) fn register_all(module: &mut FFIModule) {

@@ -28,10 +28,14 @@
          input-freshness-word
          set-running-cell!
          clear-running-cell!
-         cell-running?)
+         cell-running?
+         set-audio-playing-cell!
+         clear-audio-playing-cell!
+         audio-playing-cell?)
 
 (define *cell-states* (box (hash)))
 (define *running-cell* (box #false))
+(define *audio-playing-cell* (box #false))
 (define *session-baselines* (box (hash)))
 
 (define (set-session-baseline! idx hash-str)
@@ -111,6 +115,12 @@
 (define (cell-running? idx)
   (define r (unbox *running-cell*))
   (and r (equal? r idx)))
+
+(define (set-audio-playing-cell! idx) (set-box! *audio-playing-cell* idx))
+(define (clear-audio-playing-cell!) (set-box! *audio-playing-cell* #false))
+(define (audio-playing-cell? idx)
+  (define a (unbox *audio-playing-cell*))
+  (and a (equal? a idx)))
 
 (define (cell-state-nonfresh? state)
   (not (or (equal? state "fresh") (equal? state ""))))

@@ -193,6 +193,7 @@ fn flatten(parsed: &Value) -> String {
         "structured_error",
         "notes",
         "text_plots",
+        "audio",
     ] {
         if let Some(value) = cell.get(field) {
             response[field] = value.clone();

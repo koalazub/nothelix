@@ -30,6 +30,7 @@
                           json-get-plot-data
                           json-get-notes
                           json-get-text-plots
+                          json-get-audio
                           kitty-placeholder-payload
                           kitty-placeholder-rows
                           save-image-to-cache!
@@ -37,6 +38,7 @@
                           format-julia-error-with-notebook))
 
 (require "nothelix/animation.scm")
+(require "audio.scm")
 
 (provide update-cell-output cell-marker-and-code-end clear-cell-output!
          take-first-n images-truncated? notes-blob->group)
@@ -332,11 +334,15 @@
                 (not (null? render-lines))
                 (not (try-set-output-lines-below! anchor-line render-lines)))
        (insert-legacy-output-block! anchor-line stored-text-lines))
+     (define audio-blob
+       (let ([b (json-get-audio result-json)])
+         (if (and (> (string-length b) 0) (not (string-starts-with? b "ERROR:"))) b "")))
      (store-put! store-cell-id store-source-hash
-                 (encode-outputs+rows+text-plots
+                 (encode-outputs+rows+text-plots+audio
                    (outputs-json-for-cell stdout-text filtered-stderr output-repr "")
                    stored-text-lines
-                   text-plots-blob))
+                   text-plots-blob
+                   audio-blob))
 
      (define animated-mime
        (json-get-animated-mime result-json))
@@ -416,5 +422,7 @@
     (lambda ()
       (render-body)
       (set! render-ok? #true)))
+
+  (audio-auto-play-from-result! result-json cell-index)
 
   (schedule-reconceal 50))

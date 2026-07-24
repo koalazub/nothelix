@@ -1,3 +1,4 @@
+mod audio;
 mod fields;
 mod images;
 mod text_plots;
@@ -5,6 +6,7 @@ mod text_plots;
 use crate::error::{Error, Result};
 use serde_json::Value;
 
+pub use audio::json_get_audio;
 pub use fields::{
     json_get, json_get_bool, json_get_cell_states, json_get_many, json_get_notes,
     json_get_plot_data,

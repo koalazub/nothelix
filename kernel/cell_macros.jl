@@ -112,6 +112,7 @@ function execute_cell(cell_idx::Int, code::String; plot_mode::String="auto")
     cell.status = :running
     cell.run_seq = CellRegistry.next_run_seq!()
     CellRegistry.CELLS[cell_idx] = cell
+    CellRegistry.set_current_cell!(cell_idx)
 
     # Analyze dependencies from code (before execution)
     analysis = ASTAnalysis.analyze_code(code)
@@ -226,6 +227,10 @@ function get_cell_result_json(cell_idx::Int)
     # Format: [{"rows": [...], "spans": [[row, start, end, color], ...]}]
     if !isempty(cell.text_plots)
         result["text_plots"] = cell.text_plots
+    end
+
+    if !isempty(cell.audio)
+        result["audio"] = cell.audio
     end
 
     result

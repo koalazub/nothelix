@@ -1,6 +1,6 @@
 module CellRegistry
 
-export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type, provenance_notes, next_run_seq!, classify_all
+export Cell, CELLS, VARIABLE_SOURCES, VARIABLE_USERS, VARIABLE_TYPES, get_dependencies, get_dependents, clear_registry, lookup_variable_context, unexecuted_dependencies, in_scope_variables_by_type, provenance_notes, next_run_seq!, classify_all, set_current_cell!, current_cell
 
 # Cell state structure
 mutable struct Cell
@@ -15,6 +15,7 @@ mutable struct Cell
     stderr::String
     images::Vector{Tuple{String, String}}  # (format, base64_data) for inline rendering
     text_plots::Vector{Dict{String,Any}}  # UnicodePlots braille rows+spans, one entry per plot
+    audio::Vector{Dict{String,Any}}
     plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
@@ -25,7 +26,7 @@ mutable struct Cell
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], nothing, nothing, nothing, String[], :pending, 0, nothing)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], Dict{String,Any}[], nothing, nothing, nothing, String[], :pending, 0, nothing)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()
@@ -40,10 +41,15 @@ const VARIABLE_TYPES = Dict{Symbol, String}()
 
 const RUN_SEQ = Ref{Int}(0)
 
+const CURRENT_CELL = Ref{Int}(-1)
+
 function next_run_seq!()::Int
     RUN_SEQ[] += 1
     RUN_SEQ[]
 end
+
+set_current_cell!(idx::Int) = (CURRENT_CELL[] = idx)
+current_cell()::Int = CURRENT_CELL[]
 
 # Clear registry (useful for testing)
 function clear_registry()
@@ -52,6 +58,7 @@ function clear_registry()
     empty!(VARIABLE_USERS)
     empty!(VARIABLE_TYPES)
     RUN_SEQ[] = 0
+    CURRENT_CELL[] = -1
 end
 
 # Get cells that this cell depends on

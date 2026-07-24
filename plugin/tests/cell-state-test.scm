@@ -79,6 +79,13 @@
   (clear-running-cell!)
   (assert-false (cell-running? 3) "running?: clearing stops the marker")
 
+  (assert-false (audio-playing-cell? 3) "audio-playing?: nothing plays by default")
+  (set-audio-playing-cell! 3)
+  (assert-true (audio-playing-cell? 3) "audio-playing?: the marked cell is playing")
+  (assert-false (audio-playing-cell? 7) "audio-playing?: only the marked cell is playing")
+  (clear-audio-playing-cell!)
+  (assert-false (audio-playing-cell? 3) "audio-playing?: clearing stops the marker")
+
   (apply-edited-overrides! (list 7))
   (assert-equal "edited-since-run" (car (cell-state-for 7))
                 "override: an edited cell becomes edited-since-run")

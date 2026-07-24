@@ -86,7 +86,12 @@
   (set-running-cell! 58)
   (assert-equal "▸" (picker-glyph 58) "column: the running cell shows the marker")
   (assert-equal "" (picker-duration 58) "column: the running cell shows no duration")
+  (set-audio-playing-cell! 58)
+  (assert-equal "▸" (picker-glyph 58) "column: running takes precedence over the audio marker")
   (clear-running-cell!)
+  (assert-equal "♪" (picker-glyph 58) "column: a playing cell shows the audio marker")
+  (clear-audio-playing-cell!)
+  (assert-equal "" (picker-glyph 58) "column: clearing playback drops the audio marker")
   (clear-cell-states!)
 
   (print-test-suite-footer "picker"))

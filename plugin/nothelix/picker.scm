@@ -256,6 +256,7 @@
   (if (< (string-length s) 2) (string-append " " s) s))
 
 (define *running-marker* "▸")
+(define *audio-marker* "♪")
 
 ;;@doc
 ;; Terse run-time for a picker row: sub-second as whole ms (12ms), a second
@@ -271,10 +272,13 @@
        (string-append (number->string whole) "." (number->string frac) "s"))]))
 
 ;;@doc
-;; Glyph-column content for a cell: the running marker while it executes,
-;; otherwise its freshness glyph.
+;; Glyph-column content for a cell: the running marker while it executes, the
+;; audio marker while its clip plays, otherwise its freshness glyph.
 (define (picker-glyph idx)
-  (if (cell-running? idx) *running-marker* (cell-glyph-for idx)))
+  (cond
+    [(cell-running? idx) *running-marker*]
+    [(audio-playing-cell? idx) *audio-marker*]
+    [else (cell-glyph-for idx)]))
 
 ;;@doc
 ;; Duration-column content for a cell: blank while it runs, otherwise its

@@ -13,6 +13,7 @@
 (require "cell-state-test.scm")
 (require "legacy-migration-test.scm")
 (require "cursor-restore-test.scm")
+(require "audio-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -28,7 +29,8 @@
          run-picker-tests
          run-cell-state-tests
          run-legacy-migration-tests
-         run-cursor-restore-tests)
+         run-cursor-restore-tests
+         run-audio-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -52,7 +54,8 @@
       (cons "picker" (run-picker-tests))
       (cons "cell-state" (run-cell-state-tests))
       (cons "legacy-migration" (run-legacy-migration-tests))
-      (cons "cursor-restore" (run-cursor-restore-tests))))
+      (cons "cursor-restore" (run-cursor-restore-tests))
+      (cons "audio" (run-audio-tests))))
 
   (define (suite-status passed?)
     (cond

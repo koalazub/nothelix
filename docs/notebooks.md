@@ -180,6 +180,21 @@ Plots still reserve real buffer lines for their height. On a fork build with
 tagged-undo support, those reserve-line edits are skipped by undo too, the same
 as text. On an older build they still cost one undo step.
 
+### Audio
+
+A cell that calls `wavplay(y, fs)` from `WAV.jl` plays its clip without any
+change to your code. Nothelix pre-defines `wavplay` in the kernel, so it writes
+the samples to a WAV file and returns straight away instead of blocking the cell
+for the length of the sound. The clip plays through the system default output at
+the system volume, using the platform's own player (`afplay` on macOS,
+`pw-play`, `paplay`, `ffplay`, or `aplay` elsewhere).
+
+Running a cell that produces audio plays it once, right away. A `♪` marker sits
+on that cell's row in the navigator while the clip runs. `<space>ns`
+(`:play-cell-audio`) replays the cell under the cursor, and `<space>nx`
+(`:stop-audio`) stops whatever is playing. Starting a new clip stops the
+previous one, so only one plays at a time.
+
 ## Kernel persistence
 
 One kernel runs per notebook, keyed to the file path and not to the buffer.

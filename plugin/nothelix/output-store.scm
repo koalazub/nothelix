@@ -14,7 +14,9 @@
          json-escape-string outputs-json-for-cell
          encode-outputs+rows decode-stored-rows
          encode-outputs+rows+text-plots
+         encode-outputs+rows+text-plots+audio
          decode-stored-text-plots-blob
+         decode-stored-audio-blob
          decode-text-plots-blob
          stored-source-hash)
 
@@ -70,6 +72,7 @@
 
 (define *rows-sep-line* "###NOTHELIX-OUTPUT-ROWS###")
 (define *text-plots-sep-line* "###NOTHELIX-TEXT-PLOTS###")
+(define *audio-sep-line* "###NOTHELIX-AUDIO###")
 
 ;;@doc
 ;; Bundle nbformat outputs-json with the exact text rows that were rendered
@@ -88,6 +91,18 @@
   (define base (encode-outputs+rows outputs-json rows))
   (if (and text-plots-blob (string? text-plots-blob) (> (string-length text-plots-blob) 0))
       (string-append base "\n" *text-plots-sep-line* "\n" text-plots-blob)
+      base))
+
+;;@doc
+;; Like `encode-outputs+rows+text-plots`, but also persists a cell's audio
+;; artifacts (`json-get-audio`'s "<path>\t<duration_ms>" lines) after an audio
+;; marker so `decode-stored-audio-blob` can restore them on reopen. The audio
+;; section trails the text-plots section, so an empty/`#false` `audio-blob`
+;; makes this byte-identical to `encode-outputs+rows+text-plots`.
+(define (encode-outputs+rows+text-plots+audio outputs-json rows text-plots-blob audio-blob)
+  (define base (encode-outputs+rows+text-plots outputs-json rows text-plots-blob))
+  (if (and audio-blob (string? audio-blob) (> (string-length audio-blob) 0))
+      (string-append base "\n" *audio-sep-line* "\n" audio-blob)
       base))
 
 ;;@doc
@@ -122,6 +137,18 @@
       (cons remainder "")))
 
 ;;@doc
+;; Split a `stored-body-remainder` result into (pre-audio . audio-blob) on the
+;; audio marker — audio-blob is "" when the marker is absent. The audio section
+;; trails the text-plots section, so callers strip it here first, then feed the
+;; pre-audio part to `split-rows-and-text-plots`.
+(define (split-off-audio remainder)
+  (define marker (string-append "\n" *audio-sep-line* "\n"))
+  (define parts (split-once remainder marker))
+  (if (list? parts)
+      (cons (car parts) (cadr parts))
+      (cons remainder "")))
+
+;;@doc
 ;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
 ;; source hash, return the stored text rows when the hash matches and the
 ;; body carries a rows blob, or #false (missing, stale, or no rows). An
@@ -130,7 +157,7 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([rows-blob (car (split-rows-and-text-plots remainder))])
+      (let ([rows-blob (car (split-rows-and-text-plots (car (split-off-audio remainder))))])
         (if (equal? rows-blob "") '() (string-split rows-blob "\n")))))
 
 ;;@doc
@@ -149,8 +176,21 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([tp-blob (cdr (split-rows-and-text-plots remainder))])
+      (let ([tp-blob (cdr (split-rows-and-text-plots (car (split-off-audio remainder))))])
         (if (equal? tp-blob "") #false tp-blob))))
+
+;;@doc
+;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
+;; source hash, return the stored audio blob (`json-get-audio`'s
+;; "<path>\t<duration_ms>" lines, decodable by `parse-audio-artifacts`) when the
+;; hash matches and a blob was stored, or #false (missing, stale, or no audio).
+;; An optional trailing `legacy-hash` grants the one-launch migration grace.
+(define (decode-stored-audio-blob raw current-hash . legacy-hash)
+  (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
+  (if (not remainder)
+      #false
+      (let ([audio-blob (cdr (split-off-audio remainder))])
+        (if (equal? audio-blob "") #false audio-blob))))
 
 ;;@doc
 ;; ASCII information-separator delimiters — must match libnothelix's

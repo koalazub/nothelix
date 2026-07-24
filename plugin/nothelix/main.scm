@@ -46,6 +46,7 @@
 (require "nothelix/resume.scm")
 (require "nothelix/markdown-render.scm")
 (require "nothelix/animation.scm")
+(require "nothelix/audio.scm")
 (require "nothelix/health.scm")
 (require "nothelix/lsp-statusline.scm")
 
@@ -55,6 +56,7 @@
 (provide convert-notebook sync-to-ipynb export-markdown export-typst export-pdf
          execute-cell execute-all-cells execute-cells-above cancel-cell
          cell-state copy-cell-output
+         play-cell-audio stop-audio
          next-cell previous-cell cell-picker
          select-cell select-cell-code select-output
          view-chart
@@ -220,6 +222,8 @@
                   ("i" ":select-cell-code")
                   ("o" ":select-output")
                   ("y" ":copy-cell-output")
+                  ("s" ":play-cell-audio")
+                  ("x" ":stop-audio")
                   ("=" ":plot-grow")
                   ("-" ":plot-shrink"))
              ("p" ":animation-toggle-at-cursor")))))
@@ -243,6 +247,8 @@
     "cancel-cell"         "Interrupt the currently running cell."
     "cell-state"          "Show the provenance table (inputs + freshness) for the cell under the cursor."
     "copy-cell-output"    "Copy the cell's rendered output to the system clipboard."
+    "play-cell-audio"     "Play the cell's wavplay audio through the system output (non-blocking)."
+    "stop-audio"          "Stop the audio clip that is currently playing."
 
     ;; Cell navigation / selection
     "next-cell"        "Jump to the next cell."
@@ -370,7 +376,8 @@
     (sync-images-if-markers-changed!))
   (cond
     [(member command-name *quit-commands*)
-     (stop-all-kernels)]
+     (stop-all-kernels)
+     (audio-stop-all!)]
     [(member command-name '("buffer-next" "buffer-previous"))
      (set! *conceal-generation* (+ *conceal-generation* 1))
      (define my-gen *conceal-generation*)

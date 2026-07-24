@@ -98,11 +98,13 @@ include(joinpath(KERNEL_ROOT, "cell_registry.jl"))
 include(joinpath(KERNEL_ROOT, "ast_analysis.jl"))
 include(joinpath(KERNEL_ROOT, "output_capture.jl"))
 include(joinpath(KERNEL_ROOT, "cell_macros.jl"))
+include(joinpath(KERNEL_ROOT, "audio.jl"))
 
 using .CellRegistry
 using .ASTAnalysis
 using .OutputCapture
 using .CellMacros
+using .AudioArtifacts
 
 # Set log file for OutputCapture module
 OutputCapture.set_log_file(LOG_FILE)
@@ -110,11 +112,16 @@ OutputCapture.set_log_file(LOG_FILE)
 # Tell OutputCapture where to write sidecar image files
 OutputCapture.set_kernel_dir(KERNEL_DIR)
 
+AudioArtifacts.set_audio_dir(KERNEL_DIR)
+
 log_info("Modules loaded successfully")
 
 # Export macros to Main module so they're available in cell execution
 Core.eval(Main, :(using ..CellMacros: @cell, @markdown))
 Core.eval(Main, :(using ..CellRegistry))
+
+wavplay(y, fs) = AudioArtifacts.wavplay_impl(y, fs)
+wavplay(filename::AbstractString) = AudioArtifacts.wavplay_impl(filename)
 
 # Write output response
 function write_response(data::Dict)
