@@ -1,19 +1,15 @@
-//! Verifies that libnothelix's compile-time BUILD_ID is exposed and
-//! non-empty. The build id format is "ci-<yyyymmdd>-<short-git-sha>"
-//! in CI and "dev-<short-git-sha>-dirty" for local dev builds.
+//! Verifies libnothelix's compile-time BUILD_ID contract. CI builds
+//! stamp "ci-<yyyymmdd>-<short-git-sha>"; dev builds stamp the constant
+//! "dev" so commits never force a rebuild.
 
 #[test]
-fn build_id_is_non_empty() {
-    let id = nothelix::build_id();
-    assert!(!id.is_empty(), "build_id() must not be empty");
-    assert!(id.len() >= 8, "build_id() must be at least 8 chars: {id}");
-}
-
-#[test]
-fn build_id_starts_with_known_prefix() {
+fn build_id_matches_the_contract() {
     let id = nothelix::build_id();
     assert!(
-        id.starts_with("ci-") || id.starts_with("dev-"),
-        "build_id() must start with 'ci-' or 'dev-', got: {id}"
+        id == "dev" || id.starts_with("ci-"),
+        "build_id() must be 'dev' or start with 'ci-', got: {id}"
     );
+    if let Some(rest) = id.strip_prefix("ci-") {
+        assert!(rest.len() >= 8, "ci id must carry date and sha: {id}");
+    }
 }

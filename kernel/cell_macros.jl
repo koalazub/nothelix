@@ -186,8 +186,8 @@ function get_cell_result_json(cell_idx::Int)
         "uses" => [string(s) for s in cell.uses],
         "dependencies" => deps,
         "dependents" => dependents,
-        "stdout" => cell.stdout,
-        "stderr" => cell.stderr,
+        "stdout" => bound_output_text(cell.stdout),
+        "stderr" => bound_output_text(cell.stderr),
         "has_error" => cell.error !== nothing,
     )
 
@@ -196,7 +196,7 @@ function get_cell_result_json(cell_idx::Int)
     end
 
     if cell.error !== nothing
-        result["error"] = sprint(showerror, cell.error)
+        result["error"] = bound_output_text(sprint(showerror, cell.error))
         try
             result["structured_error"] = OutputCapture.extract_structured_error(
                 cell.error, cell.stacktrace, cell.code_string, cell_idx)
@@ -258,16 +258,27 @@ function get_output_type(x)
     end
 end
 
+const OUTPUT_REPR_MAX_BYTES = 65_536
+
+function bound_output_text(s::AbstractString)
+    str = String(s)
+    sizeof(str) <= OUTPUT_REPR_MAX_BYTES && return str
+    cut = OUTPUT_REPR_MAX_BYTES
+    while cut > 0 && !isvalid(str, cut)
+        cut -= 1
+    end
+    string(str[1:cut], "\n⋯ output truncated ($(sizeof(str)) bytes total)")
+end
+
 function get_output_repr(x)
     x === nothing && return ""
     try
-        # Try text/plain MIME first
         io = IOBuffer()
-        show(io, MIME("text/plain"), x)
-        return String(take!(io))
+        show(IOContext(io, :limit => true, :displaysize => (40, 200)), MIME("text/plain"), x)
+        return bound_output_text(String(take!(io)))
     catch
         try
-            return repr(x)
+            return bound_output_text(repr(x))
         catch
             return "<unable to display>"
         end

@@ -196,6 +196,7 @@ test-kernel:
     julia "{{ nothelix_root }}/kernel/wavplay_test.jl"
     julia "{{ nothelix_root }}/kernel/widget_test.jl"
     julia "{{ nothelix_root }}/kernel/capture_test.jl"
+    julia "{{ nothelix_root }}/kernel/output_bound_test.jl"
 
 # static gate: run before committing. Rust lints + tests, then load the
 # plugin in a REAL hx binary to catch Steel load errors (FreeIdentifier,

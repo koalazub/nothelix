@@ -175,7 +175,12 @@
   (define all-fields (json-get-many result-json "error,structured_error,output_repr,stdout,stderr,has_error"))
   (define unreadable-reply? (string-starts-with? all-fields "ERROR:"))
   (define field-list (if unreadable-reply? '() (string-split all-fields "\t")))
-  (define (field-at n) (if (< n (length field-list)) (list-ref field-list n) ""))
+  (define (bound-field s)
+    (if (> (string-length s) 70000)
+        (string-append (substring s 0 65536) "\n⋯ output truncated before render")
+        s))
+  (define (field-at n)
+    (if (< n (length field-list)) (bound-field (list-ref field-list n)) ""))
   (define err (if unreadable-reply? all-fields (field-at 0)))
   (cond
     [(> (string-length err) 0)
