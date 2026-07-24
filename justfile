@@ -145,6 +145,7 @@ setup-lsp:
         # masks them, so there is nothing else to install.)
         print "Ensuring default-env deps (JSON3)..."
         let ensure_json3 = 'using Pkg
+        haskey(Pkg.project().dependencies, "NothelixMacros") && Pkg.rm("NothelixMacros")
         haskey(Pkg.project().dependencies, "JSON3") || Pkg.add("JSON3")'
         julia --startup-file=no --history-file=no --quiet "--project=@v#.#" -e $ensure_json3
     } else {
