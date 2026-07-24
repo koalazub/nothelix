@@ -33,7 +33,9 @@ pruning, `git ls-files`) is fine.
   `libnothelix/src/lib.rs` must equal `EXPECTED-FFI-VERSION` in
   `plugin/nothelix/ffi-version.scm`. Bump both or neither.
 - After changing Rust FFI, the dylib must be rebuilt and installed
-  (`just install`) before a running editor sees it.
+  (`just install`) before a running editor sees it. `just install fast`
+  builds with release optimization but no LTO for iteration; plain
+  `just install` (full LTO) is for real use.
 - A running `hx` caches Steel modules and the dylib. Fully restart the
   editor to test changes; do not diagnose against a stale session.
 - The dev shell comes from `flake.nix`. The rust-overlay dev shell and the

@@ -41,6 +41,9 @@ install profile="release":
     if "{{ profile }}" == "debug" {
         print "Building libnothelix (debug)..."
         cargo build -p libnothelix
+    } else if "{{ profile }}" == "fast" {
+        print "Building libnothelix (fast: release opt, no LTO)..."
+        cargo build --profile fast -p libnothelix
     } else {
         print "Building libnothelix (release)..."
         cargo build --release -p libnothelix
