@@ -47,7 +47,8 @@
          find-cell-code-end
          extract-cell-code
          find-cell-marker-by-index
-         refresh-provenance-surfaces!)
+         refresh-provenance-surfaces!
+         interrupted-result?)
 
 ;;@doc
 ;; Render a kernel-start failure as virtual error rows at the cell's anchor
@@ -83,7 +84,9 @@
        (lambda () (poll-for-result-with-delay kernel-dir jl-path cell-index next-delay)))]
     [else
      (clear-running-cell!)
+     (set! *executing-kernel-dir* #false)
      (update-cell-output result-json jl-path cell-index kernel-dir)
+     (audio-auto-play-from-result! result-json cell-index)
      (refresh-provenance-surfaces! (editor->doc-id (editor-focus)) jl-path)]))
 
 ;; Shared preflight: saved .jl notebook, cursor saved, kernel keyed by path.
@@ -92,6 +95,10 @@
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
   (define current-line (current-line-number))
+
+  (when (any-cell-running?)
+    (set-status! (string-append command-name ": a cell is already running — :cancel-cell to interrupt"))
+    (error "run in progress"))
 
   (when (not path)
     (set-status! (string-append command-name ": no file path"))
@@ -109,10 +116,27 @@
     (lambda () (on-ready doc-id path current-line))))
 
 ;;@doc
-;; Execute the code cell under the cursor (async, non-blocking).
+;; Execute the code cell under the cursor (async, non-blocking). When the
+;; cursor's cell is the one already running and `run-interrupts` is on, the
+;; same key interrupts it instead.
 (define (execute-cell)
-  (save-resume-position!)
-  (with-saved-notebook ":execute-cell" execute-cell-under-cursor))
+  (define running (cursor-on-running-cell?))
+  (cond
+    [(and running (run-interrupts?)) (cancel-cell)]
+    [(any-cell-running?)
+     (set-status! ":execute-cell: a cell is already running — :cancel-cell to interrupt")]
+    [else
+     (save-resume-position!)
+     (with-saved-notebook ":execute-cell" execute-cell-under-cursor)]))
+
+(define (cursor-on-running-cell?)
+  (define doc-id (editor->doc-id (editor-focus)))
+  (define rope (editor->text doc-id))
+  (define total (text.rope-len-lines rope))
+  (define (get-line idx) (doc-get-line rope total idx))
+  (define cell-start (find-cell-start-line get-line (current-line-number)))
+  (define idx (marker-line-cell-index (get-line cell-start)))
+  (and idx (cell-running? idx)))
 
 (define (execute-cell-under-cursor doc-id path current-line)
   (define rope (editor->text doc-id))
@@ -160,6 +184,7 @@
 
       (set! *executing-kernel-dir* kernel-dir)
       (set-running-cell! cell-index)
+      (refresh-stale-tags! doc-id)
       (define start-result (kernel-execute-cell-start kernel-dir cell-index code (plot-mode)))
       (define start-status (json-get start-result "status"))
 
@@ -190,7 +215,8 @@
          (begin
            (set-status! "Cell execution interrupted")
            (set! *executing-kernel-dir* #f)
-           (clear-running-cell!)))]))
+           (clear-running-cell!)
+           (refresh-stale-tags! (editor->doc-id (editor-focus)))))]))
 
 ;;@doc
 ;; Execute all cells in the notebook top-to-bottom (.jl converted files only).
@@ -227,6 +253,7 @@
 (define (execute-cell-list doc-id notebook-path kernel-dir jl-path cell-indices remaining-indices total-count original-line)
   (if (null? remaining-indices)
       (begin
+        (set! *executing-kernel-dir* #false)
         (restore-cursor-for! doc-id)
         (clear-cursor-restore! doc-id)
         (helix.static.collapse_selection)
@@ -284,6 +311,7 @@
 
         (set! *executing-kernel-dir* kernel-dir)
         (set-running-cell! cell-idx)
+        (refresh-stale-tags! doc-id)
         (define start-result (kernel-execute-cell-start kernel-dir cell-idx cell-code (plot-mode)))
         (define start-status (json-get start-result "status"))
 
@@ -306,6 +334,14 @@
 (define (poll-cell-list-result doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line)
   (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line 20))
 
+;;@doc
+;; An interrupted cell reports InterruptException in its error, the kernel's
+;; own word that the researcher cancelled. The batch chain reads this from
+;; the reply rather than any plugin-side flag.
+(define (interrupted-result? result-json)
+  (define err (json-get result-json "error"))
+  (and (> (string-length err) 0) (string-contains? err "InterruptException")))
+
 (define (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line delay-ms)
   (define result-json (kernel-poll-result kernel-dir))
   (define status (json-get result-json "status"))
@@ -315,6 +351,16 @@
      (define next-delay (min 200 (+ delay-ms 30)))
      (enqueue-thread-local-callback-with-delay next-delay
        (lambda () (poll-cell-list-result-with-delay doc-id notebook-path kernel-dir jl-path cell-idx cell-indices remaining-indices total-count original-line next-delay)))]
+    [(interrupted-result? result-json)
+     (clear-running-cell!)
+     (set! *executing-kernel-dir* #false)
+     (update-cell-output result-json jl-path cell-idx kernel-dir)
+     (restore-cursor-for! doc-id)
+     (clear-cursor-restore! doc-id)
+     (refresh-provenance-surfaces! doc-id notebook-path)
+     (set-status! (string-append "run stopped at cell " (number->string cell-idx)
+                                 " — " (number->string (length remaining-indices))
+                                 " cell(s) not run"))]
     [else
      (clear-running-cell!)
      (update-cell-output result-json jl-path cell-idx kernel-dir)
@@ -427,8 +473,10 @@
                     (cell-state-tag-text state (cell-state-record-inputs rec))))
               ""))
         (define tag
-          (adorn-tag-with-audio state-tag
-                                (and idx path (cell-has-stored-audio? path idx))))
+          (adorn-tag-with-running
+            (adorn-tag-with-audio state-tag
+                                  (and idx path (cell-has-stored-audio? path idx)))
+            (and idx (cell-running? idx))))
         (when (not (equal? tag ""))
           (try-set-stale-tag-above! i tag)))
       (loop (+ i 1)))))

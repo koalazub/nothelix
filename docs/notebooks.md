@@ -191,7 +191,16 @@ You never type a cell index or `:julia` by hand.
 
 The first run is slow while Julia precompiles imports. Later runs reuse the warm
 kernel, and state persists between cells the way it does in a REPL. Output
-appears inline below each cell as execution finishes.
+appears inline below each cell as execution finishes. A running cell wears a
+`▸ running` mark above its marker, the same glyph the navigator shows.
+
+Running a single cell performs its effects, a `wavplay` clip plays as it
+lands. A batch run builds state instead, every cell's outputs and artifacts
+are recorded and badged but nothing plays, so sixty cells never becomes a
+concert. Pressing the run key on the cell that is currently running
+interrupts it, set `run-interrupts = false` to make it refuse instead, and
+`:cancel-cell` interrupts from anywhere. Interrupting a batch run stops the
+whole chain and reports how many cells did not run.
 
 Because the kernel is a persistent REPL, running a single cell reads whatever the
 session currently holds. When a cell reads a global whose last value in this

@@ -66,6 +66,15 @@
                 (adorn-tag-with-audio (cell-state-tag-text "edited-since-run" '()) #false)
                 "audio badge: no audio leaves a state tag untouched")
 
+  (assert-equal "  ▸ running" (adorn-tag-with-running "" #true)
+                "running glyph: a running cell with no other tag reads running")
+  (assert-equal "  ▸ ♪" (adorn-tag-with-running (adorn-tag-with-audio "" #true) #true)
+                "running glyph: leads the audio badge")
+  (assert-equal "" (adorn-tag-with-running "" #false)
+                "running glyph: idle leaves an empty tag empty")
+  (assert-equal "  ♪" (adorn-tag-with-running (adorn-tag-with-audio "" #true) #false)
+                "running glyph: idle leaves other badges untouched")
+
   (assert-equal "out of order" (input-freshness-word "below") "freshness word: below")
   (assert-equal "stale" (input-freshness-word "stale") "freshness word: stale")
   (assert-equal "no defining cell" (input-freshness-word "orphan") "freshness word: orphan")
@@ -84,11 +93,14 @@
   (assert-equal #false (cell-duration-for 999) "duration-for: an unknown cell has no duration")
 
   (assert-false (cell-running? 3) "running?: nothing runs by default")
+  (assert-false (any-cell-running?) "any-running?: idle by default")
   (set-running-cell! 3)
   (assert-true (cell-running? 3) "running?: the marked cell is running")
   (assert-false (cell-running? 7) "running?: only the marked cell is running")
+  (assert-true (any-cell-running?) "any-running?: a marked cell means busy")
   (clear-running-cell!)
   (assert-false (cell-running? 3) "running?: clearing stops the marker")
+  (assert-false (any-cell-running?) "any-running?: clearing returns to idle")
 
   (assert-false (audio-playing-cell? 3) "audio-playing?: nothing plays by default")
   (set-audio-playing-cell! 3)

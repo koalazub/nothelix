@@ -22,6 +22,7 @@
          cell-state-label
          cell-state-tag-text
          adorn-tag-with-audio
+         adorn-tag-with-running
          apply-edited-overrides!
          set-session-baseline!
          session-baseline-for
@@ -30,6 +31,7 @@
          set-running-cell!
          clear-running-cell!
          cell-running?
+         any-cell-running?
          set-audio-playing-cell!
          clear-audio-playing-cell!
          audio-playing-cell?
@@ -121,6 +123,9 @@
   (define r (unbox *running-cell*))
   (and r (equal? r idx)))
 
+(define (any-cell-running?)
+  (if (unbox *running-cell*) #true #false))
+
 (define (set-audio-playing-cell! idx) (set-box! *audio-playing-cell* idx))
 (define (clear-audio-playing-cell!) (set-box! *audio-playing-cell* #false))
 (define (audio-playing-cell? idx)
@@ -195,6 +200,15 @@
     [(not has-audio?) tag]
     [(equal? tag "") "  ♪"]
     [else (string-append "  ♪" (substring tag 1 (string-length tag)))]))
+
+;;@doc
+;; Prefix a marker tag with the ▸ running glyph, the same mark the picker
+;; carries, while the cell executes. Alone it reads "▸ running".
+(define (adorn-tag-with-running tag running?)
+  (cond
+    [(not running?) tag]
+    [(equal? tag "") "  ▸ running"]
+    [else (string-append "  ▸" (substring tag 1 (string-length tag)))]))
 
 (define (input-freshness-word rel)
   (cond

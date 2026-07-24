@@ -438,6 +438,4 @@
       (render-body)
       (set! render-ok? #true)))
 
-  (audio-auto-play-from-result! result-json cell-index)
-
   (schedule-reconceal 50))

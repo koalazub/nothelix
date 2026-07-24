@@ -214,7 +214,9 @@
 
 ;;@doc
 ;; When a just-executed cell's result JSON carries audio artifacts, play the
-;; first — a wavplay call is itself the play intent. Suppressed when the
+;; first — a wavplay call is itself the play intent. Called by the
+;; interactive single-cell completion path only; a batch run records the
+;; artifact and badges the cell without performing it. Suppressed when the
 ;; project config sets `audio-autoplay = false`.
 (define (audio-auto-play-from-result! result-json cell-index)
   (when (audio-autoplay?)

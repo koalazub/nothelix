@@ -50,6 +50,8 @@
          set-slm-summaries!
          audio-autoplay?
          set-audio-autoplay!
+         run-interrupts?
+         set-run-interrupts!
          audio-waveform-rows
          set-audio-waveform-rows!
          audio-seek-ladder
@@ -128,6 +130,14 @@
 (define (audio-autoplay?) (unbox *audio-autoplay*))
 (define (set-audio-autoplay! v)
   (when (boolean? v) (set-box! *audio-autoplay* v)))
+
+;;@doc
+;; `run-interrupts = false` makes the run key refuse on a running cell
+;; instead of interrupting it. Default on: run on the running cell stops it.
+(define *run-interrupts* (box #true))
+(define (run-interrupts?) (unbox *run-interrupts*))
+(define (set-run-interrupts! v)
+  (when (boolean? v) (set-box! *run-interrupts* v)))
 
 ;;@doc
 ;; Braille rows drawn for a cell's waveform under its output. Defaults to 4;
@@ -303,6 +313,8 @@
     (when (exact-integer? asw) (set-audio-sweep-ms! asw)))
   (let ([we (config-ref alist "widgets" 'unset)])
     (when (boolean? we) (set-widgets-enabled! we)))
+  (let ([ri (config-ref alist "run-interrupts" 'unset)])
+    (when (boolean? ri) (set-run-interrupts! ri)))
   alist)
 
 ;; --- executable runtime (trust-gated) ---
