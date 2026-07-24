@@ -55,6 +55,17 @@
                 (cell-state-tag-text "out-of-order" (list (list "A" 76 "below")))
                 "tag text: glyph then label")
 
+  (assert-equal "  ♪" (adorn-tag-with-audio "" #true)
+                "audio badge: a fresh audio cell shows the badge alone")
+  (assert-equal "  ♪ ✎ edited"
+                (adorn-tag-with-audio (cell-state-tag-text "edited-since-run" '()) #true)
+                "audio badge: prefixes an existing state tag")
+  (assert-equal "" (adorn-tag-with-audio "" #false)
+                "audio badge: no audio leaves an empty tag empty")
+  (assert-equal "  ✎ edited"
+                (adorn-tag-with-audio (cell-state-tag-text "edited-since-run" '()) #false)
+                "audio badge: no audio leaves a state tag untouched")
+
   (assert-equal "out of order" (input-freshness-word "below") "freshness word: below")
   (assert-equal "stale" (input-freshness-word "stale") "freshness word: stale")
   (assert-equal "no defining cell" (input-freshness-word "orphan") "freshness word: orphan")

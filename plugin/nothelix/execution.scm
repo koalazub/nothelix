@@ -401,6 +401,7 @@
 (define (refresh-stale-tags! doc-id)
   (define rope (editor->text doc-id))
   (define total (text.rope-len-lines rope))
+  (define path (editor-document->path doc-id))
   (define (next-marker-after i)
     (let scan ([j (+ i 1)])
       (cond
@@ -413,14 +414,19 @@
         (clear-stale-tag-for-line! i)
         (define idx (marker-line-cell-index (doc-get-line rope total i)))
         (define rec (and idx (cell-state-for idx)))
-        (when (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
-          (define state (cell-state-record-state rec))
-          (define suppress?
-            (and (equal? state "edited-since-run")
-                 (cursor-inside-cell? i (next-marker-after i))))
-          (when (not suppress?)
-            (try-set-stale-tag-above! i
-              (cell-state-tag-text state (cell-state-record-inputs rec))))))
+        (define state-tag
+          (if (and rec (cell-state-nonfresh? (cell-state-record-state rec)))
+              (let ([state (cell-state-record-state rec)])
+                (if (and (equal? state "edited-since-run")
+                         (cursor-inside-cell? i (next-marker-after i)))
+                    ""
+                    (cell-state-tag-text state (cell-state-record-inputs rec))))
+              ""))
+        (define tag
+          (adorn-tag-with-audio state-tag
+                                (and idx path (cell-has-stored-audio? path idx))))
+        (when (not (equal? tag ""))
+          (try-set-stale-tag-above! i tag)))
       (loop (+ i 1)))))
 
 (define (refresh-provenance-surfaces! doc-id path)

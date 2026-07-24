@@ -44,10 +44,10 @@
   (assert-equal "0:00" (format-audio-clock -10) "clock: a negative duration clamps to 0:00")
 
   ;; audio-status-text
-  (assert-equal "♪ cell 3 (0:02)" (audio-status-text 3 2000 1)
-                "status: a single clip shows no clip count")
-  (assert-equal "♪ cell 3 (0:02) (2 clips)" (audio-status-text 3 2000 2)
-                "status: more than one clip appends the count")
+  (assert-equal "♪ cell 3 (0:02) · <space>ns scrub" (audio-status-text 3 2000 1)
+                "status: a single clip shows no clip count and teaches the scrub key")
+  (assert-equal "♪ cell 3 (0:02) (2 clips) · <space>ns scrub" (audio-status-text 3 2000 2)
+                "status: more than one clip appends the count before the key hint")
 
   ;; encode/decode round trip through the output store
   (define hash "12345")
@@ -94,10 +94,18 @@
   (assert-equal "48" (format-audio-khz 48000) "khz: 48000 -> 48")
 
   ;; audio-waveform-header
-  (assert-equal "♪ 1:05 · 44.1kHz · stereo" (audio-waveform-header 65000 44100 2)
-                "header: minutes, khz, and stereo channel count")
-  (assert-equal "♪ 0:02 · 8kHz · mono" (audio-waveform-header 2000 8000 1)
-                "header: mono single channel")
+  (assert-equal "♪ 1:05 · 44.1kHz · stereo · <space>ns play"
+                (audio-waveform-header 65000 44100 2 -1)
+                "header idle: minutes, khz, channels, and the one key that plays")
+  (assert-equal "♪ 0:02 · 8kHz · mono · <space>ns play"
+                (audio-waveform-header 2000 8000 1 -1)
+                "header idle: mono single channel")
+  (assert-equal "♪ 0:12 / 1:05 · 44.1kHz · stereo · <space>ns scrub · <space>nx stop"
+                (audio-waveform-header 65000 44100 2 12000)
+                "header playing: elapsed clock and the actions available right now")
+  (assert-equal "♪ 0:00 / 0:02 · 8kHz · mono · <space>ns scrub · <space>nx stop"
+                (audio-waveform-header 2000 8000 1 0)
+                "header playing: elapsed zero still counts as playing")
 
   ;; waveform-playhead-col geometry
   (assert-equal 0 (waveform-playhead-col 0 1000 60) "playhead: start pins to column 0")

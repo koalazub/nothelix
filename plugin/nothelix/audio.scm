@@ -24,6 +24,7 @@
          stop-audio
          audio-stop-all!
          audio-auto-play-from-result!
+         cell-has-stored-audio?
          audio-seek-forward
          audio-seek-back
          scrub-audio
@@ -117,7 +118,16 @@
   (string-append "♪ cell " (number->string idx) " (" (format-audio-clock duration-ms) ")"
                  (if (> clips 1)
                      (string-append " (" (number->string clips) " clips)")
-                     "")))
+                     "")
+                 " · <space>ns scrub"))
+
+;;@doc
+;; Whether a cell has a replayable stored clip, judged against the stored
+;; hash so an edited-but-not-rerun cell keeps its badge.
+(define (cell-has-stored-audio? path idx)
+  (define raw (store-get-for path (cell-id idx)))
+  (define blob (decode-stored-audio-blob raw (stored-source-hash raw)))
+  (not (null? (parse-audio-artifacts blob))))
 
 (define (schedule-audio-clear! pid delay-ms)
   (enqueue-thread-local-callback-with-delay delay-ms
@@ -236,10 +246,18 @@
 
 ;;@doc
 ;; The one-line waveform header: "♪ m:ss · <rate>kHz · <mono|stereo>".
-(define (audio-waveform-header duration-ms rate channels)
-  (string-append "♪ " (format-audio-clock duration-ms)
+(define (audio-waveform-header duration-ms rate channels elapsed-ms)
+  (define playing? (>= elapsed-ms 0))
+  (string-append "♪ "
+                 (if playing?
+                     (string-append (format-audio-clock elapsed-ms) " / ")
+                     "")
+                 (format-audio-clock duration-ms)
                  " · " (format-audio-khz rate) "kHz"
-                 " · " (if (> channels 1) "stereo" "mono")))
+                 " · " (if (> channels 1) "stereo" "mono")
+                 (if playing?
+                     " · <space>ns scrub · <space>nx stop"
+                     " · <space>ns play")))
 
 ;;@doc
 ;; The braille column a playhead sits in for `position-ms` into a clip of
@@ -306,6 +324,13 @@
            (cons (waveform-header-for wav-path duration-ms)
                  (text-plot->styled-rows (car plot) (cdr plot)))))]))
 
+(define (header-elapsed-for wav-path)
+  (define slot (unbox *audio-slot*))
+  (if (and slot (equal? (slot-wav slot) wav-path))
+      (let ([pos (audio-position (slot-pid slot))])
+        (if (string-starts-with? pos "ERROR:") -1 (or (string->number pos) -1)))
+      -1))
+
 (define (waveform-header-for wav-path duration-ms)
   (define info (audio-info wav-path))
   (define fallback (string-append "♪ " (format-audio-clock duration-ms)))
@@ -316,7 +341,8 @@
      (if (list? parts)
          (audio-waveform-header duration-ms
                                 (or (string->number (car parts)) 0)
-                                (or (string->number (cadr parts)) 1))
+                                (or (string->number (cadr parts)) 1)
+                                (header-elapsed-for wav-path))
          fallback)]))
 
 (define (waveform-braille-lines wav-path playhead-col bracket-lo bracket-hi)
@@ -372,6 +398,8 @@
 ;; tick advances the playing cell's waveform playhead; the loop self-terminates
 ;; when the slot empties or playback stops, clearing the playhead.
 (define (start-playhead-ticker!)
+  (define slot (unbox *audio-slot*))
+  (when slot (recompose-cell! (slot-cell slot) 0 -1 -1))
   (when (not (unbox *playhead-ticking?*))
     (set-box! *playhead-ticking?* #true)
     (schedule-playhead-tick!)))

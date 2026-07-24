@@ -21,6 +21,7 @@
          cell-state-nonfresh?
          cell-state-label
          cell-state-tag-text
+         adorn-tag-with-audio
          apply-edited-overrides!
          set-session-baseline!
          session-baseline-for
@@ -170,6 +171,15 @@
 
 (define (cell-state-tag-text state inputs)
   (string-append "  " (cell-state-glyph state) " " (cell-state-label state inputs)))
+
+;;@doc
+;; Prefix a marker tag with the ♪ audio badge when the cell has a playable
+;; clip. An empty tag becomes the badge alone; no audio leaves the tag as is.
+(define (adorn-tag-with-audio tag has-audio?)
+  (cond
+    [(not has-audio?) tag]
+    [(equal? tag "") "  ♪"]
+    [else (string-append "  ♪" (substring tag 1 (string-length tag)))]))
 
 (define (input-freshness-word rel)
   (cond
