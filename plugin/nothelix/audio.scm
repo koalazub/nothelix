@@ -311,9 +311,16 @@
                             (audio-artifact-duration art)
                             playhead-col bracket-lo bracket-hi))))
 
+;;@doc
+;; The one seam that crosses the audio-waveform FFI. Steel keeps the -1
+;; no-playhead/no-bracket convention; the wire carries col+1 with 0 as
+;; none, because steel's dylib argument conversion rejects negatives.
+(define (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi)
+  (audio-waveform wav-path (waveform-cols) (audio-waveform-rows)
+                  (+ playhead-col 1) (+ bracket-lo 1) (+ bracket-hi 1)))
+
 (define (cell-waveform-rows wav-path duration-ms playhead-col bracket-lo bracket-hi)
-  (define blob (audio-waveform wav-path (waveform-cols) (audio-waveform-rows)
-                               playhead-col bracket-lo bracket-hi))
+  (define blob (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi))
   (cond
     [(or (not (string? blob))
          (= (string-length blob) 0)
@@ -349,8 +356,7 @@
          fallback)]))
 
 (define (waveform-braille-lines wav-path playhead-col bracket-lo bracket-hi)
-  (define blob (audio-waveform wav-path (waveform-cols) (audio-waveform-rows)
-                               playhead-col bracket-lo bracket-hi))
+  (define blob (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi))
   (cond
     [(or (not (string? blob))
          (= (string-length blob) 0)
@@ -440,7 +446,7 @@
     (define pid
       (begin
         (when slot (audio-stop (slot-pid slot)))
-        (audio-play-from wav offset-ms)))
+        (audio-play-from wav (max 0 offset-ms))))
     (cond
       [(string-starts-with? pid "ERROR:")
        (set-status! (string-append "audio seek: " pid))]

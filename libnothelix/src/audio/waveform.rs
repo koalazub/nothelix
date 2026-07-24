@@ -113,9 +113,9 @@ pub fn audio_waveform(
     path: String,
     cols: isize,
     rows: isize,
-    playhead_col: isize,
-    bracket_lo_col: isize,
-    bracket_hi_col: isize,
+    playhead_col_plus1: isize,
+    bracket_lo_col_plus1: isize,
+    bracket_hi_col_plus1: isize,
 ) -> String {
     let cols = cols.max(1) as usize;
     let rows = rows.max(1) as usize;
@@ -123,7 +123,12 @@ pub fn audio_waveform(
         Ok(lines) => lines,
         Err(message) => return format!("{FFI_ERROR_PREFIX}{message}"),
     };
-    let runs = column_runs(cols, playhead_col, bracket_lo_col, bracket_hi_col);
+    let runs = column_runs(
+        cols,
+        playhead_col_plus1 - 1,
+        bracket_lo_col_plus1 - 1,
+        bracket_hi_col_plus1 - 1,
+    );
     let spans: Vec<(usize, usize, usize, i64)> = (0..rows)
         .flat_map(|row| {
             runs.iter()
@@ -230,7 +235,13 @@ mod tests {
 
     #[test]
     fn a_missing_file_reports_an_error_blob() {
-        let blob = audio_waveform("/no/such/clip.wav".to_string(), 40, 4, -1, -1, -1);
+        let blob = audio_waveform("/no/such/clip.wav".to_string(), 40, 4, 0, 0, 0);
         assert!(blob.starts_with(FFI_ERROR_PREFIX), "{blob}");
+    }
+
+    #[test]
+    fn plus1_zero_means_no_playhead_and_no_bracket() {
+        assert!(column_runs(10, -1, -1, -1).is_empty());
+        assert!(!column_runs(10, 3, -1, -1).is_empty());
     }
 }
