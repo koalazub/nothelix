@@ -71,6 +71,28 @@ in the navigator, ahead of the on-device model label and the cell's first
 meaningful line. Give a cell a marker label and that is exactly what you see
 when you jump between cells.
 
+## Inline annotations
+
+A trailing `#` comment on a line inside a cell can turn that line into a live
+widget. The annotation is a plain comment, so the file still runs untouched
+under `julia notebook.jl` and a checkout reproduces the knob exactly. Each
+annotation names the keys that drive it, and the cell picker marks any cell that
+carries one with a `⊞` glyph.
+
+| Annotation | Shape | What it does |
+|---|---|---|
+| `# @param <lo>:<hi> [step <s>]` | `freq = 440   # @param 220:880 step 10` | Nudge the numeric literal with `]p` / `[p` |
+| `# @select a\|b\|c` | `wave = "sin"   # @select sin\|cos\|tan` | Cycle the value with `]s` / `[s`, or choose with `<space>nc` |
+| `# @toggle` | `loop = true   # @toggle` | Flip the boolean with `<space>nt` |
+| `# @image <path>` | `# @image plot.png` | A plot canvas resized with `<space>n=` / `<space>n-` |
+
+The name a `@select` or `@toggle` rewrites is the assignment's left side, exactly
+as `@param` reads it — the comment never repeats the name. A `@select` value
+keeps its shape: a quoted string is rewritten with quotes, a bare identifier
+without. Every one of these stages downstream staleness and debounces a re-run of
+the owning cell, the same path a hand edit takes. `]w` and `[w` walk between all
+of them; see [Commands](commands.md) for the full grammar.
+
 ## Opening an existing notebook
 
 An `.ipynb` file is JSON, so convert it to a `.jl` first.

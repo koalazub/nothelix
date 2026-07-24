@@ -18,6 +18,8 @@
          collect-assigned-names
          token-references?
          scan-stale-lines
+         param-track-position
+         param-track-string
          param-up
          param-down)
 
@@ -170,6 +172,60 @@
 (define (build-param-line name new-value-str spec-suffix)
   (string-append name " = " new-value-str spec-suffix))
 
+;; Slider track — a one-row gauge painted above the param line while the cursor
+;; is in its cell or the walk lands on it. Built from small pieces, never a
+;; per-char loop over a long string.
+
+(define *param-track-min-width* 6)
+(define *param-track-max-width* 48)
+(define *param-track-width* 24)
+(define *param-track-fill* "─")
+(define *param-track-marker* "●")
+
+(define (clamp-track-width w)
+  (max *param-track-min-width* (min *param-track-max-width* w)))
+
+(define (hbar n)
+  (let loop ([i 0] [acc ""])
+    (if (>= i n) acc (loop (+ i 1) (string-append acc *param-track-fill*)))))
+
+;;@doc
+;; Column (0-based, in [0, width-1]) of the marker for `value` on a `width`-wide
+;; track over [lo, hi]: 0 at lo, width-1 at hi, proportional between. A degenerate
+;; range or width clamps to a single valid column.
+(define (param-track-position lo hi value width)
+  (define w (max 1 width))
+  (if (<= hi lo)
+      0
+      (let* ([frac (exact->inexact (/ (- value lo) (- hi lo)))]
+             [clamped (max 0.0 (min 1.0 frac))])
+        (inexact->exact (round (* clamped (- w 1)))))))
+
+;;@doc
+;; A one-row slider track string: a bracketed gauge with the marker at `value`'s
+;; position over [lo, hi], the literal, and the self-teaching key suffix. `width`
+;; is clamped to the track's bounds.
+(define (param-track-string lo hi value width value-str)
+  (define w (clamp-track-width width))
+  (define pos (param-track-position lo hi value w))
+  (string-append "  [" (hbar pos) *param-track-marker* (hbar (max 0 (- (- w 1) pos)))
+                 "] " value-str "  ]p/[p"))
+
+(define (render-param-track-at! doc-id get-line total tgt line lo hi value value-str)
+  (define cell-start (find-cell-start-line get-line tgt))
+  (define cell-end (find-cell-code-end get-line total (+ cell-start 1)))
+  (set-widget-track! tgt (param-track-string lo hi value *param-track-width* value-str)
+                     cell-start cell-end))
+
+(define (param-track-on-arrive scan anchor-line)
+  (define get-line (WidgetScan-get-line scan))
+  (define total (WidgetScan-total scan))
+  (define line (get-line anchor-line))
+  (define p (parse-param-line line))
+  (when p
+    (render-param-track-at! (WidgetScan-doc-id scan) get-line total anchor-line line
+                            (list-ref p 2) (list-ref p 3) (string->number (cadr p)) (cadr p))))
+
 ;; Active-param statusline readout
 
 (define (param-readout-style) (theme-scope-ref "ui.statusline"))
@@ -247,6 +303,8 @@
         (define stale-lines (scan-stale-lines get-line total cell-start names))
         (apply-source-widget! doc-id tgt new-line-text stale-lines
                               (param-stale-label names) execute-cell)
+        (set-widget-track! tgt (param-track-string lo hi next *param-track-width* new-str)
+                           cell-start cell-end)
         (set-status! (string-append name " = " new-str))])]))
 
 ;;@doc
@@ -271,3 +329,4 @@
               (if (parse-param-line (get-line i)) (cons (cons i #false) acc) acc)))))
 
 (register-widget-kind! 'number "param" "]p/[p nudge" discover-param-widgets)
+(register-widget-arrive! 'number param-track-on-arrive)

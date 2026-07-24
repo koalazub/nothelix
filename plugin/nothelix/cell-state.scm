@@ -32,11 +32,15 @@
          cell-running?
          set-audio-playing-cell!
          clear-audio-playing-cell!
-         audio-playing-cell?)
+         audio-playing-cell?
+         set-widget-cells!
+         clear-widget-cells!
+         cell-has-widget?)
 
 (define *cell-states* (box (hash)))
 (define *running-cell* (box #false))
 (define *audio-playing-cell* (box #false))
+(define *widget-cells* (box (hash)))
 (define *session-baselines* (box (hash)))
 
 (define (set-session-baseline! idx hash-str)
@@ -122,6 +126,17 @@
 (define (audio-playing-cell? idx)
   (define a (unbox *audio-playing-cell*))
   (and a (equal? a idx)))
+
+(define (set-widget-cells! idxs)
+  (let loop ([xs idxs] [h (hash)])
+    (if (null? xs)
+        (set-box! *widget-cells* h)
+        (loop (cdr xs) (hash-insert h (car xs) #true)))))
+
+(define (clear-widget-cells!) (set-box! *widget-cells* (hash)))
+
+(define (cell-has-widget? idx)
+  (if (hash-try-get (unbox *widget-cells*) idx) #true #false))
 
 (define (cell-state-nonfresh? state)
   (not (or (equal? state "fresh") (equal? state ""))))

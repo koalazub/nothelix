@@ -31,6 +31,8 @@
 (require "nothelix/plot-resize.scm")
 (require "nothelix/execution.scm")
 (require "nothelix/param-tweak.scm")
+(require "nothelix/choice.scm")
+(require "nothelix/flag.scm")
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
 (require "nothelix/chart-viewer.scm")
@@ -66,6 +68,8 @@
          insert-image
          plot-grow plot-shrink
          param-up param-down
+         select-next select-prev select-choice
+         toggle-flag
          format-math-buffer
          math-render-buffer
          math-render-clear
@@ -216,8 +220,10 @@
 (define notebook-bindings
   (keymap
     (normal
-      ("]" ("l" ":next-cell") ("p" ":param-up") ("a" ":audio-seek-forward") ("w" ":widget-walk-next"))
-      ("[" ("l" ":previous-cell") ("p" ":param-down") ("a" ":audio-seek-back") ("w" ":widget-walk-prev"))
+      ("]" ("l" ":next-cell") ("p" ":param-up") ("a" ":audio-seek-forward")
+           ("s" ":select-next") ("w" ":widget-walk-next"))
+      ("[" ("l" ":previous-cell") ("p" ":param-down") ("a" ":audio-seek-back")
+           ("s" ":select-prev") ("w" ":widget-walk-prev"))
       (space ("n" ("r" ":execute-cell")
                   ("n" ":new-cell")
                   ("j" ":cell-picker")
@@ -227,6 +233,8 @@
                   ("y" ":copy-cell-output")
                   ("s" ":play-cell-audio")
                   ("x" ":stop-audio")
+                  ("c" ":select-choice")
+                  ("t" ":toggle-flag")
                   ("=" ":plot-grow")
                   ("-" ":plot-shrink"))
              ("p" ":animation-toggle-at-cursor")))))
@@ -259,8 +267,8 @@
     ;; Cell navigation / selection
     "next-cell"        "Jump to the next cell."
     "previous-cell"    "Jump to the previous cell."
-    "widget-walk-next" "Jump to the next widget (param/audio/plot/animation), naming its keys."
-    "widget-walk-prev" "Jump to the previous widget (param/audio/plot/animation), naming its keys."
+    "widget-walk-next" "Jump to the next widget (param/select/toggle/audio/plot/animation), naming its keys."
+    "widget-walk-prev" "Jump to the previous widget (param/select/toggle/audio/plot/animation), naming its keys."
     "cell-picker"      "Open the interactive cell navigator."
     "new-cell"         "Insert a new cell (code or markdown) at the cursor."
     "select-cell"      "Select around cell (header + code + output)."
@@ -280,6 +288,12 @@
     ;; Tweakable parameters
     "param-up"   "Increase the @param at/above the cursor by one step and re-render."
     "param-down" "Decrease the @param at/above the cursor by one step and re-render."
+
+    ;; Choice / flag widgets
+    "select-next"   "Cycle the @select at/above the cursor forward to the next option and re-run."
+    "select-prev"   "Cycle the @select at/above the cursor back to the previous option and re-run."
+    "select-choice" "Open the @select chooser modal (h/l move, enter apply) at/above the cursor."
+    "toggle-flag"   "Flip the boolean of the @toggle at/above the cursor and re-run."
 
     ;; Math formatting
     "format-math-buffer" "Expand single-line \\begin{cases}/pmatrix/aligned envs into multi-line \\$\\$ blocks."
@@ -439,6 +453,7 @@
 (define *conceal-cursor-line* -1)
 (register-hook! "selection-did-change"
   (lambda (_doc-id)
+    (widget-track-maybe-clear-on-cursor!)
     (when (not (conceal-cache-empty?))
       (define focus (editor-focus))
       (define doc-id (editor->doc-id focus))

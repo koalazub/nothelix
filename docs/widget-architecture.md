@@ -44,15 +44,22 @@ operate, because its surface names its keys.
 
 | Kind | Declaration | Nudge | Modal |
 |---|---|---|---|
-| number | `# @param <lo>:<hi> [step <s>]` | `]p` / `[p` | ladder scrub over the range |
+| number | `# @param <lo>:<hi> [step <s>]` | `]p` / `[p` | slider track above the line |
+| choice | `# @select a\|b\|c` | `]s` / `[s` | option chooser (`h`/`l`), `<space>nc` |
+| flag | `# @toggle` | `<space>nt` | none |
 | scrub | a cell's audio artifact | `]a` / `[a` | playhead, bracket, seek ladder |
 | size | an `@image` plot block | `:plot-grow` / `:plot-shrink` | none |
 | toggle | an animation at the cursor | `<space>p` | none |
 
-Planned kinds follow the same contract: `choice` (`# @select a|b|c`) rewrites
-an assignment from a closed set, `flag` (`# @toggle`) flips a boolean. Each is
-a leaf module that supplies parse, render, nudge, and apply; the registry,
-motions, modal shell, and re-run pipeline are shared and already written.
+Every kind is a leaf module that supplies parse, render, nudge, and apply; the
+registry, motions, modal shell, and re-run pipeline are shared. `choice` rewrites
+an assignment from a closed set, inferring quoting from the current literal, and
+`flag` flips a boolean. Both reuse `@param`'s trailing-comment grammar and line
+targeting: the name is the assignment's left side, and the comment carries only
+the option set. The `number` row's modal is the one spec adjustment from the
+original plan — instead of a ladder scrub, the nudged param shows a one-row
+slider track (value position in range plus its keys), rendered on demand above
+the line while its cell holds the cursor and cleared on leave.
 
 ## Phases
 
@@ -64,8 +71,14 @@ existing keys and behaviour unchanged. A `widgets` knob in `.nothelix.conf`
 (default on) gates the unified surfaces — the walk and the shared modal — while
 the pre-widget feature keys keep working when it is off.
 
-**Phase 2.** `choice` and `flag` kinds, slider tracks rendered as virtual
-rows, and widget declarations surfaced in the cell picker.
+**Phase 2 (shipped).** The `choice` (`# @select`) and `flag` (`# @toggle`) kinds,
+each a leaf module reusing the shared registry, modal shell, and re-run pipeline;
+the number slider track rendered as a virtual row above the param line via the
+stale-tag above surface (which reserves rows on any line, not just markers), on
+demand and cleared on leave; and widget-bearing cells marked with `⊞` in the
+picker. One spec adjustment: the number modal became the slider track described
+above rather than a ladder scrub, and the flag flip is bound to `<space>nt` (a
+flip is non-directional, so no `]`/`[` pair) rather than a bracket nudge.
 
 **Phase 3.** Kernel-declared widgets, a cell's run emits a widget spec the
 plugin materialises, which is the road to Jupyter-style interactive outputs

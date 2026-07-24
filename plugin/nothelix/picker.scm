@@ -19,7 +19,8 @@
                           slm-summary-for))
 
 (provide cell-picker cell-summary kind-tag picker-scroll-offset
-         fuzzy-score fuzzy-filter format-duration picker-glyph picker-duration)
+         fuzzy-score fuzzy-filter format-duration picker-glyph picker-duration
+         line-declares-widget?)
 
 (struct CellPickerState (cells view selected digits query filtering?) #:mutable)
 
@@ -257,6 +258,51 @@
 
 (define *running-marker* "▸")
 (define *audio-marker* "♪")
+(define *widget-marker* "⊞")
+
+;;@doc
+;; #true when `line` declares a widget: a `# @image ` block, or an assignment
+;; carrying a trailing `# @param` / `# @select` / `# @toggle` annotation.
+(define (line-declares-widget? line)
+  (define t (string-trim line))
+  (cond
+    [(string-starts-with? t "# @image ") #true]
+    [else
+     (define parts (string-split line "#"))
+     (and (>= (length parts) 2)
+          (let ([c (string-trim (list-ref parts 1))])
+            (or (string-starts-with? c "@param")
+                (string-starts-with? c "@select")
+                (string-starts-with? c "@toggle"))))]))
+
+(define (marker-cell-idx line)
+  (if (or (string-starts-with? line "@cell ")
+          (string-starts-with? line "@markdown ")
+          (string-starts-with? line "@raw ")
+          (string-starts-with? line "@typst "))
+      (list-ref (parse-cell-header line) 1)
+      #false))
+
+;;@doc
+;; Cell indices whose body contains a widget declaration, scanned in one pass.
+(define (scan-widget-cells rope total-lines)
+  (let loop ([i 0] [cur-idx #false] [acc '()])
+    (if (>= i total-lines)
+        (reverse acc)
+        (let* ([line (doc-get-line rope total-lines i)]
+               [midx (marker-cell-idx line)])
+          (cond
+            [midx (loop (+ i 1) midx acc)]
+            [(and cur-idx (not (member cur-idx acc)) (line-declares-widget? line))
+             (loop (+ i 1) cur-idx (cons cur-idx acc))]
+            [else (loop (+ i 1) cur-idx acc)])))))
+
+(define (refresh-widget-cells!)
+  (define focus (editor-focus))
+  (define doc-id (editor->doc-id focus))
+  (define rope (editor->text doc-id))
+  (define total-lines (text.rope-len-lines rope))
+  (set-widget-cells! (scan-widget-cells rope total-lines)))
 
 ;;@doc
 ;; Terse run-time for a picker row: sub-second as whole ms (12ms), a second
@@ -273,12 +319,18 @@
 
 ;;@doc
 ;; Glyph-column content for a cell: the running marker while it executes, the
-;; audio marker while its clip plays, otherwise its freshness glyph.
+;; audio marker while its clip plays, its freshness glyph when non-fresh,
+;; otherwise the widget marker when the cell declares a widget.
 (define (picker-glyph idx)
   (cond
     [(cell-running? idx) *running-marker*]
     [(audio-playing-cell? idx) *audio-marker*]
-    [else (cell-glyph-for idx)]))
+    [else
+     (let ([g (cell-glyph-for idx)])
+       (cond
+         [(> (string-length g) 0) g]
+         [(cell-has-widget? idx) *widget-marker*]
+         [else ""]))]))
 
 ;;@doc
 ;; Duration-column content for a cell: blank while it runs, otherwise its
@@ -522,6 +574,7 @@
 (define (make-cell-picker-component)
   (define raw-cells (get-all-cells))
   (maybe-refresh-slm-summaries! raw-cells)
+  (refresh-widget-cells!)
   (define cells
     (map (lambda (c)
            (define snippet (cell-picker-snippet (list-ref c 1) (car c)))

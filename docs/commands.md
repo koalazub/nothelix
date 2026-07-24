@@ -59,6 +59,10 @@ out of your way in ordinary buffers.
 | `:plot-shrink` | Shrink the plot block under the cursor and re-render |
 | `:param-up` | Increase the numeric literal on a `# @param` line and re-run the cell |
 | `:param-down` | Decrease the numeric literal on a `# @param` line and re-run the cell |
+| `:select-next` | Cycle the `# @select` value forward to the next option and re-run the cell |
+| `:select-prev` | Cycle the `# @select` value back to the previous option and re-run the cell |
+| `:select-choice` | Open the `# @select` chooser modal at or above the cursor |
+| `:toggle-flag` | Flip the boolean on a `# @toggle` line and re-run the cell |
 
 A `# @param` annotation marks a numeric literal as a live knob, as in
 `freq = 440   # @param 220:880 step 10`. The grammar has two parts. The clamp
@@ -69,7 +73,20 @@ debounces a re-run of the same cell with no downstream side effects, and it flag
 cells below as stale when they reference the changed variable. That staleness
 check is a name-based heuristic that matches tokenized words and never traces
 dataflow. Reassignment or shadowing can over-flag or under-flag, so read the
-staleness marker as an alert rather than a guarantee.
+staleness marker as an alert rather than a guarantee. While the cursor sits in a
+`@param` cell, or the widget walk lands on one, a one-row slider track is drawn
+above the line showing the value's position in its range; it clears when you
+leave the cell.
+
+A `# @select` annotation marks an assignment as a closed set, as in
+`wave = "sin"   # @select sin|cos|tan`. Its grammar mirrors `@param`: the name is
+the assignment's left side and the trailing comment carries the pipe-delimited
+options. `]s` and `[s` cycle the value with wrap-around, and `<space>nc` opens a
+chooser where `h`/`l` move through the options and `Enter` applies. A quoted
+current value is rewritten with quotes, a bare identifier without — the shape is
+read from the literal, never guessed. A `# @toggle` annotation marks a boolean,
+as in `loop = true   # @toggle`; `<space>nt` flips it in place. Both stage
+downstream staleness and debounce a re-run exactly like `@param`.
 
 ## Mathematics and tables
 
@@ -132,6 +149,8 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `[l` | `:previous-cell` |
 | `]p` | `:param-up` |
 | `[p` | `:param-down` |
+| `]s` | `:select-next` |
+| `[s` | `:select-prev` |
 | `]a` | `:audio-seek-forward` |
 | `[a` | `:audio-seek-back` |
 | `]w` | `:widget-walk-next` |
@@ -145,6 +164,8 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `<space>ny` | `:copy-cell-output` |
 | `<space>ns` | `:play-cell-audio` |
 | `<space>nx` | `:stop-audio` |
+| `<space>nc` | `:select-choice` |
+| `<space>nt` | `:toggle-flag` |
 | `<space>n=` | `:plot-grow` |
 | `<space>n-` | `:plot-shrink` |
 | `<space>p` | `:animation-toggle-at-cursor` |
@@ -164,12 +185,14 @@ them in quick succession accelerates the step through the ladder.
 ### Widget walk
 
 `]w` and `[w` walk the cursor between every widget in the notebook, wrapping at
-the ends. A widget is any interactive surface: a `# @param` knob, a cell's audio
-scrub, an `@image` plot's size, or an animation. Each jump names the widget and
-the keys that act on it in the status line, so the surface teaches itself. The
-walk and the scrub-style modal are gated by the `widgets` setting in
+the ends. A widget is any interactive surface: a `# @param` knob, a `# @select`
+choice, a `# @toggle` flag, a cell's audio scrub, an `@image` plot's size, or an
+animation. Each jump names the widget and the keys that act on it in the status
+line, so the surface teaches itself; landing on a `@param` also draws its slider
+track. The walk and the shared modal are gated by the `widgets` setting in
 `.nothelix.conf`; when it is `false` both no-op and the direct feature keys
-(`]p`/`[p`, `]a`/`[a`, the plot and animation commands) still work.
+(`]p`/`[p`, `]s`/`[s`, `]a`/`[a`, `<space>nt`, the plot and animation commands)
+still work.
 
 ## Shorthands
 

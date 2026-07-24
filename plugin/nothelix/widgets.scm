@@ -16,6 +16,7 @@
 (require-builtin helix/components)
 
 (provide register-widget-kind!
+         register-widget-arrive!
          widget-walk-next
          widget-walk-prev
          open-widget-modal!
@@ -30,6 +31,9 @@
          dispatch-modal-action
          widget-walk-guard
          widgets-disabled-status
+         set-widget-track!
+         clear-active-widget-track!
+         widget-track-maybe-clear-on-cursor!
          WidgetScan
          WidgetScan-doc-id
          WidgetScan-path
@@ -73,6 +77,62 @@
                           (WidgetKind-walk-hint wk)))
                 ((WidgetKind-discover wk) scan)))
          (unbox *widget-kinds*))))
+
+;; --- arrival hooks (per-kind on-land) + the slider track surface ---
+;;
+;; A kind may register an `arrive` closure (WidgetScan -> anchor-line -> void)
+;; run when the walk lands on one of its widgets, so a leaf feature can paint an
+;; on-demand surface without the shared module depending on it. The number kind
+;; uses this to draw its slider track above the param line. Registration flows
+;; leaf -> shared exactly like discovery does.
+
+(define *widget-arrivals* (box (hash)))
+
+;;@doc
+;; Register a per-kind arrival closure, run by the walk when it lands on a
+;; widget of `kind`. `proc` takes the WidgetScan and the anchor line.
+(define (register-widget-arrive! kind proc)
+  (set-box! *widget-arrivals* (hash-insert (unbox *widget-arrivals*) kind proc)))
+
+(define (widget-arrive-for kind)
+  (hash-try-get (unbox *widget-arrivals*) kind))
+
+;; The single active slider track: at most one exists at a time, so nudging or
+;; walking to another param moves the track rather than littering the file with
+;; one per param. `*active-widget-track-range*` is the (cell-start . cell-end)
+;; the track belongs to, used to clear it when the cursor leaves that cell.
+(define *active-widget-track-line* (box #false))
+(define *active-widget-track-range* (box #false))
+
+;;@doc
+;; Clear the one active slider track, if any, and forget its anchor.
+(define (clear-active-widget-track!)
+  (define ln (unbox *active-widget-track-line*))
+  (when ln
+    (clear-stale-tag-for-line! ln)
+    (set-box! *active-widget-track-line* #false)
+    (set-box! *active-widget-track-range* #false)))
+
+;;@doc
+;; Paint `text` as a one-row track above `line` (mid-cell, via the stale-tag
+;; above surface), replacing any prior active track, and remember the owning
+;; cell range `[cell-start, cell-end)`. A no-op when the widgets knob is off.
+(define (set-widget-track! line text cell-start cell-end)
+  (when (widgets-enabled?)
+    (clear-active-widget-track!)
+    (try-set-stale-tag-above! line text)
+    (set-box! *active-widget-track-line* line)
+    (set-box! *active-widget-track-range* (cons cell-start cell-end))))
+
+;;@doc
+;; Riding the existing selection hook: clear the active track once the cursor
+;; leaves its cell. O(1) — a bare box check when no track is showing.
+(define (widget-track-maybe-clear-on-cursor!)
+  (define r (unbox *active-widget-track-range*))
+  (when r
+    (define cl (current-line-number))
+    (when (or (< cl (car r)) (>= cl (cdr r)))
+      (clear-active-widget-track!))))
 
 ;; --- walk ordering (pure) ---
 
@@ -167,7 +227,8 @@
      (define rope (editor->text doc-id))
      (define total (text.rope-len-lines rope))
      (define get-line (lambda (i) (doc-get-line rope total i)))
-     (define widgets (collect-document-widgets (WidgetScan doc-id path rope total get-line)))
+     (define scan (WidgetScan doc-id path rope total get-line))
+     (define widgets (collect-document-widgets scan))
      (cond
        [(null? widgets) (set-status! *widgets-empty-status*)]
        [else
@@ -178,6 +239,9 @@
           (if (> direction 0) (next-walk-line lines cursor) (prev-walk-line lines cursor)))
         (define w (widget-at by-line target))
         (helix.goto (number->string (+ target 1)))
+        (clear-active-widget-track!)
+        (let ([arrive (widget-arrive-for (Widget-kind w))])
+          (when arrive (arrive scan target)))
         (set-status! (widget-walk-status w target))])]))
 
 ;;@doc
