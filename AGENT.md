@@ -25,6 +25,9 @@ pruning, `git ls-files`) is fine.
 - `just check` is the gate: clippy, `cargo nextest run -p libnothelix`,
   then a headless load of the real plugin via `scripts/check-plugin.sh`.
 - Use `cargo nextest`, not `cargo test`.
+- The nextest suite includes a kernel boot gate that installs the embedded
+  kernel scripts into a scratch HOME and boots them with real `julia` to
+  the ready marker, so julia must be on PATH to run the tests.
 - The justfile is nushell. Keep recipes nushell.
 - Rust ↔ Steel FFI versions move in lockstep: `NOTHELIX_FFI_VERSION` in
   `libnothelix/src/lib.rs` must equal `EXPECTED-FFI-VERSION` in
