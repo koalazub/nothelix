@@ -21,8 +21,6 @@ plugins:
 
 exclude:
   - vendor/
-  - superpowers/
   - dev/
-  - "*.original.md"
   - Gemfile
   - Gemfile.lock

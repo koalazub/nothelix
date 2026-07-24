@@ -38,3 +38,7 @@ lsp/depot/
 *.hm-bak
 docs/vendor/
 docs/Gemfile.lock
+
+# Agent tooling scratch — session-local, never tracked
+.claude/
+.superpowers/
