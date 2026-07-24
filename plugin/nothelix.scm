@@ -17,13 +17,13 @@
 (define (focused-path)
   (editor-document->path (editor->doc-id (editor-focus))))
 
-(define (load-if-julia!)
+(define (load-if-notebook!)
   (define path (focused-path))
-  (when (and path (ends-with? path ".jl"))
+  (when (and path (or (ends-with? path ".jl") (ends-with? path ".ipynb")))
     (load-nothelix!)))
 
 (register-hook! "document-focus-gained"
-  (lambda (_doc-id) (load-if-julia!)))
+  (lambda (_doc-id) (load-if-notebook!)))
 
 (enqueue-thread-local-callback-with-delay 200
-  (lambda () (load-if-julia!)))
+  (lambda () (load-if-notebook!)))
