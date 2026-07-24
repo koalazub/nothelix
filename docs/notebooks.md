@@ -139,6 +139,10 @@ unknown projection never breaks the run. A library that would rather not define 
 method can register a spec imperatively with `nothelix_widget(Dict("kind" =>
 "choice", "name" => "wave", "options" => ["sin", "cos"]))`.
 
+The source annotations, the kernel calls, and the library projections are all
+instances of one contract. [Widget architecture](widget-architecture.md)
+describes that contract and the walk, modal, and re-run machinery they share.
+
 ## Opening an existing notebook
 
 An `.ipynb` file is JSON, so convert it to a `.jl` first.

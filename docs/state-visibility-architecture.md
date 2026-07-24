@@ -1,3 +1,8 @@
+---
+title: State visibility
+nav_order: 12
+---
+
 # State visibility architecture
 
 A persistent kernel is what makes notebooks fast, and it is also what makes

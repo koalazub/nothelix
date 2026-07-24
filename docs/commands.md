@@ -32,6 +32,7 @@ out of your way in ordinary buffers.
 | `:cancel-cell` | Interrupt the currently running cell |
 | `:copy-cell-output` | Copy the cell's rendered output to the system clipboard |
 | `:cell-output-view` | Blow up the cell's output in a popup, live while it runs or stored otherwise |
+| `:cell-state` | Print the provenance table of inputs and freshness for the cell under the cursor |
 | `:play-cell-audio` | Play the cell's wavplay audio through the system output (non-blocking) |
 | `:stop-audio` | Stop the audio clip that is currently playing |
 | `:scrub-audio` | Open scrub mode to seek the cell's audio by ear before resuming |
