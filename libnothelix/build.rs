@@ -14,6 +14,7 @@
 use std::process::Command;
 
 fn main() {
+    embed_kernel_sources();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=NOTHELIX_CI_BUILD");
     println!("cargo:rerun-if-env-changed=NOTHELIX_BUILD_DATE");
@@ -50,4 +51,29 @@ fn main() {
     };
 
     println!("cargo:rustc-env=NOTHELIX_BUILD_ID={build_id}");
+}
+
+fn embed_kernel_sources() {
+    let kernel_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernel");
+    println!("cargo:rerun-if-changed=../kernel");
+    let mut names: Vec<String> = std::fs::read_dir(&kernel_dir)
+        .expect("kernel/ directory must exist next to libnothelix")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".jl") && !name.ends_with("_test.jl"))
+        .collect();
+    names.sort();
+    let mut generated = String::from("pub(super) const SOURCES: &[(&str, &str)] = &[\n");
+    for name in &names {
+        let path = kernel_dir.join(name);
+        generated.push_str(&format!(
+            "    ({name:?}, include_str!({:?})),\n",
+            path.display()
+        ));
+        println!("cargo:rerun-if-changed=../kernel/{name}");
+    }
+    generated.push_str("];\n");
+    let dest =
+        std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("kernel_sources.rs");
+    std::fs::write(&dest, generated).expect("writing kernel_sources.rs");
 }
