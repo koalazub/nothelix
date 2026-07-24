@@ -6,6 +6,7 @@
 (require "cell-state.scm")
 (require "output-store.scm")
 (require "output-render.scm")
+(require "kernel-widget.scm")
 (require "project-config.scm")
 (require "widgets.scm")
 (require "helix/editor.scm")
@@ -26,6 +27,7 @@
          audio-stop-all!
          audio-auto-play-from-result!
          cell-has-stored-audio?
+         recompose-cell!
          audio-seek-forward
          audio-seek-back
          scrub-audio
@@ -384,10 +386,13 @@
              (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash legacy) ""))))
       (define audio-blob (or (decode-stored-audio-blob stored hash legacy) ""))
       (define wf-group (waveform-group-for audio-blob playhead-col bracket-lo bracket-hi))
+      (define widget-group
+        (widget-group-for (or (decode-stored-widgets-blob stored hash legacy) "")))
       (define groups
         (append (list (if (list? rows) rows '()))
                 tp-groups
-                (if (null? wf-group) '() (list wf-group))))
+                (if (null? wf-group) '() (list wf-group))
+                (if (null? widget-group) '() (list widget-group))))
       (try-set-output-lines-below! anchor-line (assign-cycling-bars groups)))))
 
 ;; --- playhead ticker ---

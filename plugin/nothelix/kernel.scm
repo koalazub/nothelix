@@ -12,6 +12,7 @@
                           kernel-adopt-macro
                           kernel-stop
                           kernel-stop-all-processes
+                          kernel-runner-stale
                           path-exists
                           read-file-tail))
 
@@ -21,6 +22,10 @@
          kernel-starting-status
          stop-kernel
          stop-all-kernels
+         running-kernel-dir
+         kernel-runner-stale
+         kernel-runner-stale?
+         kernel-stale-status-line
          *kernels*
          *executing-kernel-dir*)
 
@@ -160,6 +165,27 @@
   (if existing
       (on-ready existing)
       (kernel-start lang notebook-path on-ready)))
+
+;;@doc
+;; The kernel-dir of a running kernel tracked for `notebook-path`, or #false when
+;; none is tracked (never started, or shut down). Never starts one — the caller
+;; that needs a live kernel without spawning uses this.
+(define (running-kernel-dir notebook-path)
+  (define st (hash-try-get *kernels* notebook-path))
+  (and st (hash-get st 'kernel-dir)))
+
+;;@doc
+;; #true when a kernel booted before the currently installed runner.jl (a process
+;; that survived an editor restart and now predates the pre-binds it was written
+;; against). Compares the ready-file boot mtime against the installed runner's.
+(define (kernel-runner-stale? kernel-dir)
+  (equal? (kernel-runner-stale kernel-dir) "yes"))
+
+;;@doc
+;; The status line shown when a running kernel predates the installed runner. It
+;; names the one command that upgrades it.
+(define (kernel-stale-status-line)
+  "kernel predates the installed runner — :kernel-shutdown to upgrade")
 
 ;;@doc
 ;; Stop the kernel for a specific notebook path.

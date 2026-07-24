@@ -147,7 +147,9 @@
      (define get-line (lambda (i) (doc-get-line rope total i)))
      (define tgt (find-select-target-line get-line total (current-line-number)))
      (cond
-       [(not tgt) (set-status! "select: no @select at or above the cursor")]
+       [(not tgt)
+        (when (not (call-choice-nudge-fallback dir))
+          (set-status! "select: no @select at or above the cursor"))]
        [else
         (define line (get-line tgt))
         (define p (parse-select-line line))
@@ -241,7 +243,9 @@
      (define get-line (lambda (i) (doc-get-line rope total i)))
      (define tgt (find-select-target-line get-line total (current-line-number)))
      (cond
-       [(not tgt) (set-status! "select: no @select at or above the cursor")]
+       [(not tgt)
+        (when (not (call-widget-modal-fallback))
+          (set-status! "select: no @select at or above the cursor"))]
        [else
         (define line (get-line tgt))
         (define p (parse-select-line line))

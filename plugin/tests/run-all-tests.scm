@@ -15,6 +15,7 @@
 (require "cursor-restore-test.scm")
 (require "audio-test.scm")
 (require "widgets-test.scm")
+(require "kernel-widget-test.scm")
 (require "../nothelix/math-image.scm")
 
 (provide run-all-nothelix-tests
@@ -32,7 +33,8 @@
          run-legacy-migration-tests
          run-cursor-restore-tests
          run-audio-tests
-         run-widgets-tests)
+         run-widgets-tests
+         run-kernel-widget-tests)
 
 (define (run-all-nothelix-tests)
   (set-math-image-test-mode! #t)
@@ -58,7 +60,8 @@
       (cons "legacy-migration" (run-legacy-migration-tests))
       (cons "cursor-restore" (run-cursor-restore-tests))
       (cons "audio" (run-audio-tests))
-      (cons "widgets" (run-widgets-tests))))
+      (cons "widgets" (run-widgets-tests))
+      (cons "kernel-widget" (run-kernel-widget-tests))))
 
   (define (suite-status passed?)
     (cond

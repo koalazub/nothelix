@@ -16,6 +16,7 @@ mutable struct Cell
     images::Vector{Tuple{String, String}}  # (format, base64_data) for inline rendering
     text_plots::Vector{Dict{String,Any}}  # UnicodePlots braille rows+spans, one entry per plot
     audio::Vector{Dict{String,Any}}
+    widgets::Vector{Dict{String,Any}}  # kernel-declared widget specs (kind/name/params/current)
     plot_data::Union{Vector{Dict{String,Any}}, Nothing}  # raw x/y series for interactive charts
     error::Union{Exception, Nothing}
     stacktrace::Union{Vector, Nothing}
@@ -26,7 +27,7 @@ mutable struct Cell
 end
 
 # Constructors
-Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], Dict{String,Any}[], nothing, nothing, nothing, String[], :pending, 0, nothing)
+Cell(index::Int) = Cell(index, nothing, nothing, "", Set{Symbol}(), Set{Symbol}(), nothing, "", "", [], [], Dict{String,Any}[], Dict{String,Any}[], nothing, nothing, nothing, String[], :pending, 0, nothing)
 
 # Global registry
 const CELLS = Dict{Int, Cell}()

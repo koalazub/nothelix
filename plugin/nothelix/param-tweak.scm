@@ -279,7 +279,9 @@
      (define cl (current-line-number))
      (define tgt (find-param-target-line get-line total cl))
      (cond
-       [(not tgt) (set-status! "param: no @param at or above the cursor")]
+       [(not tgt)
+        (when (not (call-number-nudge-fallback dir))
+          (set-status! "param: no @param at or above the cursor"))]
        [else
         (define line (get-line tgt))
         (define p (parse-param-line line))

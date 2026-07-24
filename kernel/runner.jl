@@ -112,12 +112,14 @@ include(joinpath(KERNEL_ROOT, "ast_analysis.jl"))
 include(joinpath(KERNEL_ROOT, "output_capture.jl"))
 include(joinpath(KERNEL_ROOT, "cell_macros.jl"))
 include(joinpath(KERNEL_ROOT, "audio.jl"))
+include(joinpath(KERNEL_ROOT, "widgets.jl"))
 
 using .CellRegistry
 using .ASTAnalysis
 using .OutputCapture
 using .CellMacros
 using .AudioArtifacts
+using .KernelWidgets
 
 # Set log file for OutputCapture module
 OutputCapture.set_log_file(LOG_FILE)
@@ -135,6 +137,11 @@ Core.eval(Main, :(using ..CellRegistry))
 
 wavplay(y, fs) = AudioArtifacts.wavplay_impl(y, fs)
 wavplay(filename::AbstractString) = AudioArtifacts.wavplay_impl(filename)
+
+nothelix_slider(name::AbstractString, lo::Real, hi::Real; step::Real=0) =
+    KernelWidgets.record_slider!(Main, name, lo, hi, step)
+nothelix_choice(name::AbstractString, options::AbstractVector{<:AbstractString}) =
+    KernelWidgets.record_choice!(Main, name, options)
 
 # Write output response
 function write_response(data::Dict)
@@ -331,6 +338,26 @@ function handle_clear(cmd::Dict)
     write_response(Dict("status" => "ok"))
 end
 
+function handle_set_var(cmd::Dict)
+    name = string(get(cmd, "name", ""))
+    raw = string(get(cmd, "value", ""))
+    cell_index = get(cmd, "cell_index", -1)
+
+    log_info("Setting widget variable $name = $raw (cell $cell_index)")
+
+    outcome = KernelWidgets.set_var!(Main, name, raw, cell_index)
+    if outcome.ok
+        write_response(Dict(
+            "status" => "ok",
+            "name" => name,
+            "cell_states" => CellRegistry.classify_all()
+        ))
+    else
+        log_error("set_var rejected: $(outcome.reason)")
+        write_response(Dict("status" => "error", "error" => outcome.reason))
+    end
+end
+
 # Main command dispatcher
 function handle_command(cmd::Dict)
     cmd_type = get(cmd, "type", "")
@@ -348,6 +375,8 @@ function handle_command(cmd::Dict)
         handle_get_cell(cmd)
     elseif cmd_type == "clear"
         handle_clear(cmd)
+    elseif cmd_type == "set_var"
+        handle_set_var(cmd)
     elseif cmd_type == "ping"
         write_response(Dict("status" => "ok", "message" => "pong"))
     else

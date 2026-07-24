@@ -88,6 +88,14 @@ read from the literal, never guessed. A `# @toggle` annotation marks a boolean,
 as in `loop = true   # @toggle`; `<space>nt` flips it in place. Both stage
 downstream staleness and debounce a re-run exactly like `@param`.
 
+A run can also declare a widget from the kernel with `nothelix_slider` or
+`nothelix_choice`. These render as a row under the cell and reuse the same keys,
+so `]p` and `[p` nudge a kernel slider and `]s` and `[s` cycle a kernel choice on
+the cell under the cursor, and `<space>nc` opens its modal. A nudge assigns the
+variable in the kernel and flags the cells that read it as stale, with no re-run
+of its own, and it does nothing but say so when the kernel is not running. See
+[Notebooks](notebooks.md) for a worked example.
+
 ## Mathematics and tables
 
 | Command | Description |
@@ -186,8 +194,8 @@ them in quick succession accelerates the step through the ladder.
 
 `]w` and `[w` walk the cursor between every widget in the notebook, wrapping at
 the ends. A widget is any interactive surface: a `# @param` knob, a `# @select`
-choice, a `# @toggle` flag, a cell's audio scrub, an `@image` plot's size, or an
-animation. Each jump names the widget and the keys that act on it in the status
+choice, a `# @toggle` flag, a `nothelix_slider` or `nothelix_choice` a run
+declared, a cell's audio scrub, an `@image` plot's size, or an animation. Each jump names the widget and the keys that act on it in the status
 line, so the surface teaches itself; landing on a `@param` also draws its slider
 track. The walk and the shared modal are gated by the `widgets` setting in
 `.nothelix.conf`; when it is `false` both no-op and the direct feature keys

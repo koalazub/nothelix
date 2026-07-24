@@ -11,6 +11,7 @@
 (require "output-store.scm")
 (require "output-render.scm")
 (require "audio.scm")
+(require "kernel-widget.scm")
 (require "project-config.scm")
 (require "kernel.scm")
 (require "spinner.scm")
@@ -151,7 +152,10 @@
 
       (spinner-reset)
       (define spinner-frame (spinner-next-frame))
-      (set-status! (string-append spinner-frame " Executing cell..."))
+      (set-status!
+        (if (kernel-runner-stale? kernel-dir)
+            (kernel-stale-status-line)
+            (string-append spinner-frame " Executing cell...")))
       (helix.redraw)
 
       (set! *executing-kernel-dir* kernel-dir)
@@ -532,14 +536,18 @@
                    (decode-text-plots-blob (or (decode-stored-text-plots-blob stored hash legacy) ""))))
             (define waveform-group
               (waveform-group-for (or (decode-stored-audio-blob stored hash legacy) "") -1 -1 -1))
+            (define widget-group
+              (widget-group-for (or (decode-stored-widgets-blob stored hash legacy) "")))
             (when (or (list? rows)
                       (not (null? text-plot-groups))
-                      (not (null? waveform-group)))
+                      (not (null? waveform-group))
+                      (not (null? widget-group)))
               (try-set-output-lines-below! anchor-line
                 (assign-cycling-bars
                   (append (list (if (list? rows) rows '()))
                           text-plot-groups
-                          (if (null? waveform-group) '() (list waveform-group))))))))
+                          (if (null? waveform-group) '() (list waveform-group))
+                          (if (null? widget-group) '() (list widget-group))))))))
         cell-indices)
       (clear-cell-states!)
       (refresh-provenance-surfaces! doc-id path))))

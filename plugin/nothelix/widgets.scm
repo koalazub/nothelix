@@ -17,6 +17,12 @@
 
 (provide register-widget-kind!
          register-widget-arrive!
+         register-number-nudge-fallback!
+         register-choice-nudge-fallback!
+         register-widget-modal-fallback!
+         call-number-nudge-fallback
+         call-choice-nudge-fallback
+         call-widget-modal-fallback
          widget-walk-next
          widget-walk-prev
          open-widget-modal!
@@ -96,6 +102,50 @@
 
 (define (widget-arrive-for kind)
   (hash-try-get (unbox *widget-arrivals*) kind))
+
+;; --- source-widget nudge/modal fallbacks (output widgets on the current cell) ---
+;;
+;; The source number/choice nudges (]p/[p, ]s/[s) and the choice modal (<space>nc)
+;; act on an annotation at or above the cursor. When none is in reach, they defer
+;; to a fallback a leaf feature registers here — a kernel-declared widget on the
+;; cell under the cursor uses this to claim the same keys without the source
+;; modules depending on it. Registration flows leaf -> shared like discovery does.
+;; A fallback returns #true when it handled the nudge/modal, #false otherwise.
+
+(define *number-nudge-fallback* (box #false))
+(define *choice-nudge-fallback* (box #false))
+(define *widget-modal-fallback* (box #false))
+
+;;@doc
+;; Register the fallback the number nudge (]p/[p) calls when no @param is in reach.
+(define (register-number-nudge-fallback! proc) (set-box! *number-nudge-fallback* proc))
+
+;;@doc
+;; Register the fallback the choice nudge (]s/[s) calls when no @select is in reach.
+(define (register-choice-nudge-fallback! proc) (set-box! *choice-nudge-fallback* proc))
+
+;;@doc
+;; Register the fallback the choice modal (<space>nc) calls when no @select is in reach.
+(define (register-widget-modal-fallback! proc) (set-box! *widget-modal-fallback* proc))
+
+;;@doc
+;; Invoke the number-nudge fallback with `dir`; #false when none is registered or
+;; it did not handle the nudge.
+(define (call-number-nudge-fallback dir)
+  (define p (unbox *number-nudge-fallback*))
+  (and p (p dir)))
+
+;;@doc
+;; Invoke the choice-nudge fallback with `dir`; #false when none handled it.
+(define (call-choice-nudge-fallback dir)
+  (define p (unbox *choice-nudge-fallback*))
+  (and p (p dir)))
+
+;;@doc
+;; Invoke the widget-modal fallback; #false when none handled it.
+(define (call-widget-modal-fallback)
+  (define p (unbox *widget-modal-fallback*))
+  (and p (p)))
 
 ;; The single active slider track: at most one exists at a time, so nudging or
 ;; walking to another param moves the track rather than littering the file with

@@ -60,7 +60,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 30;
+pub const NOTHELIX_FFI_VERSION: u32 = 31;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -116,6 +116,8 @@ mod steel_bindings {
             );
             module.register_fn("kernel-poll-result", kernel::kernel_poll_result);
             module.register_fn("kernel-interrupt", kernel::kernel_interrupt);
+            module.register_fn("kernel-set-var", kernel::kernel_set_var);
+            module.register_fn("kernel-runner-stale", kernel::kernel_runner_stale);
         }
     }
 
@@ -189,6 +191,7 @@ mod steel_bindings {
             module.register_fn("json-get-all-images", json_utils::json_get_all_images);
             module.register_fn("json-get-text-plots", json_utils::json_get_text_plots);
             module.register_fn("json-get-audio", json_utils::json_get_audio);
+            module.register_fn("json-get-widgets", json_utils::json_get_widgets);
         }
     }
 

@@ -15,8 +15,11 @@
          encode-outputs+rows decode-stored-rows
          encode-outputs+rows+text-plots
          encode-outputs+rows+text-plots+audio
+         encode-outputs+rows+text-plots+audio+widgets
          decode-stored-text-plots-blob
          decode-stored-audio-blob
+         decode-stored-widgets-blob
+         store-set-widgets-blob!
          decode-text-plots-blob
          stored-source-hash)
 
@@ -73,6 +76,7 @@
 (define *rows-sep-line* "###NOTHELIX-OUTPUT-ROWS###")
 (define *text-plots-sep-line* "###NOTHELIX-TEXT-PLOTS###")
 (define *audio-sep-line* "###NOTHELIX-AUDIO###")
+(define *widgets-sep-line* "###NOTHELIX-WIDGETS###")
 
 ;;@doc
 ;; Bundle nbformat outputs-json with the exact text rows that were rendered
@@ -103,6 +107,18 @@
   (define base (encode-outputs+rows+text-plots outputs-json rows text-plots-blob))
   (if (and audio-blob (string? audio-blob) (> (string-length audio-blob) 0))
       (string-append base "\n" *audio-sep-line* "\n" audio-blob)
+      base))
+
+;;@doc
+;; Like `encode-outputs+rows+text-plots+audio`, but also persists a cell's
+;; kernel-declared widget specs (`json-get-widgets`'s "kind\tname\tparams\tcurrent"
+;; lines) after a widgets marker so `decode-stored-widgets-blob` can restore them
+;; on reopen. The widgets section trails the audio section, so an empty/`#false`
+;; `widgets-blob` makes this byte-identical to `encode-outputs+rows+text-plots+audio`.
+(define (encode-outputs+rows+text-plots+audio+widgets outputs-json rows text-plots-blob audio-blob widgets-blob)
+  (define base (encode-outputs+rows+text-plots+audio outputs-json rows text-plots-blob audio-blob))
+  (if (and widgets-blob (string? widgets-blob) (> (string-length widgets-blob) 0))
+      (string-append base "\n" *widgets-sep-line* "\n" widgets-blob)
       base))
 
 ;;@doc
@@ -149,6 +165,21 @@
       (cons remainder "")))
 
 ;;@doc
+;; Split a `stored-body-remainder` result into (pre-widgets . widgets-blob) on
+;; the widgets marker — widgets-blob is "" when the marker is absent. The widgets
+;; section trails everything, so callers strip it here first, then feed the
+;; pre-widgets part to `split-off-audio`.
+(define (split-off-widgets remainder)
+  (define marker (string-append "\n" *widgets-sep-line* "\n"))
+  (define parts (split-once remainder marker))
+  (if (list? parts)
+      (cons (car parts) (cadr parts))
+      (cons remainder "")))
+
+;; The rows/text-plots/audio body with any trailing widgets section stripped.
+(define (pre-widgets-body remainder) (car (split-off-widgets remainder)))
+
+;;@doc
 ;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
 ;; source hash, return the stored text rows when the hash matches and the
 ;; body carries a rows blob, or #false (missing, stale, or no rows). An
@@ -157,7 +188,7 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([rows-blob (car (split-rows-and-text-plots (car (split-off-audio remainder))))])
+      (let ([rows-blob (car (split-rows-and-text-plots (car (split-off-audio (pre-widgets-body remainder)))))])
         (if (equal? rows-blob "") '() (string-split rows-blob "\n")))))
 
 ;;@doc
@@ -176,7 +207,7 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([tp-blob (cdr (split-rows-and-text-plots (car (split-off-audio remainder))))])
+      (let ([tp-blob (cdr (split-rows-and-text-plots (car (split-off-audio (pre-widgets-body remainder)))))])
         (if (equal? tp-blob "") #false tp-blob))))
 
 ;;@doc
@@ -189,8 +220,42 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([audio-blob (cdr (split-off-audio remainder))])
+      (let ([audio-blob (cdr (split-off-audio (pre-widgets-body remainder)))])
         (if (equal? audio-blob "") #false audio-blob))))
+
+;;@doc
+;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
+;; source hash, return the stored kernel-widgets blob (`json-get-widgets`'s
+;; "kind\tname\tparams\tcurrent" lines, decodable by `parse-widget-specs`) when
+;; the hash matches and a blob was stored, or #false (missing, stale, or none).
+;; An optional trailing `legacy-hash` grants the one-launch migration grace.
+(define (decode-stored-widgets-blob raw current-hash . legacy-hash)
+  (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
+  (if (not remainder)
+      #false
+      (let ([widgets-blob (cdr (split-off-widgets remainder))])
+        (if (equal? widgets-blob "") #false widgets-blob))))
+
+;;@doc
+;; Replace the trailing widgets section of the focused workspace's stored entry
+;; for `id` in place, keeping the source hash and every earlier section
+;; byte-for-byte. Used after a kernel-widget nudge so a reopen shows the new
+;; value. A no-op when nothing is stored for the cell.
+(define (store-set-widgets-blob! id new-widgets-blob)
+  (define raw (output-store-get (workspace-id) id))
+  (when (and raw (not (equal? raw "")))
+    (define parts (split-once raw "\t"))
+    (when (list? parts)
+      (define stored-hash (car parts))
+      (define body (cadr parts))
+      (define marker (string-append "\n" *widgets-sep-line* "\n"))
+      (define split (split-once body marker))
+      (define pre (if (list? split) (car split) body))
+      (define new-body
+        (if (and new-widgets-blob (string? new-widgets-blob) (> (string-length new-widgets-blob) 0))
+            (string-append pre marker new-widgets-blob)
+            pre))
+      (output-store-put (workspace-id) id stored-hash new-body))))
 
 ;;@doc
 ;; ASCII information-separator delimiters — must match libnothelix's

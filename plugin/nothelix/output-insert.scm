@@ -39,6 +39,7 @@
 
 (require "nothelix/animation.scm")
 (require "audio.scm")
+(require "kernel-widget.scm")
 
 (provide update-cell-output cell-marker-and-code-end clear-cell-output!
          take-first-n images-truncated? notes-blob->group)
@@ -330,22 +331,28 @@
        (let ([b (json-get-audio result-json)])
          (if (and (> (string-length b) 0) (not (string-starts-with? b "ERROR:"))) b "")))
      (define waveform-group (waveform-group-for audio-blob -1 -1 -1))
+     (define widgets-blob
+       (let ([b (json-get-widgets result-json)])
+         (if (and (> (string-length b) 0) (not (string-starts-with? b "ERROR:"))) b "")))
+     (define widget-group (widget-group-for widgets-blob))
      (define render-lines
        (bars-for
          (append (list notes-group stdout-group repr-group stderr-group)
                  text-plot-styled-groups
-                 (if (null? waveform-group) '() (list waveform-group)))))
+                 (if (null? waveform-group) '() (list waveform-group))
+                 (if (null? widget-group) '() (list widget-group)))))
 
      (when (and anchor-line
                 (not (null? render-lines))
                 (not (try-set-output-lines-below! anchor-line render-lines)))
        (insert-legacy-output-block! anchor-line stored-text-lines))
      (store-put! store-cell-id store-source-hash
-                 (encode-outputs+rows+text-plots+audio
+                 (encode-outputs+rows+text-plots+audio+widgets
                    (outputs-json-for-cell stdout-text filtered-stderr output-repr "")
                    stored-text-lines
                    text-plots-blob
-                   audio-blob))
+                   audio-blob
+                   widgets-blob))
 
      (define animated-mime
        (json-get-animated-mime result-json))

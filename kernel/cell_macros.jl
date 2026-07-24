@@ -233,6 +233,10 @@ function get_cell_result_json(cell_idx::Int)
         result["audio"] = cell.audio
     end
 
+    if !isempty(cell.widgets)
+        result["widgets"] = cell.widgets
+    end
+
     result
 end
 

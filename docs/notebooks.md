@@ -93,6 +93,28 @@ without. Every one of these stages downstream staleness and debounces a re-run o
 the owning cell, the same path a hand edit takes. `]w` and `[w` walk between all
 of them; see [Commands](commands.md) for the full grammar.
 
+## Kernel widgets
+
+A cell can declare a widget from inside its run. Call `nothelix_slider` or
+`nothelix_choice` after the variable it drives, and nothelix draws one row under
+the cell that manipulates that kernel variable directly.
+
+    # @cell 0
+    freq = 440
+    nothelix_slider("freq", 220, 880; step=10)
+
+    # @cell 1
+    y = freq * 2
+
+Nudge the slider row with `]p` and `[p`, or open its popup with `<space>nc`. Each
+nudge assigns `freq` in the kernel and records cell 0 as its fresh writer, so cell
+1, which reads `freq`, shows a stale badge until you run it again. Nothing re-runs
+on its own. A `nothelix_choice("wave", ["sin", "cos", "tan"])` call declares a
+choice row cycled with `]s` and `[s`. Both calls return nothing, so the file
+still runs under `julia notebook.jl`, and the rows persist with the cell's output
+so a reopen restores them. When the kernel is not running, a nudge says so and
+asks you to run the cell first.
+
 ## Opening an existing notebook
 
 An `.ipynb` file is JSON, so convert it to a `.jl` first.
@@ -238,7 +260,10 @@ window, and sweep length are all tunable through the display settings in
 One kernel runs per notebook, keyed to the file path and not to the buffer.
 Close and reopen the file, or restart Helix, and nothelix reattaches to the
 running kernel with all state intact. State is lost only on `:kernel-shutdown`,
-`:kernel-shutdown-all`, or quitting Helix.
+`:kernel-shutdown-all`, or quitting Helix. Because a kernel outlives the editor,
+one can predate the runner a later nothelix installs, so when a reattached kernel
+booted before the current runner nothelix flags it in the status line and points
+you to `:kernel-shutdown` to upgrade it.
 
 ## Resume position
 

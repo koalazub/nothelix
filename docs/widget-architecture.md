@@ -50,6 +50,8 @@ operate, because its surface names its keys.
 | scrub | a cell's audio artifact | `]a` / `[a` | playhead, bracket, seek ladder |
 | size | an `@image` plot block | `:plot-grow` / `:plot-shrink` | none |
 | toggle | an animation at the cursor | `<space>p` | none |
+| kernel slider | a `nothelix_slider` call in a run | `]p` / `[p` | slider track popup (`h`/`l`), `<space>nc` |
+| kernel choice | a `nothelix_choice` call in a run | `]s` / `[s` | option chooser (`h`/`l`), `<space>nc` |
 
 Every kind is a leaf module that supplies parse, render, nudge, and apply; the
 registry, motions, modal shell, and re-run pipeline are shared. `choice` rewrites
@@ -80,6 +82,17 @@ picker. One spec adjustment: the number modal became the slider track described
 above rather than a ladder scrub, and the flag flip is bound to `<space>nt` (a
 flip is non-directional, so no `]`/`[` pair) rather than a bracket nudge.
 
-**Phase 3.** Kernel-declared widgets, a cell's run emits a widget spec the
-plugin materialises, which is the road to Jupyter-style interactive outputs
-without leaving the source-file model.
+**Phase 3 (shipped).** Kernel-declared widgets. A cell's run can call
+`nothelix_slider` or `nothelix_choice`, which records a spec on that cell in the
+registry and returns nothing. The plugin materialises each spec as one virtual
+row anchored below the cell, rendered through the same output-row composition as
+the waveform group, and the specs persist alongside audio in the output store so
+a reopen restores them. Manipulating a kernel widget sends the new value straight
+to the kernel through a `set_var` command, which assigns the variable and records
+the declaring cell as its fresh writer, so the existing provenance ledger flags
+dependent cells stale with no auto-rerun. The row reuses the number and choice
+grammar, so `]p` and `[p` nudge a kernel slider and `]s` and `[s` cycle a kernel
+choice on the cell under the cursor, `<space>nc` opens the modal, and `]w` and
+`[w` walk onto them like any other widget. When the kernel is not running a nudge
+says so and asks you to run the cell first, and it never queues. This is
+Jupyter-style interactive output without leaving the source-file model.
