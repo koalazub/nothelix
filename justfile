@@ -68,6 +68,7 @@ install profile="release":
     }
 
     rm -f $lib.dest
+    rm -f "{{ steel_native }}/libnothelix.meta"
     cp $lib.src $lib.dest
 
     if $nu.os-info.name == "macos" {
