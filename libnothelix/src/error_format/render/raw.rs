@@ -12,7 +12,7 @@ const QUOTED_WIDTH: usize = 120;
 const HINTED_NOISE: [&str; 3] = ["Error @", "ParseError", "LoadError"];
 const UNHINTED_NOISE: [&str; 1] = ["Error @"];
 
-pub fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
+pub fn format_raw(raw: &str, hints: &[ErrorHint], kernel_dir: Option<&str>) -> String {
     let cleaned = clean_message(raw);
     let tokens = tokenize_error("", cleaned);
     let location = scan_error_location(cleaned);
@@ -41,6 +41,11 @@ pub fn format_raw(raw: &str, hints: &[ErrorHint]) -> String {
             }
             if !hint.example.is_empty() {
                 report.example(&expand_template(&hint.example, &tokens));
+            }
+            if hint.note_kernel_dir
+                && let Some(dir) = kernel_dir
+            {
+                report.note(&format!("the kernel looked in {dir}"));
             }
         }
         None => {

@@ -19,6 +19,7 @@ pub(super) struct ErrorHint {
     pub help: String,
     pub example: String,
     pub priority: i32,
+    pub note_kernel_dir: bool,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +44,8 @@ struct RawHint {
     example: String,
     #[serde(default)]
     priority: i32,
+    #[serde(default)]
+    note_kernel_dir: bool,
 }
 
 impl From<RawHint> for ErrorHint {
@@ -58,6 +61,7 @@ impl From<RawHint> for ErrorHint {
             help: raw.help,
             example: raw.example,
             priority: raw.priority,
+            note_kernel_dir: raw.note_kernel_dir,
         }
     }
 }

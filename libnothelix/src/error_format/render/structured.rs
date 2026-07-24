@@ -11,7 +11,11 @@ use super::var_context::write_var_context;
 const HEADLINE_WIDTH: usize = 80;
 const QUOTED_WIDTH: usize = 120;
 
-pub fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
+pub fn format_structured(
+    err: &StructuredError,
+    hints: &[ErrorHint],
+    kernel_dir: Option<&str>,
+) -> String {
     if err.error_type == "UndefVarError" && !err.undef_guidance.is_empty() {
         return format_undefined(err);
     }
@@ -43,6 +47,11 @@ pub fn format_structured(err: &StructuredError, hints: &[ErrorHint]) -> String {
         }
         if !hint.example.is_empty() {
             report.example(&expand_template(&hint.example, &tokens));
+        }
+        if hint.note_kernel_dir
+            && let Some(dir) = kernel_dir
+        {
+            report.note(&format!("the kernel looked in {dir}"));
         }
     }
 

@@ -27,18 +27,32 @@ pub fn format_error(ctx: &FormatContext<'_>) -> String {
 
 fn formatted(ctx: &FormatContext<'_>) -> Result<String> {
     let hints = hints::hints()?;
+    let kernel_dir = ctx
+        .notebook_path
+        .and_then(|p| std::path::Path::new(p).parent())
+        .and_then(|d| d.to_str())
+        .filter(|d| !d.is_empty())
+        .map(str::to_owned);
 
     if let Ok(mut err) = serde_json::from_str::<StructuredError>(ctx.error_json)
         && !err.error_type.is_empty()
     {
         enrichment::apply(&mut err, ctx);
-        return Ok(render::format_structured(&err, hints));
+        return Ok(render::format_structured(
+            &err,
+            hints,
+            kernel_dir.as_deref(),
+        ));
     }
 
     if ctx.raw_error.is_empty() {
         return Ok("error: unknown\n".to_string());
     }
-    Ok(render::format_raw(ctx.raw_error, hints))
+    Ok(render::format_raw(
+        ctx.raw_error,
+        hints,
+        kernel_dir.as_deref(),
+    ))
 }
 
 #[cfg(test)]
@@ -46,7 +60,11 @@ mod tests {
     use super::*;
 
     fn raw(input: &str) -> String {
-        render::format_raw(input, hints::hints().expect("error_hints.toml must parse"))
+        render::format_raw(
+            input,
+            hints::hints().expect("error_hints.toml must parse"),
+            None,
+        )
     }
 
     fn structured(error_json: &str) -> String {
@@ -55,6 +73,29 @@ mod tests {
             raw_error: "",
             notebook_path: None,
         })
+    }
+
+    #[test]
+    fn file_not_found_names_the_kernel_directory() {
+        let json = r#"{
+            "error_type": "SystemError",
+            "message": "opening file \"spring_extract.wav\": No such file or directory",
+            "frames": []
+        }"#;
+        let with_path = format_error(&FormatContext {
+            error_json: json,
+            raw_error: "",
+            notebook_path: Some("/Users/someone/uni/sem_2/tutorial.jl"),
+        });
+        assert!(
+            with_path.contains("= note: the kernel looked in /Users/someone/uni/sem_2"),
+            "got:\n{with_path}"
+        );
+        let without_path = structured(json);
+        assert!(
+            !without_path.contains("the kernel looked in"),
+            "got:\n{without_path}"
+        );
     }
 
     #[test]

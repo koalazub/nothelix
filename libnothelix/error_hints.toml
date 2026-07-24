@@ -678,8 +678,9 @@ id = "E047"
 match_type = "SystemError"
 match_tokens = ["No such file"]
 title = "file not found"
-help = "The path doesn't exist. Check with isfile(path) and verify pwd()."
-example = "isfile(\"data.csv\")  # check path\npwd()               # check working directory"
+help = "The path doesn't exist. Relative paths resolve against the notebook's directory."
+example = "isfile(\"data.csv\")  # check the path"
+note_kernel_dir = true
 
 [[hint]]
 id = "E076"
