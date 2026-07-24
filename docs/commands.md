@@ -31,6 +31,7 @@ out of your way in ordinary buffers.
 | `:execute-cells-above` | Run every code cell from the top down to the current one |
 | `:cancel-cell` | Interrupt the currently running cell |
 | `:copy-cell-output` | Copy the cell's rendered output to the system clipboard |
+| `:cell-output-view` | Blow up the cell's output in a popup, live while it runs or stored otherwise |
 | `:play-cell-audio` | Play the cell's wavplay audio through the system output (non-blocking) |
 | `:stop-audio` | Stop the audio clip that is currently playing |
 | `:scrub-audio` | Open scrub mode to seek the cell's audio by ear before resuming |
@@ -168,7 +169,7 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `<space>nj` | `:cell-picker` |
 | `<space>na` | `:select-cell` |
 | `<space>ni` | `:select-cell-code` |
-| `<space>no` | `:select-output` |
+| `<space>no` | `:cell-output-view` |
 | `<space>ny` | `:copy-cell-output` |
 | `<space>ns` | `:play-cell-audio` |
 | `<space>nx` | `:stop-audio` |

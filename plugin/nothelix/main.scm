@@ -38,6 +38,7 @@
 (require "nothelix/selection.scm")
 (require "nothelix/picker.scm")
 (require "nothelix/chart-viewer.scm")
+(require "nothelix/output-view.scm")
 (require "nothelix/backslash.scm")
 (require "nothelix/conceal-state.scm")
 (require "nothelix/conceal.scm")
@@ -66,6 +67,7 @@
          next-cell previous-cell cell-picker
          widget-walk-next widget-walk-prev
          select-cell select-cell-code select-output
+         cell-output-view
          view-chart
          insert-image
          plot-grow plot-shrink
@@ -231,7 +233,7 @@
                   ("j" ":cell-picker")
                   ("a" ":select-cell")
                   ("i" ":select-cell-code")
-                  ("o" ":select-output")
+                  ("o" ":cell-output-view")
                   ("y" ":copy-cell-output")
                   ("s" ":play-cell-audio")
                   ("x" ":stop-audio")
@@ -276,6 +278,7 @@
     "select-cell"      "Select around cell (header + code + output)."
     "select-cell-code" "Select inside cell (code only)."
     "select-output"    "Select output block."
+    "cell-output-view" "Blow up the cell's output in a popup, live while it runs or stored otherwise."
 
     ;; Chart viewer
     "view-chart" "Open the last-executed plot in the interactive chart viewer."

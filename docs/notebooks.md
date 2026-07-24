@@ -213,6 +213,12 @@ Because output is not buffer text, you cannot select it with editor motions.
 `<space>ny` (`:copy-cell-output`) puts the cell's output on the system
 clipboard instead.
 
+`<space>no` (`:cell-output-view`) blows the cell's output up in a popup, and
+while that cell is still running it tails what the kernel is printing so you can
+watch a long `Pkg.add` scroll past as it happens. Scroll with `j` and `k` or
+`ctrl-d` and `ctrl-u`, close with `q` or `Esc`, and the footer names whether you
+are watching live or stored output.
+
 <!-- SCREENSHOT NEEDED: virtual-row text output sitting below a cell, showing output that is not buffer text -->
 
 Output persists per-cell in `~/.local/share/nothelix/`, keyed to the cell and a
@@ -309,7 +315,8 @@ trust the directory.
 | `:cell-picker` | `<space>nj` | Open an interactive cell navigator |
 | `:select-cell` | `<space>na` | Select the whole cell, header, code, and output |
 | `:select-cell-code` | `<space>ni` | Select only the code |
-| `:select-output` | `<space>no` | Select the output block |
+| `:cell-output-view` | `<space>no` | Blow up the cell's output in a popup |
+| `:select-output` | | Select the output block |
 
 ## The cell navigator
 

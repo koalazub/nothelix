@@ -31,6 +31,38 @@ function set_log_file(path::String)
     CAPTURE_LOG_FILE[] = path
 end
 
+function open_live_out()
+    dir = KERNEL_DIR[]
+    dir === nothing && return nothing
+    try
+        open(joinpath(dir, "live.out"), "w")
+    catch e
+        capture_log("live.out open failed: $e")
+        nothing
+    end
+end
+
+function tee_live(io, data)
+    io === nothing && return nothing
+    try
+        write(io, data)
+        flush(io)
+    catch e
+        capture_log("live.out write failed: $e")
+    end
+    nothing
+end
+
+function close_live_out(io)
+    io === nothing && return nothing
+    try
+        close(io)
+    catch e
+        capture_log("live.out close failed: $e")
+    end
+    nothing
+end
+
 mutable struct CapturedOutput
     return_value::Any
     stdout::String
@@ -740,6 +772,8 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
 
+    live_io = open_live_out()
+
     # Save original stdout/stderr
     old_stdout = stdout
     old_stderr = stderr
@@ -763,6 +797,7 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
             while isopen(rd_out)
                 data = String(readavailable(rd_out))
                 write(stdout_buf, data)
+                tee_live(live_io, data)
             end
         end
 
@@ -770,6 +805,7 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
             while isopen(rd_err)
                 data = String(readavailable(rd_err))
                 write(stderr_buf, data)
+                tee_live(live_io, data)
             end
         end
 
@@ -876,6 +912,8 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
             # Ignore task wait errors
         end
 
+        close_live_out(live_io)
+
     catch e
         # Only set error if code execution didn't already have an error
         if code_error === nothing
@@ -889,6 +927,7 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
         end
         try redirect_stdout(old_stdout) catch end
         try redirect_stderr(old_stderr) catch end
+        close_live_out(live_io)
     end
 
     # Set the error from code execution (not cleanup)
