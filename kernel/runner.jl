@@ -9,19 +9,32 @@ using Dates
 # `Pkg.add(...)` from anywhere, including from inside functions.
 import Pkg
 
+const PHASE_FILE = joinpath(length(ARGS) >= 1 ? ARGS[1] : "/tmp/helix-kernel-test", "phase")
+
+function write_phase(phase::String)
+    try
+        open(io -> print(io, phase), PHASE_FILE, "w")
+    catch
+    end
+end
+
+write_phase("loading JSON3, precompiles after a Julia upgrade")
 try
     @eval using JSON3
 catch
+    write_phase("installing JSON3 over the network")
     Pkg.add("JSON3")
     @eval using JSON3
 end
 
+write_phase("loading MsgPack")
 const HAS_MSGPACK = try
     @eval using MsgPack
     true
 catch
     false
 end
+write_phase("wiring the kernel")
 
 # UnicodePlots is only needed when a cell actually renders a braille plot,
 # so — unlike JSON3/MsgPack above — we don't eagerly `using` it at kernel
@@ -350,6 +363,10 @@ end
 # NOTE: Only touch READY_FILE, don't use write_response here!
 # write_response creates output.json.done which confuses polling for actual commands
 log_info("Kernel ready, writing ready marker")
+try
+    rm(PHASE_FILE, force = true)
+catch
+end
 touch(READY_FILE)
 
 # Main loop

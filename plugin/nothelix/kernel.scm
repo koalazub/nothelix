@@ -18,6 +18,7 @@
 (provide kernel-start
          kernel-get-for-notebook
          poll-kernel-ready
+         kernel-starting-status
          stop-kernel
          stop-all-kernels
          *kernels*
@@ -94,7 +95,32 @@
      (poll-kernel-ready kernel-dir lang notebook-path on-ready 150)
      #true]))
 
+;;@doc
+;; The wait line shown while a kernel boots: the runner's reported phase when
+;; it has one, always the elapsed seconds, so a long precompile reads as
+;; progress instead of a hang.
+(define (kernel-starting-status phase elapsed-s)
+  (string-append "Starting kernel"
+                 (if (> (string-length phase) 0)
+                     (string-append " · " phase)
+                     "")
+                 " · " (number->string elapsed-s) "s"))
+
+(define (kernel-boot-phase kernel-dir)
+  (if (equal? (path-exists (string-append kernel-dir "/phase")) "yes")
+      (string-trim (read-file-tail (string-append kernel-dir "/phase") 1))
+      ""))
+
 (define (poll-kernel-ready kernel-dir lang notebook-path on-ready attempts)
+  (poll-kernel-boot kernel-dir lang notebook-path on-ready 0 attempts #false))
+
+;; A runner that has reported a phase is alive and working, so it earns the
+;; long ceiling (5 min) — installs and post-upgrade precompiles are slow but
+;; legitimate. A spawn that never reports keeps the short one (30 s).
+(define (poll-kernel-boot kernel-dir lang notebook-path on-ready ticks base-attempts seen-phase?)
+  (define phase (kernel-boot-phase kernel-dir))
+  (define alive? (or seen-phase? (> (string-length phase) 0)))
+  (define limit (if alive? 1500 base-attempts))
   (cond
     [(equal? (path-exists (string-append kernel-dir "/ready")) "yes")
      (define kernel-state
@@ -109,17 +135,23 @@
      (set-status! (string-append "Started " lang " kernel in " kernel-dir))
      (on-ready kernel-state)]
 
-    [(<= attempts 0)
+    [(>= ticks limit)
+     (define waited-s (quotient (* ticks 200) 1000))
      (define log-tail (read-file-tail (string-append kernel-dir "/kernel.log") 3))
      (define msg (sanitise-error-message log-tail))
      (if (> (string-length msg) 0)
-         (set-status! (string-append "Kernel not ready after 30 s. Julia output: " msg))
-         (set-status! (string-append "Kernel not ready after 30 s. Check kernel.log in " kernel-dir "/ for details.")))
+         (set-status! (string-append "Kernel not ready after " (number->string waited-s)
+                                     " s. Julia output: " msg))
+         (set-status! (string-append "Kernel not ready after " (number->string waited-s)
+                                     " s. Check kernel.log in " kernel-dir "/ for details.")))
      (helix.redraw)]
 
     [else
+     (set-status! (kernel-starting-status phase (quotient (* ticks 200) 1000)))
      (enqueue-thread-local-callback-with-delay 200
-       (lambda () (poll-kernel-ready kernel-dir lang notebook-path on-ready (- attempts 1))))]))
+       (lambda ()
+         (poll-kernel-boot kernel-dir lang notebook-path on-ready
+                           (+ ticks 1) base-attempts alive?)))]))
 
 ;;@doc
 ;; Get the existing kernel for `notebook-path` or start one, then call `on-ready` with the kernel-state.

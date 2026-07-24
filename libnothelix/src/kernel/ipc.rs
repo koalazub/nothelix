@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub(super) enum Artifact {
     Pid,
     Ready,
+    Phase,
     Input,
     JsonOutput,
     JsonDone,
@@ -24,9 +25,10 @@ impl Artifact {
         Self::MsgpackOutput,
         Self::MsgpackDone,
     ];
-    pub(super) const SESSION: [Self; 7] = [
+    pub(super) const SESSION: [Self; 8] = [
         Self::Pid,
         Self::Ready,
+        Self::Phase,
         Self::Input,
         Self::JsonOutput,
         Self::JsonDone,
@@ -46,6 +48,7 @@ impl Artifact {
         match self {
             Self::Pid => "pid",
             Self::Ready => "ready",
+            Self::Phase => "phase",
             Self::Input => "input.json",
             Self::JsonOutput => "output.json",
             Self::JsonDone => "output.json.done",
