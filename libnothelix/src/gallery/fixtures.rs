@@ -1,35 +1,107 @@
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+use serde::Deserialize;
+use std::sync::OnceLock;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
 pub struct Viewport {
     pub cols: usize,
     pub rows: usize,
 }
 
-pub const VIEWPORTS: &[Viewport] = &[
-    Viewport { cols: 80, rows: 24 },
-    Viewport {
-        cols: 120,
-        rows: 12,
-    },
-    Viewport {
-        cols: 120,
-        rows: 40,
-    },
-    Viewport {
-        cols: 200,
-        rows: 50,
-    },
-];
+#[derive(Deserialize)]
+struct ViewportEntry {
+    cols: usize,
+    rows: usize,
+    #[serde(default)]
+    docs: bool,
+}
 
-pub const DOCS_VIEWPORT: Viewport = Viewport {
-    cols: 120,
-    rows: 40,
-};
+#[derive(Deserialize)]
+struct RawConfig {
+    #[serde(default)]
+    viewport: Vec<ViewportEntry>,
+}
+
+#[derive(Debug)]
+pub struct GalleryConfig {
+    viewports: Vec<Viewport>,
+    docs: Viewport,
+}
+
+impl GalleryConfig {
+    pub fn viewports(&self) -> &[Viewport] {
+        &self.viewports
+    }
+
+    pub fn docs(&self) -> Viewport {
+        self.docs
+    }
+}
+
+fn parse_config(source: &str) -> Result<GalleryConfig, String> {
+    let raw: RawConfig =
+        toml::from_str(source).map_err(|e| format!("gallery config is not valid TOML: {e}"))?;
+    if raw.viewport.is_empty() {
+        return Err("gallery config lists no viewports".to_string());
+    }
+    for entry in &raw.viewport {
+        if entry.cols == 0 || entry.rows == 0 {
+            return Err(format!(
+                "gallery config viewport {}x{} has a zero dimension",
+                entry.cols, entry.rows
+            ));
+        }
+    }
+    let marked: Vec<&ViewportEntry> = raw.viewport.iter().filter(|entry| entry.docs).collect();
+    let docs = match marked.as_slice() {
+        [entry] => Viewport {
+            cols: entry.cols,
+            rows: entry.rows,
+        },
+        [] => return Err("gallery config marks no viewport with docs = true".to_string()),
+        many => {
+            return Err(format!(
+                "gallery config marks {} viewports with docs = true, expected exactly one",
+                many.len()
+            ));
+        }
+    };
+    Ok(GalleryConfig {
+        viewports: raw
+            .viewport
+            .iter()
+            .map(|entry| Viewport {
+                cols: entry.cols,
+                rows: entry.rows,
+            })
+            .collect(),
+        docs,
+    })
+}
+
+static GALLERY_TOML: &str = include_str!("../../gallery.toml");
+static CONFIG: OnceLock<Result<GalleryConfig, String>> = OnceLock::new();
+
+pub fn config() -> Result<&'static GalleryConfig, String> {
+    CONFIG
+        .get_or_init(|| parse_config(GALLERY_TOML))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+pub fn viewports() -> Result<&'static [Viewport], String> {
+    Ok(config()?.viewports())
+}
+
+pub fn docs_viewport() -> Result<Viewport, String> {
+    Ok(config()?.docs())
+}
 
 pub const CELL_ASPECT: f64 = 2.0;
 pub const PT_PER_ROW: f64 = 11.0;
 
 pub struct ConcealFixture {
     pub name: &'static str,
+    pub source_name: &'static str,
     pub overlays_name: &'static str,
     pub source: &'static str,
 }
@@ -37,11 +109,13 @@ pub struct ConcealFixture {
 pub const CONCEAL_FIXTURES: &[ConcealFixture] = &[
     ConcealFixture {
         name: "conceal-fourier",
+        source_name: "conceal-fourier-source",
         overlays_name: "conceal-fourier-overlays",
         source: FOURIER_CELL,
     },
     ConcealFixture {
         name: "conceal-linear-algebra",
+        source_name: "conceal-linear-algebra-source",
         overlays_name: "conceal-linear-algebra-overlays",
         source: LINEAR_ALGEBRA_CELL,
     },
@@ -293,3 +367,54 @@ integral is the total *energy*.
 
 See `DSP.welch_pgram` for the averaged estimator.
 ";
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn the_shipped_config_parses_and_names_one_docs_viewport() {
+        let config = parse_config(GALLERY_TOML).expect("shipped gallery.toml");
+        assert!(!config.viewports().is_empty());
+        assert!(
+            config.viewports().contains(&config.docs()),
+            "the docs viewport is one of the rendered viewports by construction"
+        );
+    }
+
+    #[test]
+    fn malformed_toml_reports_rather_than_panics() {
+        let error = parse_config("this is not toml =").expect_err("malformed");
+        assert!(error.contains("not valid TOML"), "{error}");
+    }
+
+    #[test]
+    fn a_config_without_viewports_is_rejected() {
+        let error = parse_config("").expect_err("empty");
+        assert!(error.contains("no viewports"), "{error}");
+    }
+
+    #[test]
+    fn a_zero_dimension_is_rejected() {
+        let source = "[[viewport]]\ncols = 0\nrows = 24\ndocs = true\n";
+        let error = parse_config(source).expect_err("zero dimension");
+        assert!(error.contains("zero dimension"), "{error}");
+    }
+
+    #[test]
+    fn exactly_one_viewport_must_carry_the_docs_flag() {
+        let none = "[[viewport]]\ncols = 80\nrows = 24\n";
+        assert!(
+            parse_config(none)
+                .expect_err("no docs flag")
+                .contains("marks no viewport")
+        );
+
+        let two = "[[viewport]]\ncols = 80\nrows = 24\ndocs = true\n\n[[viewport]]\ncols = 120\nrows = 40\ndocs = true\n";
+        assert!(
+            parse_config(two)
+                .expect_err("two docs flags")
+                .contains("expected exactly one")
+        );
+    }
+}

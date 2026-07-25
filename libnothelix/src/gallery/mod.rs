@@ -1,7 +1,7 @@
 mod fixtures;
 mod inject;
 
-pub use fixtures::{DOCS_VIEWPORT, VIEWPORTS, Viewport};
+pub use fixtures::{Viewport, docs_viewport, viewports};
 pub use inject::inject_regions;
 
 use std::collections::HashMap;
@@ -49,6 +49,13 @@ impl GalleryCase {
 pub fn fixed_cases() -> Result<Vec<GalleryCase>, String> {
     let mut cases = Vec::new();
 
+    for fixture in CONCEAL_FIXTURES {
+        cases.push(GalleryCase {
+            name: fixture.source_name,
+            viewport: None,
+            output: fixture.source.to_string(),
+        });
+    }
     for fixture in CONCEAL_FIXTURES {
         cases.push(GalleryCase {
             name: fixture.name,
@@ -155,7 +162,7 @@ fn render_audio_scope(viewport: Viewport) -> String {
 
 pub fn document_cases() -> Result<Vec<GalleryCase>, String> {
     let mut cases = fixed_cases()?;
-    cases.extend(viewport_cases(DOCS_VIEWPORT)?);
+    cases.extend(viewport_cases(docs_viewport()?)?);
     Ok(cases)
 }
 

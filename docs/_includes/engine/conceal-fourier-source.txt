@@ -1,0 +1,7 @@
+# ## The Fourier transform
+#
+# The forward transform is $\hat{f}(\xi) = \int_{-\infty}^{\infty} f(x) \, e^{-2\pi i x \xi} \, dx$
+# and the inverse is $f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi) \, e^{2\pi i x \xi} \, d\xi$.
+#
+# Parseval's theorem states $\int |f(x)|^2 \, dx = \int |\hat{f}(\xi)|^2 \, d\xi$, so the
+# transform preserves energy: $\|f\|_2 = \|\hat{f}\|_2$ for every $f \in L^2(\mathbb{R})$.

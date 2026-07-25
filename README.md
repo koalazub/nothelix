@@ -2,11 +2,23 @@
 
 Nothelix puts notebooks inside Helix. Cells run against a live Julia kernel, plots and typeset equations render inline in the buffer, and the notebook on disk stays a plain `.jl` file that diffs like source.
 
-![The Fourier transform written as LaTeX, and the same lines shown as Unicode after concealment](docs/assets/img/fourier-conceal.png)
+One buffer, twice. Here is a cell as it sits on disk, the LaTeX you typed.
 
-One buffer, twice. The top pane is the LaTeX you typed. The bottom is what you read a moment later, once concealment has swapped each construct for its Unicode form. The file on disk still holds the LaTeX, and it comes back on the line you are editing.
+<!-- gallery:conceal-fourier-source -->
+```text
+# ## The Fourier transform
+#
+# The forward transform is $\hat{f}(\xi) = \int_{-\infty}^{\infty} f(x) \, e^{-2\pi i x \xi} \, dx$
+# and the inverse is $f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi) \, e^{2\pi i x \xi} \, d\xi$.
+#
+# Parseval's theorem states $\int |f(x)|^2 \, dx = \int |\hat{f}(\xi)|^2 \, d\xi$, so the
+# transform preserves energy: $\|f\|_2 = \|\hat{f}\|_2$ for every $f \in L^2(\mathbb{R})$.
+```
+<!-- /gallery -->
 
-The block below is not a transcription. `just gallery` writes it straight out of the rendering engine, from the same fixture the snapshot tests pin, so this README cannot drift from what the buffer draws.
+And here is the same cell as you read it a moment later, once concealment has swapped each construct for its Unicode form. The file still holds the LaTeX, and it comes back on the line you are editing.
+
+Neither block is a transcription or a screenshot. `just gallery` writes both straight out of the rendering engine, from the same fixture the snapshot tests pin, so this README cannot drift from what the buffer draws.
 
 <!-- gallery:conceal-fourier -->
 ```text

@@ -1,0 +1,11 @@
+---
+source: libnothelix/tests/engine_snapshots.rs
+expression: case.output
+---
+# ## The symmetric eigenproblem
+#
+# For $A \in \mathbb{R}^{n \times n}$ with $A^\top = A$ there is an orthogonal $Q$ such that
+# $Q^\top A Q = \Lambda$ and $\Lambda = \mathrm{diag}(\lambda_1, \ldots, \lambda_n)$.
+#
+# Every eigenpair satisfies $A \mathbf{v}_i = \lambda_i \mathbf{v}_i$ with $\|\mathbf{v}_i\|_2 = 1$,
+# the spectral norm is $\|A\|_2 = \max_i |\lambda_i|$, and $\mathrm{tr}(A) = \sum_i \lambda_i$.

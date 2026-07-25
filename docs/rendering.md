@@ -109,12 +109,18 @@ becomes α, `\leq` becomes ≤, and superscripts and subscripts shift to their
 Unicode variants. The Fourier transform shows the before and after, as typed and
 as read.
 
-![Fourier transform LaTeX before and after conceal](assets/img/fourier-conceal.png)
+Here is the cell as it sits on disk, the LaTeX you type and the file still holds.
 
-The concealed pane is the engine's exact output, and those lines are pinned
-byte-for-byte by snapshot tests. The block below is not a transcription. It is
-written straight out of the same engine by `just gallery`, from the same fixture
-the snapshot tests run, so the page cannot drift from what the editor draws.
+```text
+{% include engine/conceal-fourier-source.txt %}
+```
+
+And here is the same cell as you read it, once conceal has replaced each
+construct in place.
+
+Neither block is a transcription or a screenshot. Both are written straight out
+of the engine by `just gallery` from the fixture its snapshot tests pin, so the
+page cannot drift from what the editor draws.
 
 ```text
 {% include engine/conceal-fourier.txt %}

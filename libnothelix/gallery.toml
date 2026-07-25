@@ -1,0 +1,25 @@
+# Rendering geometry for the documentation gallery.
+#
+# `just gallery` writes every artifact under docs/_includes/engine/ from these,
+# and the snapshot suite pins each dimension-dependent surface at every viewport
+# listed here, so widening this list widens coverage and the docs together.
+#
+# Exactly one viewport carries `docs = true`. That is the size documentation
+# pages embed, so a page can never show a geometry the snapshots do not cover.
+
+[[viewport]]
+cols = 80
+rows = 24
+
+[[viewport]]
+cols = 120
+rows = 12
+
+[[viewport]]
+cols = 120
+rows = 40
+docs = true
+
+[[viewport]]
+cols = 200
+rows = 50

@@ -11,7 +11,7 @@ fn dimension_independent_surfaces_match_snapshots() {
 
 #[test]
 fn dimension_dependent_surfaces_match_snapshots_at_every_viewport() {
-    for viewport in gallery::VIEWPORTS {
+    for viewport in gallery::viewports().expect("gallery.toml must parse") {
         for case in gallery::viewport_cases(*viewport).expect("viewport gallery cases render") {
             insta::assert_snapshot!(case.snapshot_name(), case.output);
         }
@@ -20,7 +20,7 @@ fn dimension_dependent_surfaces_match_snapshots_at_every_viewport() {
 
 #[test]
 fn braille_chart_fills_exactly_the_requested_viewport() {
-    for viewport in gallery::VIEWPORTS {
+    for viewport in gallery::viewports().expect("gallery.toml must parse") {
         let chart = chart_rows(*viewport);
         assert_eq!(
             chart.len(),
