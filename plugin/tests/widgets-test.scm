@@ -64,6 +64,17 @@
   (assert-false (unbox applied) "dispatch: close leaves without applying")
   (assert-equal 'consume (dispatch-modal-action vt #false 'noop) "dispatch: an unmapped key is consumed")
 
+  ;; flip: the shell drives a vtable's optional flip effect, and no-ops without one
+  (define flipped (box #false))
+  (define flip-vt (hash 'move (lambda (st d) (void))
+                        'step (lambda (st d) (void))
+                        'apply (lambda (st) (void))
+                        'flip (lambda (st) (set-box! flipped (not (unbox flipped))))))
+  (assert-equal 'consume (dispatch-modal-action flip-vt #false 'flip) "dispatch: flip consumes")
+  (assert-true (unbox flipped) "dispatch: flip ran the vtable flip effect")
+  (assert-equal 'consume (dispatch-modal-action vt #false 'flip)
+                "dispatch: flip on a vtable without a flip effect safely no-ops")
+
   ;; ladder plumbing: the shell's step drives a seek ladder via audio's primitives
   (define ladder (list 100 500 1000 5000 30000))
   (define idx (box 0))

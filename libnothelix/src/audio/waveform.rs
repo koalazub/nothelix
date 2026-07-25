@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::UNIX_EPOCH;
 
-const PLAYHEAD_COLOR: i64 = 1;
+pub(super) const PLAYHEAD_COLOR: i64 = 1;
 const BRACKET_COLOR: i64 = 7;
 const FULL_SCALE: f64 = 32_768.0;
+const SILENCE_FLOOR: f64 = FULL_SCALE * 0.01;
 
 fn envelope_cache() -> MutexGuard<'static, HashMap<String, Vec<String>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
@@ -25,6 +26,14 @@ pub(crate) fn envelope_lines(mono: &[i32], cols: usize, rows: usize) -> Vec<Stri
     if mono.is_empty() || dot_width == 0 || dot_height == 0 {
         return canvas.lines();
     }
+    let peak = mono
+        .iter()
+        .map(|&value| value.unsigned_abs())
+        .max()
+        .unwrap_or(0) as f64;
+    if peak < SILENCE_FLOOR {
+        return canvas.lines();
+    }
     let samples = mono.len();
     let half = (dot_height as f64 - 1.0) / 2.0;
     for x in 0..dot_width {
@@ -37,9 +46,9 @@ pub(crate) fn envelope_lines(mono: &[i32], cols: usize, rows: usize) -> Vec<Stri
             lowest = lowest.min(value);
             highest = highest.max(value);
         }
-        let top = ((half - (highest as f64 / FULL_SCALE).clamp(-1.0, 1.0) * half).round())
+        let top = ((half - (highest as f64 / peak).clamp(-1.0, 1.0) * half).round())
             .clamp(0.0, dot_height as f64 - 1.0) as usize;
-        let bottom = ((half - (lowest as f64 / FULL_SCALE).clamp(-1.0, 1.0) * half).round())
+        let bottom = ((half - (lowest as f64 / peak).clamp(-1.0, 1.0) * half).round())
             .clamp(0.0, dot_height as f64 - 1.0) as usize;
         for y in top..=bottom {
             canvas.set(x, y);
@@ -78,7 +87,7 @@ fn column_runs(cols: usize, playhead: isize, lo: isize, hi: isize) -> Vec<(usize
     runs
 }
 
-fn encode_blob(lines: &[String], spans: &[(usize, usize, usize, i64)]) -> String {
+pub(super) fn encode_blob(lines: &[String], spans: &[(usize, usize, usize, i64)]) -> String {
     let rows_blob = lines.join("\n");
     let spans_blob = spans
         .iter()
@@ -88,7 +97,7 @@ fn encode_blob(lines: &[String], spans: &[(usize, usize, usize, i64)]) -> String
     format!("{rows_blob}{SECTION_SEP}{spans_blob}")
 }
 
-fn mtime_millis(path: &str) -> u128 {
+pub(super) fn mtime_millis(path: &str) -> u128 {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
@@ -147,13 +156,21 @@ mod tests {
         line.chars().any(|glyph| glyph != BLANK)
     }
 
-    fn sine(samples: usize, cycles: f64) -> Vec<i32> {
+    fn sine_amp(samples: usize, cycles: f64, amplitude: f64) -> Vec<i32> {
         (0..samples)
             .map(|i| {
                 let phase = std::f64::consts::TAU * cycles * i as f64 / samples as f64;
-                (phase.sin() * 32_000.0).round() as i32
+                (phase.sin() * amplitude).round() as i32
             })
             .collect()
+    }
+
+    fn sine(samples: usize, cycles: f64) -> Vec<i32> {
+        sine_amp(samples, cycles, 32_000.0)
+    }
+
+    fn lit_rows(lines: &[String]) -> Vec<bool> {
+        lines.iter().map(|line| any_set(line)).collect()
     }
 
     #[test]
@@ -173,13 +190,35 @@ mod tests {
     }
 
     #[test]
-    fn silence_draws_a_flat_line_off_the_top_and_bottom_rows() {
+    fn pure_silence_lights_no_rows() {
         let lines = envelope_lines(&vec![0; 4_096], 48, 4);
-        assert!(!any_set(&lines[0]), "silence must not reach the top row");
-        assert!(!any_set(&lines[3]), "silence must not reach the bottom row");
         assert!(
-            lines.iter().any(|line| any_set(line)),
-            "silence still draws a centre line"
+            lines.iter().all(|line| !any_set(line)),
+            "pure silence must light no rows"
+        );
+    }
+
+    #[test]
+    fn a_sub_one_percent_clip_is_treated_as_silence() {
+        let lines = envelope_lines(&sine_amp(4_096, 20.0, 200.0), 48, 4);
+        assert!(
+            lines.iter().all(|line| !any_set(line)),
+            "a clip under 1% full scale must not amplify noise into a waveform"
+        );
+    }
+
+    #[test]
+    fn a_half_amplitude_sine_lights_the_same_rows_as_a_full_scale_one() {
+        let full = envelope_lines(&sine_amp(4_096, 20.0, 32_000.0), 48, 4);
+        let half = envelope_lines(&sine_amp(4_096, 20.0, 16_000.0), 48, 4);
+        assert_eq!(
+            lit_rows(&full),
+            lit_rows(&half),
+            "peak-normalised envelope must fill the same rows regardless of clip loudness"
+        );
+        assert!(
+            any_set(&half[0]) && any_set(&half[3]),
+            "half-scale must reach both extremes"
         );
     }
 

@@ -165,12 +165,51 @@
   (assert-equal 6 (audio-waveform-rows) "knob guard: non-integer rows rejected")
   (assert-equal (list 50 250 1000) (audio-seek-ladder) "knob guard: bad ladder rejected")
 
+  ;; audio-view knob: default, override, and guard
+  (assert-equal "waveform" (audio-view) "knob default: audio-view is the waveform")
+  (apply-project-config! (list (cons "audio-view" "spectrogram")))
+  (assert-equal "spectrogram" (audio-view) "knob override: audio-view flips to spectrogram")
+  (apply-project-config! (list (cons "audio-view" "sonogram")))
+  (assert-equal "spectrogram" (audio-view) "knob guard: an unknown view is rejected")
+  (apply-project-config! (list (cons "audio-view" 7)))
+  (assert-equal "spectrogram" (audio-view) "knob guard: a non-string view is rejected")
+
+  ;; scrub modal view-flip: the pure transition and the vtable wiring
+  (assert-equal "spectrogram" (scrub-flip-view "waveform")
+                "flip: the waveform view flips to the spectrogram")
+  (assert-equal "waveform" (scrub-flip-view "spectrogram")
+                "flip: the spectrogram view flips back to the waveform")
+  (assert-true (procedure? (hash-try-get scrub-vtable 'flip))
+               "vtable: the scrub modal exposes a flip effect for the v key")
+
+  ;; row text shape for a synthetic spectrogram blob (full-block rows + colour runs)
+  (define blk "█")
+  (define sec-sep (make-string 1 (integer->char 29)))
+  (define span-sep (make-string 1 (integer->char 31)))
+  (define spec-blob
+    (string-append blk blk blk "\n" blk blk blk
+                   sec-sep "0,0,2,0" span-sep "0,2,3,7" span-sep "1,0,3,5"))
+  (define body (plot-blob-body-rows spec-blob))
+  (assert-equal 2 (length body) "spectrogram body: one styled row per glyph row")
+  (assert-equal (list (list (string-append blk blk) "ui.virtual.output.series0")
+                      (list blk "ui.virtual.output.series7"))
+                (car body)
+                "spectrogram body: row 0 splits into one coloured span per run")
+  (assert-equal (list (list (string-append blk blk blk) "ui.virtual.output.series5"))
+                (cadr body)
+                "spectrogram body: a full-width run is a single coloured span")
+  (assert-equal '() (plot-blob-body-rows "")
+                "spectrogram body: an empty blob yields no rows")
+  (assert-equal '() (plot-blob-body-rows "ERROR: cannot read clip")
+                "spectrogram body: an FFI error blob yields no rows")
+
   ;; restore the defaults so later suites see a clean config
   (apply-project-config!
     (list (cons "audio-autoplay" #true)
           (cons "audio-waveform-rows" 4)
           (cons "audio-seek-ladder" "100,500,1000,5000,30000")
           (cons "audio-accel-window-ms" 700)
-          (cons "audio-sweep-ms" 100)))
+          (cons "audio-sweep-ms" 100)
+          (cons "audio-view" "waveform")))
 
   (print-test-suite-footer "audio"))

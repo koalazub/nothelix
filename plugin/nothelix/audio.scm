@@ -19,7 +19,7 @@
 (#%require-dylib "libnothelix"
                  (only-in nothelix
                           audio-play audio-play-from audio-stop audio-stop-all
-                          audio-playing audio-position audio-waveform audio-info
+                          audio-playing audio-position audio-waveform audio-spectrogram audio-info
                           json-get-audio))
 
 (provide play-cell-audio
@@ -44,7 +44,11 @@
          ladder-step-index
          waveform-playhead-col
          waveform-bracket-cols
-         waveform-cols)
+         waveform-cols
+         audio-spectrogram-blob
+         plot-blob-body-rows
+         scrub-flip-view
+         scrub-vtable)
 
 ;;@doc
 ;; One active playback slot: #false, or
@@ -321,8 +325,20 @@
   (audio-waveform wav-path (waveform-cols) (audio-waveform-rows)
                   (+ playhead-col 1) (+ bracket-lo 1) (+ bracket-hi 1)))
 
-(define (cell-waveform-rows wav-path duration-ms playhead-col bracket-lo bracket-hi)
-  (define blob (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi))
+;;@doc
+;; The spectrogram counterpart to `audio-waveform-blob`. It emits the same
+;; text-plot blob (full-block glyph rows plus a per-cell colour span per run),
+;; so it decodes through the exact same path; only the playhead crosses the
+;; FFI, since a spectrogram has no bracket. The +1-with-0-none convention
+;; matches the waveform seam because steel rejects negative dylib arguments.
+(define (audio-spectrogram-blob wav-path playhead-col)
+  (audio-spectrogram wav-path (waveform-cols) (audio-waveform-rows) (+ playhead-col 1)))
+
+;;@doc
+;; Decode a waveform/spectrogram text-plot blob's first plot into styled output
+;; rows (the under-cell body, header excluded). '() when the blob is empty, an
+;; error, or carries no plot.
+(define (plot-blob-body-rows blob)
   (cond
     [(or (not (string? blob))
          (= (string-length blob) 0)
@@ -333,8 +349,18 @@
      (if (null? groups)
          '()
          (let ([plot (car groups)])
-           (cons (waveform-header-for wav-path duration-ms)
-                 (text-plot->styled-rows (car plot) (cdr plot)))))]))
+           (text-plot->styled-rows (car plot) (cdr plot))))]))
+
+(define (cell-view-blob wav-path playhead-col bracket-lo bracket-hi)
+  (if (equal? (audio-view) "spectrogram")
+      (audio-spectrogram-blob wav-path playhead-col)
+      (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi)))
+
+(define (cell-waveform-rows wav-path duration-ms playhead-col bracket-lo bracket-hi)
+  (define body (plot-blob-body-rows (cell-view-blob wav-path playhead-col bracket-lo bracket-hi)))
+  (if (null? body)
+      '()
+      (cons (waveform-header-for wav-path duration-ms) body)))
 
 (define (header-elapsed-for wav-path)
   (define slot (unbox *audio-slot*))
@@ -493,8 +519,19 @@
    cell-index
    position-ms
    step-idx
-   display-col)
+   display-col
+   view)
   #:mutable)
+
+;;@doc
+;; The pure view toggle for the scrub modal: "spectrogram" -> "waveform" and
+;; anything else -> "spectrogram". Flipping is modal-local; it never writes the
+;; audio-view knob, so reopening a clip follows the configured default.
+(define (scrub-flip-view view)
+  (if (equal? view "spectrogram") "waveform" "spectrogram"))
+
+(define (scrub-flip! state)
+  (set-ScrubState-view! state (scrub-flip-view (ScrubState-view state))))
 
 (define (safe-substring s a b)
   (define len (string-length s))
@@ -506,11 +543,65 @@
   (define ladder (audio-seek-ladder))
   (list-ref ladder (max 0 (min (- (length ladder) 1) (ScrubState-step-idx state)))))
 
+(define (spectro-cell-style color-idx)
+  (style-fg (style)
+    (cond
+      [(= color-idx 0) (Color/rgb 30 40 80)]
+      [(= color-idx 2) (Color/rgb 40 90 170)]
+      [(= color-idx 3) (Color/rgb 40 160 170)]
+      [(= color-idx 4) (Color/rgb 70 190 90)]
+      [(= color-idx 5) (Color/rgb 210 200 70)]
+      [(= color-idx 6) (Color/rgb 230 140 50)]
+      [else (Color/rgb 245 240 225)])))
+
+(define (span-row sp) (list-ref sp 0))
+(define (span-start sp) (list-ref sp 1))
+(define (span-end sp) (list-ref sp 2))
+(define (span-color sp) (list-ref sp 3))
+
+(define (draw-waveform-body! buf chart-x chart-y lines rows base-style bracket-style
+                             playhead-style playhead bracket-hi display-col)
+  (let loop ([rs lines] [r 0])
+    (when (and (not (null? rs)) (< r rows))
+      (define line (car rs))
+      (define glyph (safe-substring line display-col (+ display-col 1)))
+      (frame-set-string! buf chart-x (+ chart-y r) line base-style)
+      (when (> bracket-hi playhead)
+        (define seg (safe-substring line playhead bracket-hi))
+        (when (> (string-length seg) 0)
+          (frame-set-string! buf (+ chart-x playhead) (+ chart-y r) seg bracket-style)))
+      (when (> (string-length glyph) 0)
+        (frame-set-string! buf (+ chart-x display-col) (+ chart-y r) glyph playhead-style))
+      (loop (cdr rs) (+ r 1)))))
+
+(define (draw-spectrogram-body! buf chart-x chart-y wav rows playhead-style display-col)
+  (define groups (decode-text-plots-blob (audio-spectrogram-blob wav -1)))
+  (define plot (if (null? groups) (cons '() '()) (car groups)))
+  (define srows (car plot))
+  (define spans (cdr plot))
+  (let loop ([rs srows] [r 0])
+    (when (and (not (null? rs)) (< r rows))
+      (define glyph-row (car rs))
+      (for-each
+        (lambda (sp)
+          (when (= (span-row sp) r)
+            (define seg (safe-substring glyph-row (span-start sp) (span-end sp)))
+            (when (> (string-length seg) 0)
+              (frame-set-string! buf (+ chart-x (span-start sp)) (+ chart-y r) seg
+                                 (spectro-cell-style (span-color sp))))))
+        spans)
+      (define head (safe-substring glyph-row display-col (+ display-col 1)))
+      (when (> (string-length head) 0)
+        (frame-set-string! buf (+ chart-x display-col) (+ chart-y r) head playhead-style))
+      (loop (cdr rs) (+ r 1)))))
+
 (define (render-scrub state rect buf)
   (define rw (area-width rect))
   (define rh (area-height rect))
   (define cols (waveform-cols))
   (define rows (audio-waveform-rows))
+  (define view (ScrubState-view state))
+  (define spectrogram? (equal? view "spectrogram"))
   (define wav (ScrubState-wav-path state))
   (define duration (ScrubState-duration-ms state))
   (define position (ScrubState-position-ms state))
@@ -519,7 +610,6 @@
   (define display-col (max 0 (min (- cols 1) (ScrubState-display-col state))))
   (define bracket-cols (waveform-bracket-cols step duration cols))
   (define bracket-hi (min cols (+ playhead bracket-cols)))
-  (define lines (waveform-braille-lines wav -1 -1 -1))
 
   (define popup-w (min (- rw 2) (+ cols 6)))
   (define popup-h (min (- rh 2) (+ rows 6)))
@@ -539,27 +629,20 @@
   (block/render buf popup-area (make-block bg-style border-style "all" "rounded"))
 
   (frame-set-string! buf (+ px 2) (+ py 1)
-    (string-append "Scrub  " (format-audio-clock position) " / " (format-audio-clock duration))
+    (string-append (if spectrogram? "Spectrogram  " "Scrub  ")
+                   (format-audio-clock position) " / " (format-audio-clock duration))
     title-style)
 
   (define chart-x (+ px 2))
   (define chart-y (+ py 2))
-  (let loop ([rs lines] [r 0])
-    (when (and (not (null? rs)) (< r rows))
-      (define line (car rs))
-      (define glyph (safe-substring line display-col (+ display-col 1)))
-      (frame-set-string! buf chart-x (+ chart-y r) line base-style)
-      (when (> bracket-hi playhead)
-        (define seg (safe-substring line playhead bracket-hi))
-        (when (> (string-length seg) 0)
-          (frame-set-string! buf (+ chart-x playhead) (+ chart-y r) seg bracket-style)))
-      (when (> (string-length glyph) 0)
-        (frame-set-string! buf (+ chart-x display-col) (+ chart-y r) glyph playhead-style))
-      (loop (cdr rs) (+ r 1))))
+  (if spectrogram?
+      (draw-spectrogram-body! buf chart-x chart-y wav rows playhead-style display-col)
+      (draw-waveform-body! buf chart-x chart-y (waveform-braille-lines wav -1 -1 -1) rows
+                           base-style bracket-style playhead-style playhead bracket-hi display-col))
 
   (define footer-y (+ py popup-h -2))
   (frame-set-string! buf (+ px 2) footer-y
-    (string-append "step " (number->string step) "ms · h/l seek · j/k step · enter play")
+    (string-append "step " (number->string step) "ms · h/l seek · j/k step · v view · enter play")
     footer-style))
 
 (define (animate-scrub-sweep! state from-col to-col)
@@ -601,14 +684,16 @@
   (hash 'render render-scrub
         'move   scrub-seek!
         'step   scrub-step!
-        'apply  scrub-commit!))
+        'apply  scrub-commit!
+        'flip   scrub-flip!))
 
 (define (open-scrub! wav duration cell start-pos)
   (define ladder (audio-seek-ladder))
   (define init-idx (min 1 (- (length ladder) 1)))
   (define state
     (ScrubState wav duration cell start-pos init-idx
-                (waveform-playhead-col start-pos duration (waveform-cols))))
+                (waveform-playhead-col start-pos duration (waveform-cols))
+                (audio-view)))
   (open-widget-modal! scrub-vtable state "scrub-audio"))
 
 (define (open-scrub-for-slot! slot)

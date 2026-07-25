@@ -284,8 +284,19 @@ previous one, so only one plays at a time.
 
 A braille waveform of the clip renders under the cell, drawn from the samples in
 the WAV file with a header row that shows the length, the sample rate, and
-whether it is mono or stereo. While a clip plays, a playhead column advances
-across the waveform once a second, and it clears when the clip stops or ends.
+whether it is mono or stereo. The envelope is normalised to the clip's own peak,
+so a quiet passage fills the same rows a loud one does, and a clip under one
+percent of full scale reads as silence instead of amplified noise. While a clip
+plays, a playhead column advances across the waveform once a second, and it
+clears when the clip stops or ends.
+
+For frequency work the same cell can show a spectrogram instead. Set
+`audio-view = spectrogram` and the under-cell view becomes a short-time Fourier
+transform heatmap, a 512-sample Hann window hopped so its columns fill the width,
+mixed to mono, with magnitude in decibels clamped to a 60 dB range under the
+clip's loudest bin and low frequencies along the bottom row. Intensity reads
+through a themed colour ramp, and the playhead recolours its column exactly as it
+does on the waveform.
 
 To move around inside a clip, `]a` and `[a` (`:audio-seek-forward` and
 `:audio-seek-back`) jump forward and back by the current step and resume from
@@ -293,10 +304,12 @@ there. Press them in quick succession and the step grows through the ladder,
 from a tenth of a second up to half a minute, so a run of taps covers ground
 fast. For a finer touch, `:scrub-audio` (or `<space>ns` on the cell that is
 already playing) opens a waveform popup where `h` and `l` move the playhead,
-`j` and `k` change the step, `Enter` resumes from the playhead, and `Esc` leaves
-playback untouched. The autoplay, waveform height, seek ladder, acceleration
-window, and sweep length are all tunable through the display settings in
-`.nothelix.conf`.
+`j` and `k` change the step, `v` flips between the waveform and the spectrogram
+for that clip, `Enter` resumes from the playhead, and `Esc` leaves playback
+untouched. The flip is local to the popup, so reopening it follows the
+`audio-view` default again. The autoplay, view, waveform height, seek ladder,
+acceleration window, and sweep length are all tunable through the display
+settings in `.nothelix.conf`.
 
 ## Kernel persistence
 
@@ -328,6 +341,7 @@ a notebook underneath.
 | `render-width` | Pin image width | |
 | `plots-per-cell` | Cap on stacked plots rendered per cell, from `1` to `256` | `32` |
 | `plot-mode` | Force `raster` or `braille` plot rendering, or `auto` to decide from the plotting backend | `auto` |
+| `audio-view` | Which view a cell's audio renders under its output, `waveform` or `spectrogram` | `waveform` |
 | `slm-summaries` | Label picker rows with Apple's on-device model (macOS 26+, needs Apple Intelligence, falls back to first-line heuristics) | `false` |
 | `widgets` | Enable the `]w`/`[w` widget walk and the shared scrub-style modal; when `false` both no-op and the direct feature keys still work | `true` |
 | `julia-bin`, `julia-project` | Pin the Julia binary or environment for cells | PATH `julia` |

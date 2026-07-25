@@ -317,8 +317,9 @@
 ;;@doc
 ;; Map a modal action symbol to its vtable effect and return 'close or 'consume.
 ;; 'apply runs the vtable's apply then closes; 'close leaves without applying;
-;; 'right/'left drive 'move by ±1; 'down/'up drive 'step by ±1. Pure of key
-;; events so the dispatch is testable on its own.
+;; 'right/'left drive 'move by ±1; 'down/'up drive 'step by ±1; 'flip invokes the
+;; vtable's optional 'flip effect (a no-op for a vtable that omits it). Pure of
+;; key events so the dispatch is testable on its own.
 (define (dispatch-modal-action vtable state action)
   (cond
     [(eq? action 'close) 'close]
@@ -327,6 +328,10 @@
     [(eq? action 'left) ((hash-try-get vtable 'move) state -1) 'consume]
     [(eq? action 'down) ((hash-try-get vtable 'step) state 1) 'consume]
     [(eq? action 'up) ((hash-try-get vtable 'step) state -1) 'consume]
+    [(eq? action 'flip)
+     (let ([flip (hash-try-get vtable 'flip)])
+       (when flip (flip state)))
+     'consume]
     [else 'consume]))
 
 (define (key-event->modal-action event)
@@ -338,6 +343,7 @@
     [(or (eqv? char #\h) (key-event-left? event)) 'left]
     [(or (eqv? char #\j) (key-event-down? event)) 'down]
     [(or (eqv? char #\k) (key-event-up? event)) 'up]
+    [(eqv? char #\v) 'flip]
     [else 'noop]))
 
 (define (handle-modal-event shell event)

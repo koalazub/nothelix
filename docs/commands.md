@@ -186,9 +186,11 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 `:scrub-audio` opens a small waveform popup over the cell. Press `h` and `l` to
 move the playhead back and forward by the current step, and `j` and `k` to make
 that step coarser or finer along the ladder. A dimmed bracket shows how far one
-step reaches, and the playhead sweeps to its new column on each move. Press
-`Enter` to resume playback from the playhead, or `Esc` (or `q`) to leave and
-keep playback as it was. Pressing `<space>ns` on the cell that is already
+step reaches, and the playhead sweeps to its new column on each move. Press `v`
+to flip the popup between the waveform and the spectrogram for that clip; the
+flip is local to the popup, so reopening it follows the `audio-view` default.
+Press `Enter` to resume playback from the playhead, or `Esc` (or `q`) to leave
+and keep playback as it was. Pressing `<space>ns` on the cell that is already
 playing opens the same popup. `]a` and `[a` seek without the popup, and pressing
 them in quick succession accelerates the step through the ladder.
 

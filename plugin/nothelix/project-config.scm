@@ -54,6 +54,8 @@
          set-run-interrupts!
          audio-waveform-rows
          set-audio-waveform-rows!
+         audio-view
+         set-audio-view!
          audio-seek-ladder
          set-audio-seek-ladder!
          audio-accel-window-ms
@@ -146,6 +148,23 @@
 (define (audio-waveform-rows) (unbox *audio-waveform-rows*))
 (define (set-audio-waveform-rows! v)
   (when (and (exact-integer? v) (> v 0) (<= v 16)) (set-box! *audio-waveform-rows* v)))
+
+;;@doc
+;; Which view a cell's audio renders under its output: "waveform" (the braille
+;; envelope, default) or "spectrogram" (the STFT heatmap). The scrub modal's
+;; `v` key flips its own live view without touching this knob, so reopening a
+;; clip always follows the configured default.
+(define *audio-view* (box "waveform"))
+(define (audio-view) (unbox *audio-view*))
+
+(define (valid-audio-view? v)
+  (or (equal? v "waveform") (equal? v "spectrogram")))
+
+;;@doc
+;; Override the audio view. Ignores anything that isn't "waveform" or
+;; "spectrogram", so a malformed config value leaves the current view in place.
+(define (set-audio-view! v)
+  (when (and (string? v) (valid-audio-view? v)) (set-box! *audio-view* v)))
 
 ;;@doc
 ;; The seek-step ladder in milliseconds, coarsest last. Quick seeks and scrub
@@ -305,6 +324,8 @@
     (when (boolean? aa) (set-audio-autoplay! aa)))
   (let ([awr (config-ref alist "audio-waveform-rows" #false)])
     (when (exact-integer? awr) (set-audio-waveform-rows! awr)))
+  (let ([av (config-ref alist "audio-view" #false)])
+    (when (string? av) (set-audio-view! av)))
   (let ([asl (parse-seek-ladder-value (config-ref alist "audio-seek-ladder" #false))])
     (when asl (set-audio-seek-ladder! asl)))
   (let ([aaw (config-ref alist "audio-accel-window-ms" #false)])

@@ -1,8 +1,10 @@
 mod player;
 mod registry;
+mod spectrogram;
 mod wav;
 mod waveform;
 
+pub use spectrogram::audio_spectrogram;
 pub use waveform::audio_waveform;
 
 use crate::error::FFI_ERROR_PREFIX;
