@@ -10,6 +10,7 @@ pub(super) const PLAYHEAD_COLOR: i64 = 1;
 const BRACKET_COLOR: i64 = 7;
 const FULL_SCALE: f64 = 32_768.0;
 const SILENCE_FLOOR: f64 = FULL_SCALE * 0.01;
+const QUIET_WINDOW_FLOOR: f64 = 0.1;
 
 fn envelope_cache() -> MutexGuard<'static, HashMap<String, Vec<String>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
@@ -47,16 +48,21 @@ pub(crate) fn envelope_lines_with_peak(
     }
     let samples = mono.len();
     let half = (dot_height as f64 - 1.0) / 2.0;
+    let mut carry: Option<i32> = None;
     for x in 0..dot_width {
         let start = x * samples / dot_width;
         let end = (((x + 1) * samples) / dot_width)
             .max(start + 1)
             .min(samples);
-        let (mut lowest, mut highest) = (i32::MAX, i32::MIN);
+        let (mut lowest, mut highest) = match carry {
+            Some(previous) => (previous, previous),
+            None => (i32::MAX, i32::MIN),
+        };
         for &value in &mono[start..end] {
             lowest = lowest.min(value);
             highest = highest.max(value);
         }
+        carry = mono[start..end].last().copied().or(carry);
         let top = ((half - (highest as f64 / peak).clamp(-1.0, 1.0) * half).round())
             .clamp(0.0, dot_height as f64 - 1.0) as usize;
         let bottom = ((half - (lowest as f64 / peak).clamp(-1.0, 1.0) * half).round())
@@ -216,7 +222,9 @@ pub fn audio_window(
         Err(message) => return format!("{FFI_ERROR_PREFIX}{message}"),
     };
     let (start, end) = window_bounds(&clip, position_ms, window_ms);
-    let lines = envelope_lines_with_peak(&clip.samples[start..end], cols, rows, clip.peak);
+    let slice = &clip.samples[start..end];
+    let peak = clip_peak(slice).max(clip.peak * QUIET_WINDOW_FLOOR);
+    let lines = envelope_lines_with_peak(slice, cols, rows, peak);
     let centre = cols / 2;
     let spans: Vec<(usize, usize, usize, i64)> = (0..rows)
         .map(|row| (row, centre, centre + 1, PLAYHEAD_COLOR))
@@ -283,6 +291,65 @@ mod tests {
         assert!(
             !any_set(&quiet[0]) && !any_set(&quiet[3]),
             "a silent stretch rests on the centre line instead of filling the rows"
+        );
+    }
+
+    #[test]
+    fn a_short_window_traces_a_connected_wave() {
+        let rate = 44_100usize;
+        let cycles = 12.0;
+        let span = rate / 25;
+        let tone: Vec<i32> = (0..span)
+            .map(|i| {
+                let phase = std::f64::consts::TAU * cycles * i as f64 / span as f64;
+                (phase.sin() * 30_000.0) as i32
+            })
+            .collect();
+        let lines = envelope_lines_with_peak(&tone, 40, 4, clip_peak(&tone));
+
+        assert!(any_set(&lines[0]), "crests reach the top row");
+        assert!(any_set(&lines[3]), "troughs reach the bottom row");
+        for (index, line) in lines.iter().enumerate() {
+            assert_eq!(line.chars().count(), 40, "row {index} spans the width");
+        }
+        let columns_with_ink = (0..40)
+            .filter(|&col| {
+                lines
+                    .iter()
+                    .any(|line| line.chars().nth(col).is_some_and(|glyph| glyph != BLANK))
+            })
+            .count();
+        assert_eq!(
+            columns_with_ink, 40,
+            "a traced wave leaves no gaps between columns"
+        );
+    }
+
+    #[test]
+    fn a_quiet_passage_auto_ranges_but_near_silence_stays_small() {
+        let loud = clip_peak(&sine_amp(4_096, 12.0, 30_000.0));
+        let moderate = sine_amp(4_096, 12.0, 3_000.0);
+        let ranged = envelope_lines_with_peak(
+            &moderate,
+            40,
+            4,
+            clip_peak(&moderate).max(loud * QUIET_WINDOW_FLOOR),
+        );
+        assert!(
+            any_set(&ranged[0]) && any_set(&ranged[3]),
+            "a quiet passage still fills the rows once the window auto-ranges"
+        );
+
+        let whisper = sine_amp(4_096, 12.0, 300.0);
+        let floored = envelope_lines_with_peak(
+            &whisper,
+            40,
+            4,
+            clip_peak(&whisper).max(loud * QUIET_WINDOW_FLOOR),
+        );
+        assert!(
+            !any_set(&floored[0]),
+            "the floor keeps near-silence from being amplified to full height"
         );
     }
 

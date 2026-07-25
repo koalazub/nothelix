@@ -147,13 +147,14 @@
     (set-box! *audio-refresh-ms* v)))
 
 ;;@doc
-;; Milliseconds of signal shown either side of the playing position. A short
-;; window moves fast and shows waveform detail; a long one reads more like the
-;; whole clip. Clamped to 200..30000.
-(define *audio-window-ms* (box 2000))
+;; Milliseconds of signal shown around the playing position. The default is
+;; short enough that individual cycles resolve, so the trace reads as a wave
+;; rather than a block of peaks; widen it to trade wave detail for context.
+;; Clamped to 5..30000.
+(define *audio-window-ms* (box 40))
 (define (audio-window-ms) (unbox *audio-window-ms*))
 (define (set-audio-window-ms! v)
-  (when (and (exact-integer? v) (>= v 200) (<= v 30000))
+  (when (and (exact-integer? v) (>= v 5) (<= v 30000))
     (set-box! *audio-window-ms* v)))
 
 ;;@doc
