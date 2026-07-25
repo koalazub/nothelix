@@ -15,11 +15,17 @@ pub(super) enum WavError {
 impl WavError {
     pub(super) fn message(&self) -> String {
         match self {
-            Self::Unsupported(descriptor) => format!("{descriptor} unsupported — only PCM16"),
+            Self::Unsupported(descriptor) => {
+                format!("{descriptor} unsupported — PCM 8/16/24/32 and float 32/64 are read")
+            }
             Self::Malformed(detail) => detail.clone(),
         }
     }
 }
+
+const FORMAT_PCM: u16 = 1;
+const FORMAT_FLOAT: u16 = 3;
+const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
 fn read_u16(bytes: &[u8], at: usize) -> Option<u16> {
     bytes
@@ -35,10 +41,58 @@ fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
 
 fn format_descriptor(audio_format: u16, bits: u16) -> String {
     match audio_format {
-        1 => format!("PCM{bits}"),
-        3 => format!("float{bits}"),
+        FORMAT_PCM => format!("PCM{bits}"),
+        FORMAT_FLOAT => format!("float{bits}"),
         other => format!("format {other}"),
     }
+}
+
+fn effective_format(bytes: &[u8], body_start: usize, body_end: usize, declared: u16) -> u16 {
+    if declared != FORMAT_EXTENSIBLE || body_end.saturating_sub(body_start) < 26 {
+        return declared;
+    }
+    read_u16(bytes, body_start + 24).unwrap_or(declared)
+}
+
+fn scale_float(value: f64) -> i16 {
+    (value.clamp(-1.0, 1.0) * 32767.0).round() as i16
+}
+
+fn to_pcm16_bytes(data: Vec<u8>, audio_format: u16, bits: u16) -> Result<Vec<u8>, WavError> {
+    let converted: Vec<i16> = match (audio_format, bits) {
+        (FORMAT_PCM, 16) => return Ok(data),
+        (FORMAT_PCM, 8) => data
+            .iter()
+            .map(|&byte| ((byte as i16) - 128) << 8)
+            .collect(),
+        (FORMAT_PCM, 24) => data
+            .chunks_exact(3)
+            .map(|triple| i16::from_le_bytes([triple[1], triple[2]]))
+            .collect(),
+        (FORMAT_PCM, 32) => data
+            .chunks_exact(4)
+            .map(|quad| i16::from_le_bytes([quad[2], quad[3]]))
+            .collect(),
+        (FORMAT_FLOAT, 32) => data
+            .chunks_exact(4)
+            .map(
+                |quad| scale_float(f32::from_le_bytes([quad[0], quad[1], quad[2], quad[3]]) as f64),
+            )
+            .collect(),
+        (FORMAT_FLOAT, 64) => data
+            .chunks_exact(8)
+            .map(|octet| {
+                scale_float(f64::from_le_bytes([
+                    octet[0], octet[1], octet[2], octet[3], octet[4], octet[5], octet[6], octet[7],
+                ]))
+            })
+            .collect(),
+        _ => return Err(WavError::Unsupported(format_descriptor(audio_format, bits))),
+    };
+    Ok(converted
+        .into_iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect())
 }
 
 pub(super) fn parse_pcm16(bytes: &[u8]) -> Result<WavData, WavError> {
@@ -62,8 +116,9 @@ pub(super) fn parse_pcm16(bytes: &[u8]) -> Result<WavData, WavError> {
                 if body_end - body_start < 16 {
                     return Err(WavError::Malformed("short fmt chunk".to_string()));
                 }
+                let declared = read_u16(bytes, body_start).unwrap_or(0);
                 format = Some((
-                    read_u16(bytes, body_start).unwrap_or(0),
+                    effective_format(bytes, body_start, body_end, declared),
                     read_u16(bytes, body_start + 2).unwrap_or(0),
                     read_u32(bytes, body_start + 4).unwrap_or(0),
                     read_u16(bytes, body_start + 14).unwrap_or(0),
@@ -82,15 +137,13 @@ pub(super) fn parse_pcm16(bytes: &[u8]) -> Result<WavData, WavError> {
 
     let (audio_format, channels, rate, bits) =
         format.ok_or_else(|| WavError::Malformed("missing fmt chunk".to_string()))?;
-    if audio_format != 1 || bits != 16 {
-        return Err(WavError::Unsupported(format_descriptor(audio_format, bits)));
-    }
     if channels == 0 || rate == 0 {
         return Err(WavError::Malformed(
             "zero channels or sample rate".to_string(),
         ));
     }
     let data = data.ok_or_else(|| WavError::Malformed("missing data chunk".to_string()))?;
+    let data = to_pcm16_bytes(data, audio_format, bits)?;
     Ok(WavData {
         channels,
         rate,
@@ -185,21 +238,118 @@ mod tests {
         assert_eq!(mono(&wav), vec![20, -150]);
     }
 
-    #[test]
-    fn eight_bit_pcm_is_rejected_as_unsupported() {
-        let mut bytes = pcm16_wav(1, 8_000, &[0, 0]);
-        bytes[34] = 8;
-        let error = parse_pcm16(&bytes).err().expect("unsupported");
-        assert_eq!(error.message(), "PCM8 unsupported — only PCM16");
+    fn wav_with_format(audio_format: u16, bits: u16, channels: u16, data: &[u8]) -> Vec<u8> {
+        let block_align = channels * bits / 8;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&audio_format.to_le_bytes());
+        out.extend_from_slice(&channels.to_le_bytes());
+        out.extend_from_slice(&8_000u32.to_le_bytes());
+        out.extend_from_slice(&(8_000 * block_align as u32).to_le_bytes());
+        out.extend_from_slice(&block_align.to_le_bytes());
+        out.extend_from_slice(&bits.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+        out
+    }
+
+    fn extensible_wav(sub_format: u16, bits: u16, channels: u16, data: &[u8]) -> Vec<u8> {
+        let block_align = channels * bits / 8;
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&FORMAT_EXTENSIBLE.to_le_bytes());
+        fmt.extend_from_slice(&channels.to_le_bytes());
+        fmt.extend_from_slice(&8_000u32.to_le_bytes());
+        fmt.extend_from_slice(&(8_000 * block_align as u32).to_le_bytes());
+        fmt.extend_from_slice(&block_align.to_le_bytes());
+        fmt.extend_from_slice(&bits.to_le_bytes());
+        fmt.extend_from_slice(&22u16.to_le_bytes());
+        fmt.extend_from_slice(&bits.to_le_bytes());
+        fmt.extend_from_slice(&0u32.to_le_bytes());
+        fmt.extend_from_slice(&sub_format.to_le_bytes());
+        fmt.extend_from_slice(&[0u8; 14]);
+
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(20 + fmt.len() as u32 + data.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+        out.extend_from_slice(&fmt);
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+        out
     }
 
     #[test]
-    fn ieee_float_is_rejected_as_unsupported() {
-        let mut bytes = pcm16_wav(1, 8_000, &[0, 0]);
-        bytes[20] = 3;
-        bytes[34] = 32;
+    fn eight_bit_pcm_centres_on_the_unsigned_midpoint() {
+        let bytes = wav_with_format(FORMAT_PCM, 8, 1, &[128, 255, 0]);
+        let wav = parse_pcm16(&bytes).unwrap_or_else(|e| panic!("{}", e.message()));
+        let samples = samples_i16(&wav);
+        assert_eq!(samples[0], 0);
+        assert!(samples[1] > 32_000, "0xFF is near full positive");
+        assert!(samples[2] < -32_000, "0x00 is near full negative");
+    }
+
+    #[test]
+    fn twenty_four_and_thirty_two_bit_pcm_keep_the_high_bytes() {
+        let wav24 = parse_pcm16(&wav_with_format(FORMAT_PCM, 24, 1, &[0x00, 0x00, 0x40]))
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(samples_i16(&wav24), vec![0x4000]);
+        let wav32 = parse_pcm16(&wav_with_format(
+            FORMAT_PCM,
+            32,
+            1,
+            &[0x00, 0x00, 0x00, 0x40],
+        ))
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(samples_i16(&wav32), vec![0x4000]);
+    }
+
+    #[test]
+    fn ieee_float_scales_into_the_pcm16_range() {
+        let mut data = Vec::new();
+        for value in [0.0f32, 1.0, -1.0, 0.5, 2.0] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        let wav = parse_pcm16(&wav_with_format(FORMAT_FLOAT, 32, 1, &data))
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(samples_i16(&wav), vec![0, 32_767, -32_767, 16_384, 32_767]);
+    }
+
+    #[test]
+    fn extensible_float32_is_read_through_its_subformat_guid() {
+        let mut data = Vec::new();
+        for value in [0.0f32, 0.5, -0.5] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        let wav = parse_pcm16(&extensible_wav(FORMAT_FLOAT, 32, 1, &data))
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(wav.channels, 1);
+        assert_eq!(samples_i16(&wav), vec![0, 16_384, -16_384]);
+    }
+
+    #[test]
+    fn extensible_pcm16_is_read_through_its_subformat_guid() {
+        let data: Vec<u8> = [100i16, -100]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let wav = parse_pcm16(&extensible_wav(FORMAT_PCM, 16, 1, &data))
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(samples_i16(&wav), vec![100, -100]);
+    }
+
+    #[test]
+    fn a_genuinely_unknown_format_still_reports_unsupported() {
+        let bytes = wav_with_format(7, 16, 1, &[0, 0]);
         let error = parse_pcm16(&bytes).err().expect("unsupported");
-        assert_eq!(error.message(), "float32 unsupported — only PCM16");
+        assert!(error.message().starts_with("format 7 unsupported"));
     }
 
     #[test]

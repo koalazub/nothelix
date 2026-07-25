@@ -1,7 +1,3 @@
-//! Verifies libnothelix's compile-time BUILD_ID contract. CI builds
-//! stamp "ci-<yyyymmdd>-<short-git-sha>"; dev builds stamp the constant
-//! "dev" so commits never force a rebuild.
-
 #[test]
 fn build_id_matches_the_contract() {
     let id = nothelix::build_id();
