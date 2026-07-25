@@ -4,8 +4,8 @@ mod spectrogram;
 mod wav;
 mod waveform;
 
-pub use spectrogram::audio_spectrogram;
-pub use waveform::audio_waveform;
+pub use spectrogram::{audio_spectrogram, audio_spectrogram_window};
+pub use waveform::{audio_waveform, audio_window};
 
 use crate::error::FFI_ERROR_PREFIX;
 use player::resolved;

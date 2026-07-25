@@ -20,6 +20,7 @@
                  (only-in nothelix
                           audio-play audio-play-from audio-stop audio-stop-all
                           audio-playing audio-position audio-waveform audio-spectrogram audio-info
+                          audio-window audio-spectrogram-window
                           json-get-audio))
 
 (provide play-cell-audio
@@ -351,16 +352,29 @@
          (let ([plot (car groups)])
            (text-plot->styled-rows (car plot) (cdr plot))))]))
 
-(define (cell-view-blob wav-path playhead-col bracket-lo bracket-hi)
-  (if (equal? (audio-view) "spectrogram")
-      (audio-spectrogram-blob wav-path playhead-col)
-      (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi)))
+;;@doc
+;; While a clip plays, the body is a window of the signal centred on the
+;; playing position, so the graph moves with the audio instead of standing
+;; still under a stepping marker. With nothing playing it is the whole clip.
+(define (cell-view-blob wav-path live-ms playhead-col bracket-lo bracket-hi)
+  (define spectrogram? (equal? (audio-view) "spectrogram"))
+  (cond
+    [(>= live-ms 0)
+     (if spectrogram?
+         (audio-spectrogram-window wav-path (waveform-cols) (audio-waveform-rows)
+                                   live-ms (audio-window-ms))
+         (audio-window wav-path (waveform-cols) (audio-waveform-rows)
+                       live-ms (audio-window-ms)))]
+    [spectrogram? (audio-spectrogram-blob wav-path playhead-col)]
+    [else (audio-waveform-blob wav-path playhead-col bracket-lo bracket-hi)]))
 
 (define (cell-waveform-rows wav-path duration-ms playhead-col bracket-lo bracket-hi)
-  (define body (plot-blob-body-rows (cell-view-blob wav-path playhead-col bracket-lo bracket-hi)))
+  (define live-ms (header-elapsed-for wav-path))
+  (define body
+    (plot-blob-body-rows (cell-view-blob wav-path live-ms playhead-col bracket-lo bracket-hi)))
   (if (null? body)
       '()
-      (cons (waveform-header-for wav-path duration-ms) body)))
+      (cons (waveform-header-for wav-path duration-ms live-ms) body)))
 
 (define (header-elapsed-for wav-path)
   (define slot (unbox *audio-slot*))
@@ -369,7 +383,7 @@
         (if (string-starts-with? pos "ERROR:") -1 (or (string->number pos) -1)))
       -1))
 
-(define (waveform-header-for wav-path duration-ms)
+(define (waveform-header-for wav-path duration-ms live-ms)
   (define info (audio-info wav-path))
   (define fallback (string-append "♪ " (format-audio-clock duration-ms)))
   (cond
@@ -380,7 +394,7 @@
          (audio-waveform-header duration-ms
                                 (or (string->number (car parts)) 0)
                                 (or (string->number (cadr parts)) 1)
-                                (header-elapsed-for wav-path))
+                                live-ms)
          fallback)]))
 
 (define (waveform-braille-lines wav-path playhead-col bracket-lo bracket-hi)
@@ -434,9 +448,9 @@
 (define *playhead-ticking?* (box #false))
 
 ;;@doc
-;; Start the once-a-second playhead ticker if it is not already running. Each
-;; tick advances the playing cell's waveform playhead; the loop self-terminates
-;; when the slot empties or playback stops, clearing the playhead.
+;; Start the playhead ticker if it is not already running. Each tick redraws
+;; the playing cell at the current position, so the graph tracks the audio;
+;; the loop self-terminates when the slot empties or playback stops.
 (define (start-playhead-ticker!)
   (define slot (unbox *audio-slot*))
   (when slot (recompose-cell! (slot-cell slot) 0 -1 -1))
@@ -445,7 +459,8 @@
     (schedule-playhead-tick!)))
 
 (define (schedule-playhead-tick!)
-  (enqueue-thread-local-callback-with-delay 1000 playhead-tick!))
+  (enqueue-thread-local-callback-with-delay (audio-refresh-ms) playhead-tick!))
+
 
 (define (playhead-tick!)
   (define slot (unbox *audio-slot*))

@@ -3,7 +3,7 @@ use crate::chart::braille::BrailleCanvas;
 use crate::error::FFI_ERROR_PREFIX;
 use crate::json_utils::{SECTION_SEP, SPAN_SEP};
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::UNIX_EPOCH;
 
 pub(super) const PLAYHEAD_COLOR: i64 = 1;
@@ -19,18 +19,29 @@ fn envelope_cache() -> MutexGuard<'static, HashMap<String, Vec<String>>> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+pub(crate) fn clip_peak(mono: &[i32]) -> f64 {
+    mono.iter()
+        .map(|&value| value.unsigned_abs())
+        .max()
+        .unwrap_or(0) as f64
+}
+
 pub(crate) fn envelope_lines(mono: &[i32], cols: usize, rows: usize) -> Vec<String> {
+    envelope_lines_with_peak(mono, cols, rows, clip_peak(mono))
+}
+
+pub(crate) fn envelope_lines_with_peak(
+    mono: &[i32],
+    cols: usize,
+    rows: usize,
+    peak: f64,
+) -> Vec<String> {
     let mut canvas = BrailleCanvas::new(cols.max(1), rows.max(1));
     let dot_width = canvas.dot_width();
     let dot_height = canvas.dot_height();
     if mono.is_empty() || dot_width == 0 || dot_height == 0 {
         return canvas.lines();
     }
-    let peak = mono
-        .iter()
-        .map(|&value| value.unsigned_abs())
-        .max()
-        .unwrap_or(0) as f64;
     if peak < SILENCE_FLOOR {
         return canvas.lines();
     }
@@ -106,6 +117,50 @@ pub(super) fn mtime_millis(path: &str) -> u128 {
         .unwrap_or(0)
 }
 
+pub(super) struct MonoClip {
+    pub rate: u32,
+    pub samples: Vec<i32>,
+    pub peak: f64,
+}
+
+fn clip_cache() -> MutexGuard<'static, HashMap<String, Arc<MonoClip>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<MonoClip>>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(super) fn cached_clip(path: &str) -> Result<Arc<MonoClip>, String> {
+    let key = format!("{path}\u{0}{}", mtime_millis(path));
+    if let Some(hit) = clip_cache().get(&key).cloned() {
+        return Ok(hit);
+    }
+    let bytes = std::fs::read(path).map_err(|source| format!("cannot read {path}: {source}"))?;
+    let wav = wav::parse_pcm16(&bytes).map_err(|error| error.message())?;
+    let samples = wav::mono(&wav);
+    let clip = Arc::new(MonoClip {
+        rate: wav.rate,
+        peak: clip_peak(&samples),
+        samples,
+    });
+    clip_cache().insert(key, clip.clone());
+    Ok(clip)
+}
+
+pub(super) fn window_bounds(
+    clip: &MonoClip,
+    position_ms: isize,
+    window_ms: isize,
+) -> (usize, usize) {
+    let total = clip.samples.len();
+    let per_ms = clip.rate as u64;
+    let width = ((window_ms.max(1) as u64 * per_ms) / 1000).max(1) as usize;
+    let centre = ((position_ms.max(0) as u64 * per_ms) / 1000) as usize;
+    let start = centre.saturating_sub(width / 2).min(total);
+    (start, (start + width).min(total))
+}
+
 fn cached_lines(path: &str, cols: usize, rows: usize) -> Result<Vec<String>, String> {
     let key = format!("{path}\u{0}{}\u{0}{cols}\u{0}{rows}", mtime_millis(path));
     if let Some(hit) = envelope_cache().get(&key).cloned() {
@@ -147,6 +202,28 @@ pub fn audio_waveform(
     encode_blob(&lines, &spans)
 }
 
+pub fn audio_window(
+    path: String,
+    cols: isize,
+    rows: isize,
+    position_ms: isize,
+    window_ms: isize,
+) -> String {
+    let cols = cols.max(1) as usize;
+    let rows = rows.max(1) as usize;
+    let clip = match cached_clip(&path) {
+        Ok(clip) => clip,
+        Err(message) => return format!("{FFI_ERROR_PREFIX}{message}"),
+    };
+    let (start, end) = window_bounds(&clip, position_ms, window_ms);
+    let lines = envelope_lines_with_peak(&clip.samples[start..end], cols, rows, clip.peak);
+    let centre = cols / 2;
+    let spans: Vec<(usize, usize, usize, i64)> = (0..rows)
+        .map(|row| (row, centre, centre + 1, PLAYHEAD_COLOR))
+        .collect();
+    encode_blob(&lines, &spans)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +248,50 @@ mod tests {
 
     fn lit_rows(lines: &[String]) -> Vec<bool> {
         lines.iter().map(|line| any_set(line)).collect()
+    }
+
+    fn clip_of(pattern: &[i32], rate: u32) -> MonoClip {
+        MonoClip {
+            rate,
+            peak: clip_peak(pattern),
+            samples: pattern.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_window_tracks_the_playing_position() {
+        let mut samples = vec![0i32; 8_000];
+        for (i, slot) in samples.iter_mut().enumerate().take(2_000).skip(1_000) {
+            *slot = if i % 2 == 0 { 30_000 } else { -30_000 };
+        }
+        let clip = clip_of(&samples, 8_000);
+
+        let (early_start, early_end) = window_bounds(&clip, 150, 200);
+        let (late_start, late_end) = window_bounds(&clip, 800, 200);
+        assert!(
+            late_start > early_start,
+            "the window must advance with time"
+        );
+
+        let loud = envelope_lines_with_peak(&samples[early_start..early_end], 20, 4, clip.peak);
+        let quiet = envelope_lines_with_peak(&samples[late_start..late_end], 20, 4, clip.peak);
+        assert_ne!(
+            loud, quiet,
+            "a moving window must redraw as the signal changes"
+        );
+        assert!(any_set(&loud[0]), "the burst window reaches the top row");
+        assert!(
+            !any_set(&quiet[0]) && !any_set(&quiet[3]),
+            "a silent stretch rests on the centre line instead of filling the rows"
+        );
+    }
+
+    #[test]
+    fn window_bounds_stay_inside_the_clip() {
+        let clip = clip_of(&vec![0i32; 4_000], 8_000);
+        let (start, end) = window_bounds(&clip, 100_000, 1_000);
+        assert!(start <= clip.samples.len() && end <= clip.samples.len());
+        assert!(end >= start);
     }
 
     #[test]

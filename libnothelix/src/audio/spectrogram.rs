@@ -243,6 +243,26 @@ pub fn audio_spectrogram(
     encode_blob(&lines, &spans)
 }
 
+pub fn audio_spectrogram_window(
+    path: String,
+    cols: isize,
+    rows: isize,
+    position_ms: isize,
+    window_ms: isize,
+) -> String {
+    let cols = cols.max(1) as usize;
+    let rows = rows.max(1) as usize;
+    let clip = match super::waveform::cached_clip(&path) {
+        Ok(clip) => clip,
+        Err(message) => return format!("{FFI_ERROR_PREFIX}{message}"),
+    };
+    let (start, end) = super::waveform::window_bounds(&clip, position_ms, window_ms);
+    let cells = spectrogram_cells(&clip.samples[start..end], cols, rows);
+    let lines: Vec<String> = (0..rows).map(|_| BLOCK.to_string().repeat(cols)).collect();
+    let spans = spectrogram_spans(&cells, cols, (cols / 2) as isize);
+    encode_blob(&lines, &spans)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

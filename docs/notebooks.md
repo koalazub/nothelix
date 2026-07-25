@@ -286,9 +286,14 @@ A braille waveform of the clip renders under the cell, drawn from the samples in
 the WAV file with a header row that shows the length, the sample rate, and
 whether it is mono or stereo. The envelope is normalised to the clip's own peak,
 so a quiet passage fills the same rows a loud one does, and a clip under one
-percent of full scale reads as silence instead of amplified noise. While a clip
-plays, a playhead column advances across the waveform once a second, and it
-clears when the clip stops or ends.
+percent of full scale reads as silence instead of amplified noise.
+
+While a clip plays the graph tracks the audio. Rather than a still picture of the
+whole clip with a marker crawling over it, the rows show a window of the signal
+centred on the playing position, redrawn about ten times a second, so the trace
+moves with what you are hearing and a transient reads as a jump. `audio-window-ms`
+sets how much signal that window spans and `audio-refresh-ms` how often it
+redraws. When the clip stops the view returns to the whole-clip envelope.
 
 For frequency work the same cell can show a spectrogram instead. Set
 `audio-view = spectrogram` and the under-cell view becomes a short-time Fourier
@@ -342,6 +347,8 @@ a notebook underneath.
 | `plots-per-cell` | Cap on stacked plots rendered per cell, from `1` to `256` | `32` |
 | `plot-mode` | Force `raster` or `braille` plot rendering, or `auto` to decide from the plotting backend | `auto` |
 | `audio-view` | Which view a cell's audio renders under its output, `waveform` or `spectrogram` | `waveform` |
+| `audio-window-ms` | Signal shown around the playing position while a clip plays, from `200` to `30000` | `2000` |
+| `audio-refresh-ms` | How often a playing clip's graph redraws, from `40` to `1000` | `100` |
 | `slm-summaries` | Label picker rows with Apple's on-device model (macOS 26+, needs Apple Intelligence, falls back to first-line heuristics) | `false` |
 | `widgets` | Enable the `]w`/`[w` widget walk and the shared scrub-style modal; when `false` both no-op and the direct feature keys still work | `true` |
 | `julia-bin`, `julia-project` | Pin the Julia binary or environment for cells | PATH `julia` |

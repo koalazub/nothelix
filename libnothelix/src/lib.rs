@@ -60,7 +60,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 32;
+pub const NOTHELIX_FFI_VERSION: u32 = 33;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -501,6 +501,8 @@ mod steel_bindings {
             module.register_fn("audio-position", audio::audio_position);
             module.register_fn("audio-waveform", audio::audio_waveform);
             module.register_fn("audio-spectrogram", audio::audio_spectrogram);
+            module.register_fn("audio-window", audio::audio_window);
+            module.register_fn("audio-spectrogram-window", audio::audio_spectrogram_window);
             module.register_fn("audio-info", audio::audio_info);
         }
     }

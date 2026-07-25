@@ -52,6 +52,10 @@
          set-audio-autoplay!
          run-interrupts?
          set-run-interrupts!
+         audio-refresh-ms
+         set-audio-refresh-ms!
+         audio-window-ms
+         set-audio-window-ms!
          audio-waveform-rows
          set-audio-waveform-rows!
          audio-view
@@ -132,6 +136,25 @@
 (define (audio-autoplay?) (unbox *audio-autoplay*))
 (define (set-audio-autoplay! v)
   (when (boolean? v) (set-box! *audio-autoplay* v)))
+
+;;@doc
+;; Milliseconds between redraws of a playing clip's graph. Lower moves more
+;; smoothly and costs more redraws; clamped to a sane 40..1000 band.
+(define *audio-refresh-ms* (box 100))
+(define (audio-refresh-ms) (unbox *audio-refresh-ms*))
+(define (set-audio-refresh-ms! v)
+  (when (and (exact-integer? v) (>= v 40) (<= v 1000))
+    (set-box! *audio-refresh-ms* v)))
+
+;;@doc
+;; Milliseconds of signal shown either side of the playing position. A short
+;; window moves fast and shows waveform detail; a long one reads more like the
+;; whole clip. Clamped to 200..30000.
+(define *audio-window-ms* (box 2000))
+(define (audio-window-ms) (unbox *audio-window-ms*))
+(define (set-audio-window-ms! v)
+  (when (and (exact-integer? v) (>= v 200) (<= v 30000))
+    (set-box! *audio-window-ms* v)))
 
 ;;@doc
 ;; `run-interrupts = false` makes the run key refuse on a running cell
@@ -336,6 +359,10 @@
     (when (boolean? we) (set-widgets-enabled! we)))
   (let ([ri (config-ref alist "run-interrupts" 'unset)])
     (when (boolean? ri) (set-run-interrupts! ri)))
+  (let ([arm (config-ref alist "audio-refresh-ms" #false)])
+    (when (exact-integer? arm) (set-audio-refresh-ms! arm)))
+  (let ([awm (config-ref alist "audio-window-ms" #false)])
+    (when (exact-integer? awm) (set-audio-window-ms! awm)))
   alist)
 
 ;; --- executable runtime (trust-gated) ---
