@@ -263,4 +263,5 @@
       render-chart
       (hash "handle_event" handle-chart-event)))
 
-  (push-component! (overlaid component)))
+  (overlaid component)
+  (push-component! component))

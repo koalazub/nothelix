@@ -174,7 +174,8 @@
   (define component
     (new-component! "output-view" state render-output-view
       (hash "handle_event" handle-output-view-event)))
-  (push-component! (overlaid component))
+  (overlaid component)
+  (push-component! component)
   (when (OutputViewState-live? state)
     (enqueue-thread-local-callback-with-delay 500
       (lambda () (output-view-refresh! state)))))

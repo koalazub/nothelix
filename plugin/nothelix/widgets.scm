@@ -358,10 +358,10 @@
   (define blocked (widget-walk-guard))
   (if blocked
       (set-status! blocked)
-      (push-component!
-        (overlaid
-          (new-component! name (ModalShell vtable state) render-modal
-            (hash "handle_event" handle-modal-event))))))
+      (let ([component (new-component! name (ModalShell vtable state) render-modal
+                         (hash "handle_event" handle-modal-event))])
+        (overlaid component)
+        (push-component! component))))
 
 ;; --- debounced source-widget re-run effect ---
 ;;
