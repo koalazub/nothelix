@@ -76,6 +76,31 @@ monochrome while the shape is exactly the one your terminal gets.
 {% include engine/braille-chart-120x40.txt %}
 ```
 
+## Audio draws as a signal
+
+A cell that calls `wavplay` gets the same braille treatment, and which picture
+you see depends on whether the clip is playing. At rest the rows hold a peak
+envelope of the whole file, so a two second tone that swells and fades reads as
+its shape over time.
+
+```text
+{% include engine/audio-envelope-120x40.txt %}
+```
+
+While the clip plays those rows become a window of the signal centred on the
+playing position, forty milliseconds wide by default and redrawn about ten times
+a second. That window is short enough for individual cycles to resolve, so the
+same tone reads as the wave itself rather than a band of peaks, and the columns
+are joined into one continuous trace.
+
+```text
+{% include engine/audio-scope-120x40.txt %}
+```
+
+Both blocks come out of the engine through `just gallery`, from the same
+envelope renderer the buffer uses. Set `audio-view = spectrogram` and the rows
+become an STFT heatmap instead, windowed the same way while a clip plays.
+
 ## Inline math becomes Unicode
 
 Inside a `$ … $` span, LaTeX is concealed as Unicode while you read. Conceal

@@ -6,6 +6,7 @@ mod waveform;
 
 pub use spectrogram::{audio_spectrogram, audio_spectrogram_window};
 pub use waveform::{audio_waveform, audio_window};
+pub(crate) use waveform::{clip_peak, envelope_lines, envelope_lines_with_peak};
 
 use crate::error::FFI_ERROR_PREFIX;
 use player::resolved;

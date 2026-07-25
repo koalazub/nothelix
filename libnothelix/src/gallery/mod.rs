@@ -13,6 +13,7 @@ use fixtures::{
     RESERVE_DOCUMENT,
 };
 
+use crate::audio::{clip_peak, envelope_lines, envelope_lines_with_peak};
 use crate::chart::render_braille_chart;
 use crate::error_format::{FormatContext, format_error};
 use crate::markdown_overlays::scan_markdown_overlays;
@@ -112,7 +113,44 @@ pub fn viewport_cases(viewport: Viewport) -> Result<Vec<GalleryCase>, String> {
             viewport: Some(viewport),
             output: reserve_math_lines(RESERVE_DOCUMENT.to_string(), reserve_spec(viewport)),
         },
+        GalleryCase {
+            name: "audio-envelope",
+            viewport: Some(viewport),
+            output: render_audio_envelope(viewport),
+        },
+        GalleryCase {
+            name: "audio-scope",
+            viewport: Some(viewport),
+            output: render_audio_scope(viewport),
+        },
     ])
+}
+
+const SCOPE_RATE: usize = 44_100;
+
+fn swelling_tone(samples: usize, cycles: f64) -> Vec<i32> {
+    (0..samples)
+        .map(|i| {
+            let progress = i as f64 / samples as f64;
+            let phase = std::f64::consts::TAU * cycles * progress;
+            let envelope = (std::f64::consts::PI * progress).sin().powi(2);
+            (phase.sin() * envelope * 30_000.0) as i32
+        })
+        .collect()
+}
+
+fn render_audio_envelope(viewport: Viewport) -> String {
+    let clip = swelling_tone(SCOPE_RATE * 2, 900.0);
+    envelope_lines(&clip, viewport.cols.saturating_sub(4).max(1), 4).join("\n")
+}
+
+fn render_audio_scope(viewport: Viewport) -> String {
+    let clip = swelling_tone(SCOPE_RATE * 2, 900.0);
+    let centre = clip.len() / 2;
+    let half = SCOPE_RATE / 50;
+    let window = &clip[centre - half..centre + half];
+    let peak = clip_peak(window).max(clip_peak(&clip) * 0.1);
+    envelope_lines_with_peak(window, viewport.cols.saturating_sub(4).max(1), 5, peak).join("\n")
 }
 
 pub fn document_cases() -> Result<Vec<GalleryCase>, String> {
