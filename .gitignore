@@ -42,3 +42,6 @@ docs/Gemfile.lock
 # Agent tooling scratch — session-local, never tracked
 .claude/
 .superpowers/
+
+# Pinned dev-shell profile (a GC root; see `just dev`)
+.nix/

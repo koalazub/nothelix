@@ -41,6 +41,11 @@ pruning, `git ls-files`) is fine.
 - The dev shell comes from `flake.nix`. The rust-overlay dev shell and the
   fenix release build are split on purpose; do not unify or pin them
   together.
+- Enter it with `just dev`, which goes through a profile at `.nix/devshell`.
+  That profile is a GC root, so the toolchain survives garbage collection.
+  A plain `nix develop` leaves the shell unrooted and the next collection
+  deletes the compiler out from under it, surfacing later as `cargo not
+  found` in a shell that was working minutes earlier.
 
 ## Code standards
 

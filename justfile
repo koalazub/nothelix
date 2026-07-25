@@ -7,6 +7,12 @@
 #   ~/.steel/cogs/nothelix/                 — plugin module directory symlink
 #   ~/.local/share/nothelix/bin/nothelix-slm — SLM helper, best-effort (swiftc)
 #
+# `just dev` enters the dev shell through a profile at .nix/devshell. That
+# profile is a GC root, so the toolchain survives `nix-collect-garbage` and
+# the periodic collector. Entering the shell any other way leaves it
+# unrooted, and the next collection deletes the rustc and julia your running
+# shell still points at, which shows up as `cargo not found` mid-session.
+#
 # `just setup-lsp` dev-installs the bundled NothelixMacros package and the
 # kernel's JSON3 dependency into Julia's default shared environment (@v#.#),
 # which JETLS and the kernel both resolve `using` against.
@@ -34,6 +40,15 @@ steel_cogs := env("HOME") / ".steel" / "cogs"
 local_bin := env("HOME") / ".local" / "bin"
 slm_bin := env("HOME") / ".local" / "share" / "nothelix" / "bin"
 nothelix_root := justfile_directory()
+
+# enter the dev shell, pinned against nix garbage collection
+dev:
+    #!/usr/bin/env nu
+    mkdir .nix
+    if (".nix/devshell" | path exists) {
+        nix-env --profile .nix/devshell --delete-generations old
+    }
+    nix develop --profile .nix/devshell --command nu
 
 # build + install the dylib and plugin symlinks (run after Rust changes)
 install profile="release":
