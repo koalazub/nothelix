@@ -3,6 +3,7 @@
 (require "cell-boundaries.scm")
 (require "cell-state.scm")
 (require "output-store.scm")
+(require "output-render.scm")
 (require "kernel.scm")
 (require "helix/editor.scm")
 (require "helix/misc.scm")
@@ -19,27 +20,6 @@
          tail-lines-for
          output-view-footer
          no-output-status)
-
-;;@doc
-;; Break `line` into a list of chunks each at most `width` characters wide, so a
-;; long output line wraps to the popup instead of being truncated. An empty line
-;; stays a single "" chunk; a non-positive width returns the line unsplit.
-(define (wrap-line line width)
-  (cond
-    [(<= width 0) (list line)]
-    [(= (string-length line) 0) (list "")]
-    [else
-     (let loop ([start 0] [acc '()])
-       (define len (string-length line))
-       (if (>= start len)
-           (reverse acc)
-           (let ([end (min len (+ start width))])
-             (loop end (cons (substring line start end) acc)))))]))
-
-;;@doc
-;; Wrap every row in `rows` to `width`, flattening to one display-line list.
-(define (wrap-rows rows width)
-  (apply append (map (lambda (r) (wrap-line r width)) rows)))
 
 ;;@doc
 ;; Number of trailing lines to request from live.out, sized to the popup's
@@ -130,9 +110,9 @@
 
   (let loop ([xs wrapped] [i 0])
     (cond
-      [(null? xs) (void)]
+      [(null? xs) void]
       [(< i scroll) (loop (cdr xs) (+ i 1))]
-      [(>= (- i scroll) content-h) (void)]
+      [(>= (- i scroll) content-h) void]
       [else
        (frame-set-string! buf (+ px 2) (+ py 2 (- i scroll)) (car xs) text-style)
        (loop (cdr xs) (+ i 1))]))

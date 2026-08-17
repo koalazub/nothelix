@@ -246,9 +246,16 @@ never enters undo and is never written into the `.jl` file. Editing a cell and
 running it is one `u` away from a clean slate, because the run itself leaves
 nothing to undo.
 
+A line longer than the buffer is wide wraps to the next virtual row instead of
+clipping at the edge, so a wide vector or matrix printout stays complete inline.
+The wrap is computed when the output lands; `<space>no` re-wraps the full,
+untruncated text to the popup's width every time it opens.
+
 Because output is not buffer text, you cannot select it with editor motions.
-`<space>ny` (`:copy-cell-output`) puts the cell's output on the system
-clipboard instead.
+`<space>ny` (`:copy-cell-output`) yanks the cell's output to the default
+register so `p` pastes it like any other yank, and `<space>nY`
+(`:copy-cell-output-to-clipboard`) puts it on the system clipboard — the same
+split as helix's `y` and `Y`.
 
 `<space>no` (`:cell-output-view`) blows the cell's output up in a popup, and
 while that cell is still running it tails what the kernel is printing so you can
@@ -328,8 +335,8 @@ settings in `.nothelix.conf`.
 
 One kernel runs per notebook, keyed to the file path and not to the buffer.
 Close and reopen the file, or restart Helix, and nothelix reattaches to the
-running kernel with all state intact. State is lost only on `:kernel-shutdown`,
-`:kernel-shutdown-all`, or quitting Helix. Because a kernel outlives the editor,
+running kernel with all state intact. State is lost only on `:kernel-shutdown`
+or `:kernel-shutdown-all`. Because a kernel outlives the editor,
 one can predate the runner a later nothelix installs, so when a reattached kernel
 booted before the current runner nothelix flags it in the status line and points
 you to `:kernel-shutdown` to upgrade it.

@@ -15,6 +15,15 @@ nothelix setup-lsp   # adds JSON3, the kernel's runtime dependency, to your defa
 
 This does not install a language server. It ensures the kernel can start. From a source checkout the equivalent contributor recipe is `just setup-lsp`, but a reader who installed from the tarball should use `nothelix setup-lsp`.
 
+## What the doctor checks
+
+`nothelix doctor` verifies the whole Julia code-intelligence chain, not just the install:
+
+- a `[language-server.jetls]` entry is wired in `languages.toml` with a `--project=` checkout,
+- that checkout exists and `using JETLS` loads under the active Julia,
+- the checkout sets `JET_DEV_MODE = true` when Julia is a pre-release (JET silently loads as an empty stub on nightlies otherwise — completions die with no error),
+- the workspace env itself is left to you: run `julia --project=. -e 'using Pkg; Pkg.add("PkgName")'` for packages you import, the same way Jupyter/VSCode require.
+
 ## Wiring a server into languages.toml
 
 Helix drives the server, so you point Helix's Julia language at the launch command. Add a `[language-server.<name>]` entry with the command, then list that name under `language-servers` on the Julia `[[language]]` block. Restart Helix fully afterward, because it caches language configuration at startup.

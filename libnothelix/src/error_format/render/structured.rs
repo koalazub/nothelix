@@ -80,6 +80,13 @@ pub fn format_structured(
         ));
     }
 
+    if let Some(package) = &err.exporting_package {
+        report.gutter();
+        report.guidance(&format!(
+            "an undefined symbol here is exported by `{package}` — add `using {package}` to an earlier cell and run it"
+        ));
+    }
+
     let chain = call_chain::build(&err.frames);
     if !chain.is_empty() {
         report.gutter();

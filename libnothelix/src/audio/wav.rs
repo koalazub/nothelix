@@ -66,21 +66,29 @@ fn to_pcm16_bytes(data: Vec<u8>, audio_format: u16, bits: u16) -> Result<Vec<u8>
             .map(|&byte| ((byte as i16) - 128) << 8)
             .collect(),
         (FORMAT_PCM, 24) => data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|triple| i16::from_le_bytes([triple[1], triple[2]]))
             .collect(),
         (FORMAT_PCM, 32) => data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|quad| i16::from_le_bytes([quad[2], quad[3]]))
             .collect(),
         (FORMAT_FLOAT, 32) => data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(
                 |quad| scale_float(f32::from_le_bytes([quad[0], quad[1], quad[2], quad[3]]) as f64),
             )
             .collect(),
         (FORMAT_FLOAT, 64) => data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|octet| {
                 scale_float(f64::from_le_bytes([
                     octet[0], octet[1], octet[2], octet[3], octet[4], octet[5], octet[6], octet[7],
@@ -153,7 +161,9 @@ pub(super) fn parse_pcm16(bytes: &[u8]) -> Result<WavData, WavError> {
 
 pub(super) fn samples_i16(wav: &WavData) -> Vec<i16> {
     wav.data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
         .collect()
 }

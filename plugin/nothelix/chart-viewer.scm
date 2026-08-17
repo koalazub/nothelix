@@ -251,17 +251,16 @@
   (define pd (if (and (not (null? args)) (car args))
                  (car args)
                  *last-plot-data*))
-  (when (not pd)
-    (set-status! "No plot data available. Execute a cell that produces a plot first.")
-    (error "No plot data"))
+  (if (not pd)
+      (set-status! "No plot data available. Execute a cell that produces a plot first.")
+      (let ()
+        (define state (ChartState pd #false #false #false #false 60 15))
 
-  (define state (ChartState pd #false #false #false #false 60 15))
+        (define component
+          (new-component! "chart-viewer"
+            state
+            render-chart
+            (hash "handle_event" handle-chart-event)))
 
-  (define component
-    (new-component! "chart-viewer"
-      state
-      render-chart
-      (hash "handle_event" handle-chart-event)))
-
-  (overlaid component)
-  (push-component! component))
+        (overlaid component)
+        (push-component! component))))

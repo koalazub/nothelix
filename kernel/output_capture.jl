@@ -77,6 +77,49 @@ end
 
 CapturedOutput() = CapturedOutput(nothing, "", "", [], [], nothing, nothing, nothing, nothing)
 
+# Display pushed onto the multimedia stack for the duration of one cell's
+# eval. A displayed plot routes through the same capture pipeline as a
+# returned plot (braille for UnicodePlots, animated MIME or PNG otherwise,
+# plus plot_data for the chart overlay); anything else shows as text/plain
+# into the piped stdout, which is how `display(x)` lands in the cell's
+# captured output instead of the kernel's terminal.
+mutable struct CellDisplay <: AbstractDisplay
+    text_io::IO
+    result::CapturedOutput
+    plot_mode::String
+end
+
+function Base.display(d::CellDisplay, x)
+    captured = false
+    if plot_route(d.plot_mode, is_unicode_plot(x)) === :braille
+        tp = capture_unicode_plot_text(x)
+        if tp !== nothing
+            push!(d.result.text_plots, tp)
+            captured = true
+        end
+    elseif is_displayable_plot(x)
+        animated = capture_animated_output(x)
+        if animated !== nothing
+            push!(d.result.images, ("plot.$(mime_to_extension(animated[1]))", animated[2]))
+            captured = true
+        else
+            img = capture_plot_png(x)
+            if img !== nothing
+                push!(d.result.images, ("png", img))
+                captured = true
+            end
+        end
+        if d.result.plot_data === nothing
+            d.result.plot_data = extract_plot_data(x)
+        end
+    end
+    if !captured
+        show(d.text_io, MIME("text/plain"), x)
+        println(d.text_io)
+    end
+    nothing
+end
+
 """
 Extract line and column from a ParseError message.
 Scans for "Error @ file:LINE:COL" pattern.
@@ -100,6 +143,63 @@ function extract_parse_error_location(msg::String)
 end
 
 """
+Scan one package source file for `export` statements and return the exported
+names. Only lines starting with `export` are read; the remainder is split on
+commas and whitespace and kept when it is a plain identifier. Lines inside
+triple-quoted strings are skipped so docstring prose never registers, and
+multi-line export lists lose their continuation lines — an accepted trade for
+a scanner that never parses the file.
+"""
+function collect_exports(src::String)::Set{Symbol}
+    exports = Set{Symbol}()
+    in_string = false
+    for line in eachsplit(src, '\n')
+        if occursin("\"\"\"", line)
+            in_string = !in_string
+            continue
+        end
+        in_string && continue
+        stripped = strip(line)
+        startswith(stripped, "export") || continue
+        length(stripped) > 6 || continue
+        for token in split(stripped[7:end], (',', ' ', '\t'))
+            isempty(token) && continue
+            occursin(r"^[A-Za-z_][A-Za-z0-9_!]*$", token) || continue
+            push!(exports, Symbol(token))
+        end
+    end
+    exports
+end
+
+const INSTALLED_EXPORTS = Ref{Union{Dict{Symbol, Vector{String}}, Nothing}}(nothing)
+
+# Export map for every package in the depot, computed once per kernel session.
+# An UndefVarError whose name Julia cannot hint at (the package is not loaded)
+# still gets a provider named, e.g. `Circulant` -> ToeplitzMatrices.
+function installed_exports()::Dict{Symbol, Vector{String}}
+    cache = INSTALLED_EXPORTS[]
+    cache !== nothing && return cache
+    exports = Dict{Symbol, Vector{String}}()
+    try
+        # `Pkg` is imported into Main by runner.jl, never inside this module.
+        for (uuid, dep) in Main.Pkg.dependencies()
+            name = dep.name
+            entry = Base.locate_package(Base.PkgId(uuid, name))
+            entry === nothing && continue
+            try
+                for sym in collect_exports(read(entry, String))
+                    push!(get!(Vector{String}, exports, sym), name)
+                end
+            catch
+            end
+        end
+    catch
+    end
+    INSTALLED_EXPORTS[] = exports
+    exports
+end
+
+"""
 Extract structured error metadata for the Rust error formatter.
 Returns a Dict with: error_type, message, frames, source_line,
 cell_index, cell_line. Returns nothing if no error.
@@ -110,7 +210,7 @@ function extract_structured_error(error, stacktrace, code::String, cell_index::I
     code_lines = split(code, '\n')
 
     if stacktrace !== nothing
-        for (i, frame) in enumerate(stacktrace)
+        for (i, frame) in enumerate(Base.stacktrace(stacktrace))
             file = string(frame.file)
             is_user = occursin("<cell>", file) || occursin("none", file) ||
                       startswith(file, "REPL") || file == "none"
@@ -165,6 +265,11 @@ function extract_structured_error(error, stacktrace, code::String, cell_index::I
         cell_context = CellRegistry.lookup_variable_context(Set([var_sym]))
         if !isempty(cell_context)
             result["cell_context"] = cell_context
+        elseif !occursin("also exists in", result["message"])
+            providers = get(installed_exports(), var_sym, nothing)
+            if providers !== nothing && !isempty(providers)
+                result["exporting_package"] = first(providers)
+            end
         end
     end
 
@@ -654,6 +759,9 @@ function extract_plot_data(p)
 
                         x = Float64.(collect(x_raw))
                         y = Float64.(collect(y_raw))
+                        finite = isfinite.(x) .& isfinite.(y)
+                        x = x[finite]
+                        y = y[finite]
                         label = string(label_raw)
 
                         entry = Dict{String,Any}(
@@ -714,6 +822,9 @@ function extract_plot_data(p)
                                 if !isempty(points)
                                     x = Float64[pt[1] for pt in points]
                                     y = Float64[pt[2] for pt in points]
+                                    finite = isfinite.(x) .& isfinite.(y)
+                                    x = x[finite]
+                                    y = y[finite]
                                     series_idx += 1
                                     label = ""
                                     try
@@ -816,14 +927,15 @@ function capture_toplevel(mod::Module, code::String; plot_mode::String="auto")
         # `display(A); print(A)` showed nothing from `display` — it
         # escaped the pipe and went to the kernel's real stdout.
         #
-        # Push a fresh TextDisplay that closes over the *new* (piped)
-        # stdout so `display(x)` routes through our capture. Pop it in
-        # the `finally`-ish cleanup below.
+        # Push a CellDisplay that closes over the *new* (piped) stdout
+        # and this result's image/text-plot vectors, so `display(p)` on
+        # a plot captures it like a returned plot and anything else
+        # shows as text/plain into the pipe. Popped in the cleanup below.
         try
-            pushdisplay(TextDisplay(stdout))
+            pushdisplay(CellDisplay(stdout, result, plot_mode))
             display_pushed = true
         catch e
-            capture_log("pushdisplay(TextDisplay(stdout)) failed: $e")
+            capture_log("pushdisplay(CellDisplay) failed: $e")
         end
 
         # Execute code with REPL-like soft scope semantics

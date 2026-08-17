@@ -57,7 +57,7 @@ The kernel emits runtime errors as structured JSON. libnothelix folds source con
 
 | Error | Enrichment |
 |---|---|
-| `UndefVarError` | Adds a note on where the variable is defined, or would be. If the kernel has not indexed it, a static `.jl` scanner in Rust catches the common case of a variable defined in a later cell that has not run yet. |
+| `UndefVarError` | Adds a note on where the variable is defined, or would be. If the kernel has not indexed it, a static `.jl` scanner in Rust catches the common case of a variable defined in a later cell that has not run yet. When no cell defines it and Julia offers no loaded-package hint, the kernel scans the depot's `export` statements and names the package that provides the symbol, with the `using` line to run. |
 | `MethodError` | Draws on two kernel snapshots, the recorded type of every binding and the in-scope values a function could accept. It renders a variables-by-type block alongside the viable candidates. |
 | `DimensionMismatch`, `BoundsError`, `ParseError` | Source-line-aware enrichers re-express the error using your real variable names rather than generic placeholders. |
 

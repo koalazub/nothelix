@@ -29,6 +29,11 @@ Re-running a cell replaces its plots. The stack is capped at `plots-per-cell`, a
 `.nothelix.conf` key that defaults to `32` and clamps into the range `1..256`. A
 cell that exceeds the cap logs a note rather than silently dropping the rest.
 
+Figures reach the cell through Julia's display system, so an explicit
+`display(p)` renders the same way as a returned plot — including inside a
+`for` loop, where every iteration's figure lands in the stack. `display(x)` of
+a non-plot value shows its plain-text repr in the cell output instead.
+
 <!-- SCREENSHOT NEEDED: a stacked multi-plot cell showing several images below one code cell -->
 
 | Command | Key | What it does |

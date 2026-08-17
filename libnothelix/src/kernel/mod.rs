@@ -175,11 +175,14 @@ fn flatten(parsed: &Value) -> String {
         .and_then(Value::as_str)
         .filter(|status| *status != "error")
     else {
-        return json!({
+        let mut response = json!({
             "status": "error",
             "error": parsed.get("error").and_then(Value::as_str).unwrap_or("Unknown error"),
-        })
-        .to_string();
+        });
+        if let Some(structured) = parsed.get("structured_error") {
+            response["structured_error"] = structured.clone();
+        }
+        return response.to_string();
     };
 
     let cell = &parsed["cell"];
@@ -455,6 +458,30 @@ mod tests {
     fn poll_without_a_done_marker_is_pending() {
         let out = kernel_poll_result("/tmp/nothelix-poll-test-nonexistent".to_string());
         assert!(out.contains("\"status\":\"pending\""), "{out}");
+    }
+
+    #[test]
+    fn flatten_forwards_structured_error_on_failure() {
+        let parsed = json!({
+            "status": "error",
+            "error": "UndefVarError: `initDFTMatrix` not defined in `Main`",
+            "structured_error": {
+                "error_type": "UndefVarError",
+                "message": "UndefVarError: `initDFTMatrix` not defined in `Main`",
+                "frames": [],
+                "source_line": "F = initDFTMatrix(length(x))",
+                "cell_index": 5,
+                "cell_line": 2
+            }
+        });
+        let flat: Value = serde_json::from_str(&flatten(&parsed)).expect("flat json");
+        assert_eq!(flat["status"], "error");
+        assert_eq!(
+            flat["structured_error"]["error_type"],
+            "UndefVarError"
+        );
+        assert_eq!(flat["structured_error"]["cell_index"], 5);
+        assert_eq!(flat["structured_error"]["cell_line"], 2);
     }
 
     #[test]

@@ -129,7 +129,7 @@
           buildInputs = with pkgs;
             [ zlib ]
             ++ pkgs.lib.optionals isDarwin [
-              apple-sdk_15
+              apple-sdk_26
             ];
 
           env = {
@@ -175,7 +175,7 @@
           buildInputs = with pkgs;
             [ zlib ]
             ++ pkgs.lib.optionals isDarwin [
-              apple-sdk_15
+              apple-sdk_26
             ];
 
           env = {
@@ -318,7 +318,10 @@
             pkgs.just
             pkgs.wasm-bindgen-cli
             pkgs.binaryen
-          ];
+          ]
+          # macOS 27: the apple-sdk hook wins when its version beats the
+          # ambient one, so listing SDK 26 last puts the whole shell on it.
+          ++ pkgs.lib.optionals isDarwin [ pkgs.apple-sdk_26 ];
 
           shellHook = ''
             echo ""

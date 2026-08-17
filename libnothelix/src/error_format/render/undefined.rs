@@ -19,6 +19,15 @@ pub fn format_undefined(err: &StructuredError) -> String {
         report.guidance(line);
     }
 
+    if let Some(package) = &err.exporting_package
+        && let Some(symbol) = err.undef_symbols.first()
+    {
+        report.gutter();
+        report.guidance(&format!(
+            "`{symbol}` is exported by `{package}` — add `using {package}` to an earlier cell and run it"
+        ));
+    }
+
     report.finish()
 }
 

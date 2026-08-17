@@ -205,17 +205,23 @@ function handle_execute_cell(cmd::Dict)
             ))
         else
             log_error("Cell $cell_idx failed: $(result.error)")
-            write_response(Dict(
+            response = Dict{String, Any}(
                 "status" => "error",
                 "error" => sprint(showerror, result.error),
                 "stacktrace" => sprint(showerror, result.error, result.stacktrace)
-            ))
+            )
+            try
+                response["structured_error"] = OutputCapture.extract_structured_error(
+                    result.error, result.stacktrace, code, cell_idx)
+            catch
+            end
+            write_response(response)
         end
     catch e
         log_error("Exception executing cell $cell_idx: $e")
         write_response(Dict(
             "status" => "error",
-            "error" => sprint(showerror, e),
+            "error" => "the kernel failed to build cell $cell_idx's result (not a cell-code error): $(sprint(showerror, e))",
             "stacktrace" => sprint(showerror, e, catch_backtrace())
         ))
     end

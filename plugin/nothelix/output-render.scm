@@ -4,6 +4,7 @@
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require-builtin helix/core/static as helix.static.)
+(require-builtin helix/components)
 
 (provide try-set-output-lines-below!
          try-clear-output-lines-at!
@@ -15,7 +16,40 @@
          series-scope
          assign-cycling-bars
          stale-bar-scope
-         assign-stale-bars)
+         assign-stale-bars
+         wrap-line
+         wrap-rows
+         buffer-content-width)
+
+;;@doc
+;; Break `line` into a list of chunks each at most `width` characters wide, so a
+;; long output line wraps to the content area instead of being truncated. An
+;; empty line stays a single "" chunk; a non-positive width returns the line
+;; unsplit.
+(define (wrap-line line width)
+  (cond
+    [(<= width 0) (list line)]
+    [(= (string-length line) 0) (list "")]
+    [else
+     (let loop ([start 0] [acc '()])
+       (define len (string-length line))
+       (if (>= start len)
+           (reverse acc)
+           (let ([end (min len (+ start width))])
+             (loop end (cons (substring line start end) acc)))))]))
+
+;;@doc
+;; Wrap every row in `rows` to `width`, flattening to one display-line list.
+(define (wrap-rows rows width)
+  (apply append (map (lambda (r) (wrap-line r width)) rows)))
+
+;;@doc
+;; Content width (columns) of the focused buffer's text area, used to wrap
+;; output rows to what is actually visible; falls back to 80 when no buffer
+;; area is available (e.g. while the editor is still starting up).
+(define (buffer-content-width)
+  (define r (editor-focused-buffer-area))
+  (if r (area-width r) 80))
 
 (define (pad-output-rows rows)
   (if (null? rows) rows (append (list "") rows (list ""))))

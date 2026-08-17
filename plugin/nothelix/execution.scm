@@ -39,6 +39,7 @@
          cancel-cell
          cell-state
          copy-cell-output
+         copy-cell-output-to-clipboard
          restore-cell-outputs-on-open!
          render-cached-images
          sync-images-to-markers!
@@ -90,30 +91,27 @@
      (refresh-provenance-surfaces! (editor->doc-id (editor-focus)) jl-path)]))
 
 ;; Shared preflight: saved .jl notebook, cursor saved, kernel keyed by path.
+;; Validation failures are user-facing: status line only, never a backtrace popup.
 (define (with-saved-notebook command-name on-ready)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
   (define current-line (current-line-number))
 
-  (when (any-cell-running?)
-    (set-status! (string-append command-name ": a cell is already running — :cancel-cell to interrupt"))
-    (error "run in progress"))
-
-  (when (not path)
-    (set-status! (string-append command-name ": no file path"))
-    (error "No file path"))
-  (when (string-suffix? path ".ipynb")
-    (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")
-    (error "Not a converted file"))
-  (when (not (string-suffix? path ".jl"))
-    (set-status! (string-append command-name ": only .jl notebook files are supported"))
-    (error "Not a .jl file"))
-
-  (save-cursor-for-restore! doc-id)
-  (helix.write)
-  (enqueue-thread-local-callback-with-delay 20
-    (lambda () (on-ready doc-id path current-line))))
+  (cond
+    [(any-cell-running?)
+     (set-status! (string-append command-name ": a cell is already running — :cancel-cell to interrupt"))]
+    [(not path)
+     (set-status! (string-append command-name ": no file path"))]
+    [(string-suffix? path ".ipynb")
+     (set-status! "Error: Use :convert-notebook first. Cannot insert outputs into .ipynb JSON")]
+    [(not (string-suffix? path ".jl"))
+     (set-status! (string-append command-name ": only .jl notebook files are supported"))]
+    [else
+     (save-cursor-for-restore! doc-id)
+     (helix.write)
+     (enqueue-thread-local-callback-with-delay 20
+       (lambda () (on-ready doc-id path current-line)))]))
 
 ;;@doc
 ;; Execute the code cell under the cursor (async, non-blocking). When the
@@ -146,19 +144,25 @@
   (define cell-start (find-cell-start-line get-line current-line))
   (clear-stale-tag-for-line! cell-start)
 
-  (when (not (string-starts-with? (string-trim (get-line cell-start)) "@cell"))
-    (set-status! "Not a code cell — @markdown/@raw/@typst cells are not executed")
-    (helix.redraw)
-    (error "not a code cell"))
+  (cond
+    [(not (string-starts-with? (string-trim (get-line cell-start)) "@cell"))
+     (set-status! "Not a code cell — @markdown/@raw/@typst cells are not executed")
+     (helix.redraw)]
+    [else
+     (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
+     (define cell-lines (extract-cell-code get-line cell-start cell-code-end))
+     (define code (string-join cell-lines "\n"))
 
-  (define cell-code-end (find-cell-code-end get-line total-lines (+ cell-start 1)))
-  (define cell-lines (extract-cell-code get-line cell-start cell-code-end))
-  (define code (string-join cell-lines "\n"))
+     (if (equal? (string-length code) 0)
+         (begin
+           (set-status! "Cell is empty")
+           (helix.redraw))
+         (execute-cell-body doc-id path current-line cell-start cell-code-end code))]))
 
-  (when (equal? (string-length code) 0)
-    (set-status! "Cell is empty")
-    (helix.redraw)
-    (error "Cell is empty"))
+(define (execute-cell-body doc-id path current-line cell-start cell-code-end code)
+  (define rope (editor->text doc-id))
+  (define total-lines (text.rope-len-lines rope))
+  (define (get-line idx) (doc-get-line rope total-lines idx))
 
   (define cell-info-json (get-cell-at-line path current-line))
   (define cell-index-str (json-get cell-info-json "cell_index"))
@@ -229,24 +233,23 @@
 (define (execute-cells-up-to doc-id path current-line limit-idx)
   (define cells-json (list-jl-code-cells path limit-idx))
   (define cells-err (json-get cells-json "error"))
-  (when (> (string-length cells-err) 0)
-    (define safe-err (sanitise-error-message cells-err))
-    (set-status! (string-append "✗ " safe-err))
-    (error safe-err))
 
   (define indices-str (json-get cells-json "indices"))
   (define cell-indices (parse-indices-string indices-str))
   (define cell-count (length cell-indices))
 
-  (when (equal? cell-count 0)
-    (set-status! "No code cells to execute")
-    (error "No code cells"))
-
-  (kernel-get-for-notebook path "julia"
-    (lambda (kernel-state)
-      (define kernel-dir (hash-get kernel-state 'kernel-dir))
-      (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
-      (execute-cell-list doc-id path kernel-dir path cell-indices cell-indices cell-count current-line))))
+  (cond
+    [(> (string-length cells-err) 0)
+     (define safe-err (sanitise-error-message cells-err))
+     (set-status! (string-append "✗ " safe-err))]
+    [(equal? cell-count 0)
+     (set-status! "No code cells to execute")]
+    [else
+     (kernel-get-for-notebook path "julia"
+       (lambda (kernel-state)
+         (define kernel-dir (hash-get kernel-state 'kernel-dir))
+         (set-status! (string-append "Executing " (number->string cell-count) " cells: " indices-str))
+         (execute-cell-list doc-id path kernel-dir path cell-indices cell-indices cell-count current-line)))]))
 
 ;;@doc
 ;; Execute a list of cells sequentially with async polling.
@@ -383,12 +386,10 @@
     (lambda (doc-id path current-line)
       (define cell-info-json (get-cell-at-line path current-line))
       (define err (json-get cell-info-json "error"))
-      (when (> (string-length err) 0)
-        (set-status! "Error: Not in a notebook file")
-        (error "Not in a notebook file"))
-
-      (define current-cell-idx (string->number (json-get cell-info-json "cell_index")))
-      (execute-cells-up-to doc-id path current-line current-cell-idx))))
+      (if (> (string-length err) 0)
+          (set-status! "Error: Not in a notebook file")
+          (execute-cells-up-to doc-id path current-line
+                               (string->number (json-get cell-info-json "cell_index")))))))
 
 ;;@doc
 ;; Strip stale legacy `# ─── Output ───` blocks (written as buffer text by an
@@ -522,7 +523,7 @@
 ;; Copy the rendered output of the cell under the cursor to the system
 ;; clipboard. Reads the output store, so it copies exactly what is shown
 ;; even for a cell edited since its last run.
-(define (copy-cell-output)
+(define (copy-cell-output-to reg-char where)
   (define focus (editor-focus))
   (define doc-id (editor->doc-id focus))
   (define path (editor-document->path doc-id))
@@ -545,9 +546,20 @@
            (set-status! (string-append "cell " (number->string idx)
                                        ": no output to copy — run it first"))]
           [else
-           (set-register! #\+ (list (string-join rows "\n")))
+           (set-register! reg-char (list (string-join rows "\n")))
            (set-status! (string-append "cell " (number->string idx) ": copied "
-                                       (number->string (length rows)) " line(s)"))])])]))
+                                       (number->string (length rows)) " line(s) " where))])])]))
+
+;;@doc
+;; Copy the cell's rendered output to the yank register, so `p` pastes it into
+;; the buffer like any other yank. Mirrors helix's `y`.
+(define (copy-cell-output)
+  (copy-cell-output-to #\" "to the yank register"))
+
+;;@doc
+;; Copy the cell's rendered output to the system clipboard. Mirrors helix's `Y`.
+(define (copy-cell-output-to-clipboard)
+  (copy-cell-output-to #\+ "to the clipboard"))
 
 ;;@doc
 ;; Re-render every cell's output from the output store on document open,
@@ -592,7 +604,7 @@
                       (not (null? widget-group)))
               (try-set-output-lines-below! anchor-line
                 (assign-cycling-bars
-                  (append (list (if (list? rows) rows '()))
+                  (append (list (if (list? rows) (wrap-rows rows (buffer-content-width)) '()))
                           text-plot-groups
                           (if (null? waveform-group) '() (list waveform-group))
                           (if (null? widget-group) '() (list widget-group))))))))

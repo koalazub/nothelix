@@ -53,6 +53,9 @@ dev:
 # build + install the dylib and plugin symlinks (run after Rust changes)
 install profile="release":
     #!/usr/bin/env nu
+    # Pin CARGO_HOME to the default; an ambient CARGO_HOME pointing into
+    # another project couples the build to that project's layout (see check).
+    $env.CARGO_HOME = ($env.HOME | path join ".cargo")
     if "{{ profile }}" == "debug" {
         print "Building libnothelix (debug)..."
         cargo build -p libnothelix
@@ -201,6 +204,8 @@ gallery:
 
 # run tests
 test:
+    #!/usr/bin/env nu
+    $env.CARGO_HOME = ($env.HOME | path join ".cargo")
     cargo nextest run -p libnothelix
 
 # run the Julia kernel tests (AST sets + registry provenance notes + classifier)
@@ -220,6 +225,11 @@ test-kernel:
 # helix/core/*` or check `helix.static.*` arities.
 check:
     #!/usr/bin/env nu
+    # Pin CARGO_HOME to the default. An ambient CARGO_HOME pointing into
+    # another project couples the build to that project's layout (mitex's
+    # build script walks up from the registry checkout to find a "project
+    # root" and regenerates specs against whatever it finds there).
+    $env.CARGO_HOME = ($env.HOME | path join ".cargo")
     print "── clippy ──"
     cargo clippy -p libnothelix --all-targets -- -D warnings
     print "── nextest ──"

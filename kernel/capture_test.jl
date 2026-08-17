@@ -1,4 +1,5 @@
 using Test
+import Pkg
 
 include(joinpath(@__DIR__, "cell_registry.jl"))
 include(joinpath(@__DIR__, "ast_analysis.jl"))
@@ -67,4 +68,28 @@ end
     @test result.error === nothing
     @test result.return_value == 42
     @test occursin("STILL-RUNS", result.stdout)
+end
+
+@testset "export scanning finds providers for undefined names" begin
+    src = """
+    export AbstractToeplitz, Toeplitz, SymmetricToeplitz, Circulant, Hankel
+    export durbin, trench, levinson
+    # export NotThis
+    foo = 1
+    \"\"\"
+    export ProseOnly
+    \"\"\"
+    """
+    exports = OutputCapture.collect_exports(src)
+    @test :Circulant in exports
+    @test :durbin in exports
+    @test :NotThis ∉ exports
+    @test :ProseOnly ∉ exports
+    @test :foo ∉ exports
+
+    depot = OutputCapture.installed_exports()
+    @test !isempty(depot)
+    if haskey(depot, :Circulant)
+        @test "ToeplitzMatrices" in depot[:Circulant]
+    end
 end

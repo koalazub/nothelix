@@ -255,12 +255,105 @@ fn terminal_multiplexer() -> Option<HealthIssue> {
     ))
 }
 
+fn helix_languages_toml() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from(&home).join(".config"));
+    Some(base.join("helix").join("languages.toml"))
+}
+
+fn wired_jetls_project_dir(config: &str) -> Option<String> {
+    let lines: Vec<&str> = config.lines().collect();
+    let section_start = lines
+        .iter()
+        .position(|line| line.trim() == "[language-server.jetls]")?;
+    let section_end = lines[section_start + 1..]
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .map(|offset| section_start + 1 + offset)
+        .unwrap_or(lines.len());
+    lines[section_start..section_end]
+        .iter()
+        .find_map(|line| line.split("--project=").nth(1))
+        .and_then(|rest| {
+            rest.split(['"', ',', ' '])
+                .find(|part| !part.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+fn jetls_issues() -> Option<HealthIssue> {
+    let config_path = helix_languages_toml()?;
+    let config = std::fs::read_to_string(&config_path).ok()?;
+
+    let Some(project_dir) = wired_jetls_project_dir(&config) else {
+        return Some(HealthIssue::new(
+            "jetls-unwired",
+            "no JETLS language server wired in helix languages.toml",
+            "add a [language-server.jetls] entry pointing --project= at a JETLS checkout, list jetls on the Julia language block, then restart Helix",
+        ));
+    };
+
+    if !Path::new(&project_dir).exists() {
+        return Some(HealthIssue::new(
+            "jetls-project-missing",
+            format!("the wired JETLS project dir {project_dir} does not exist"),
+            "point --project= at an existing JETLS checkout, then restart Helix",
+        ));
+    }
+
+    let prefs = std::fs::read_to_string(Path::new(&project_dir).join("LocalPreferences.toml"))
+        .unwrap_or_default();
+    if julia_is_prerelease() && !prefs.contains("JET_DEV_MODE = true") {
+        return Some(HealthIssue::new(
+            "jetls-dev-mode-off",
+            format!("JET refuses to load on this pre-release Julia until JET_DEV_MODE = true is set in {project_dir}/LocalPreferences.toml"),
+            "add [JET] JET_DEV_MODE = true to the LocalPreferences.toml, then restart Helix",
+        ));
+    }
+
+    if which::which("julia").is_ok() {
+        let loads = std::process::Command::new("julia")
+            .args([
+                "--startup-file=no",
+                &format!("--project={project_dir}"),
+                "-e",
+                "using JETLS",
+            ])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !loads {
+            return Some(HealthIssue::new(
+                "jetls-load-failed",
+                format!("JETLS failed to load from {project_dir}"),
+                "run `julia --project=<jetls dir> -e 'using JETLS'` to see the error, then restart Helix",
+            ));
+        }
+    }
+
+    None
+}
+
+fn julia_is_prerelease() -> bool {
+    let Ok(out) = std::process::Command::new("julia")
+        .args(["--startup-file=no", "-e", "print(VERSION.prerelease)"])
+        .output()
+    else {
+        return false;
+    };
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
 pub fn nothelix_health_check_tsv() -> String {
     Install::from_env()
         .issues()
         .into_iter()
         .chain(julia_missing())
         .chain(terminal_multiplexer())
+        .chain(jetls_issues())
         .map(|issue| issue.to_string())
         .collect::<Vec<_>>()
         .join("\n")
@@ -515,6 +608,37 @@ mod tests {
     fn display_emits_tab_separated_row() {
         let issue = HealthIssue::new("the-id", "the message", "the fix");
         assert_eq!(issue.to_string(), "the-id\tthe message\tthe fix");
+    }
+
+    #[test]
+    fn wired_jetls_project_dir_parses_the_launch_command() {
+        let config = "[language-server.jetls]\n\
+                      command = \"/Users/koalazub/.juliaup/bin/julia\"\n\
+                      timeout = 120\n\
+                      args = [\"--startup-file=no\", \"--history-file=no\", \"--threads=auto\", \"--project=/Users/koalazub/projects/jetls-main\", \"-m\", \"JETLS\", \"serve\"]\n\
+                      \n\
+                      [language-server.harper-ls]\n\
+                      command = \"harper-ls\"\n\
+                      args = [\"--stdio\"]\n";
+        assert_eq!(
+            wired_jetls_project_dir(config).as_deref(),
+            Some("/Users/koalazub/projects/jetls-main")
+        );
+    }
+
+    #[test]
+    fn wired_jetls_project_dir_requires_the_jetls_section() {
+        let config = "[language-server.harper-ls]\n\
+                      args = [\"--project=/tmp/not-jetls\"]\n";
+        assert_eq!(wired_jetls_project_dir(config), None);
+    }
+
+    #[test]
+    fn wired_jetls_project_dir_needs_a_project_flag() {
+        let config = "[language-server.jetls]\n\
+                      command = \"jetls\"\n\
+                      args = [\"serve\"]\n";
+        assert_eq!(wired_jetls_project_dir(config), None);
     }
 
     #[test]

@@ -182,6 +182,7 @@
   (define (field-at n)
     (if (< n (length field-list)) (bound-field (list-ref field-list n)) ""))
   (define err (if unreadable-reply? all-fields (field-at 0)))
+  (define view-w (buffer-content-width))
   (cond
     [(> (string-length err) 0)
      (define structured (field-at 1))
@@ -193,7 +194,7 @@
      (define error-rows (text->plain-lines formatted))
      (when (and anchor-line
                 (not (try-set-output-lines-below! anchor-line
-                       (bars-for (list error-rows)))))
+                       (bars-for (list (wrap-rows error-rows view-w))))))
        (insert-legacy-output-block! anchor-line error-rows))
      (store-put! store-cell-id store-source-hash
                  (encode-outputs+rows
@@ -342,7 +343,10 @@
      (define widget-group (widget-group-for widgets-blob))
      (define render-lines
        (bars-for
-         (append (list notes-group stdout-group repr-group stderr-group)
+         (append (list (wrap-rows notes-group view-w)
+                       (wrap-rows stdout-group view-w)
+                       (wrap-rows repr-group view-w)
+                       (wrap-rows stderr-group view-w))
                  text-plot-styled-groups
                  (if (null? waveform-group) '() (list waveform-group))
                  (if (null? widget-group) '() (list widget-group)))))

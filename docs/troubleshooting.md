@@ -62,6 +62,8 @@ terminal.
 | Stale code loads after reinstall | `~/.config/helix/nothelix*` shadows `~/.steel/cogs` | Remove the old copy. `just install` warns when it finds one |
 | Kernel reports "not ready" after a Julia upgrade | Fresh default env is missing kernel deps | Re-run `just setup-lsp`, then restart |
 | macOS editor dies on first feature use | Rebuild invalidated the dylib code signature | Run `just install`, which copies then re-signs |
+| Build fails in `mitex-spec-gen` ("failed to build spec") | `CARGO_HOME` points into another project, so mitex's build script regenerates specs against that project's layout | `just check`/`just install` now pin `CARGO_HOME` to `~/.cargo`; if you invoke `cargo` directly, unset the ambient `CARGO_HOME` first |
+| A test that panics inside `catch_unwind` aborts with "failed to initiate panic" | Building outside the dev shell picked up a nightly rustc with a panic-unwind bug | Run `just dev` first; the dev shell pins `rust-bin.nightly."2026-06-24"` |
 
 ## Guided cell errors
 

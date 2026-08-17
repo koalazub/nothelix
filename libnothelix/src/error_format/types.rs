@@ -21,6 +21,8 @@ pub struct StructuredError {
     #[serde(default)]
     pub unexecuted_deps: Vec<i64>,
     #[serde(default)]
+    pub exporting_package: Option<String>,
+    #[serde(default)]
     pub in_scope_variable_types: HashMap<String, Vec<ScopeVarEntry>>,
     #[serde(default)]
     pub method_candidates: Vec<MethodCandidate>,

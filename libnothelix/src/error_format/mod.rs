@@ -277,6 +277,45 @@ mod tests {
         assert!(out.contains("status: error"), "got:\n{out}");
     }
 
+    #[cfg(feature = "native")]
+    #[test]
+    fn undef_name_exports_by_installed_package() {
+        use std::io::Write;
+        let mut file = tempfile::Builder::new()
+            .suffix(".jl")
+            .tempfile()
+            .expect("temp notebook");
+        write!(
+            file,
+            "# ═══ Nothelix Notebook: nb.ipynb ═══\n# Cells: 1\n\n\
+             @cell 11 :julia\nCirculant(x)\n"
+        )
+        .expect("write notebook");
+        let path = file.path().to_string_lossy().into_owned();
+
+        let out = format_error(&FormatContext {
+            error_json: r#"{
+            "error_type": "UndefVarError",
+            "message": "UndefVarError: `Circulant` not defined in `Main`",
+            "frames": [],
+            "source_line": "Circulant(x)",
+            "cell_index": 11,
+            "cell_line": 1,
+            "exporting_package": "ToeplitzMatrices"
+        }"#,
+            raw_error: "",
+            notebook_path: Some(&path),
+        });
+        assert!(
+            out.contains("`Circulant` is exported by `ToeplitzMatrices`"),
+            "should name the exporting package, got:\n{out}"
+        );
+        assert!(
+            out.contains("add `using ToeplitzMatrices`"),
+            "should suggest the using line, got:\n{out}"
+        );
+    }
+
     #[test]
     fn unexecuted_deps_rendered() {
         let out = structured(

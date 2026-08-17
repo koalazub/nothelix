@@ -61,7 +61,7 @@
 
 (provide convert-notebook sync-to-ipynb export-markdown export-typst export-pdf
          execute-cell execute-all-cells execute-cells-above cancel-cell
-         cell-state copy-cell-output
+         cell-state copy-cell-output copy-cell-output-to-clipboard
          play-cell-audio stop-audio scrub-audio
          audio-seek-forward audio-seek-back
          next-cell previous-cell cell-picker
@@ -235,6 +235,7 @@
                   ("i" ":select-cell-code")
                   ("o" ":cell-output-view")
                   ("y" ":copy-cell-output")
+                  ("Y" ":copy-cell-output-to-clipboard")
                   ("s" ":play-cell-audio")
                   ("x" ":stop-audio")
                   ("c" ":select-choice")
@@ -261,7 +262,8 @@
     "execute-cells-above" "Run every code cell from the top to the current cell."
     "cancel-cell"         "Interrupt the currently running cell."
     "cell-state"          "Show the provenance table (inputs + freshness) for the cell under the cursor."
-    "copy-cell-output"    "Copy the cell's rendered output to the system clipboard."
+    "copy-cell-output"    "Copy the cell's rendered output to the yank register (paste with p)."
+    "copy-cell-output-to-clipboard" "Copy the cell's rendered output to the system clipboard."
     "play-cell-audio"     "Play the cell's wavplay audio through the system output (non-blocking)."
     "stop-audio"          "Stop the audio clip that is currently playing."
     "scrub-audio"         "Open scrub mode for the cell's audio to seek by ear before resuming."
@@ -403,7 +405,6 @@
     (sync-images-if-markers-changed!))
   (cond
     [(member command-name *quit-commands*)
-     (stop-all-kernels)
      (audio-stop-all!)]
     [(member command-name '("buffer-next" "buffer-previous"))
      (set! *conceal-generation* (+ *conceal-generation* 1))

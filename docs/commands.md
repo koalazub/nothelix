@@ -30,7 +30,8 @@ out of your way in ordinary buffers.
 | `:execute-all-cells` | Run every code cell, top to bottom |
 | `:execute-cells-above` | Run every code cell from the top down to the current one |
 | `:cancel-cell` | Interrupt the currently running cell |
-| `:copy-cell-output` | Copy the cell's rendered output to the system clipboard |
+| `:copy-cell-output` | Copy the cell's rendered output to the yank register |
+| `:copy-cell-output-to-clipboard` | Copy the cell's rendered output to the system clipboard |
 | `:cell-output-view` | Blow up the cell's output in a popup, live while it runs or stored otherwise |
 | `:cell-state` | Print the provenance table of inputs and freshness for the cell under the cursor |
 | `:play-cell-audio` | Play the cell's wavplay audio through the system output (non-blocking) |
@@ -172,6 +173,7 @@ These are registered in normal mode for `.jl` and `.ipynb` files.
 | `<space>ni` | `:select-cell-code` |
 | `<space>no` | `:cell-output-view` |
 | `<space>ny` | `:copy-cell-output` |
+| `<space>nY` | `:copy-cell-output-to-clipboard` |
 | `<space>ns` | `:play-cell-audio` |
 | `<space>nx` | `:stop-audio` |
 | `<space>nc` | `:select-choice` |
