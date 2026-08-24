@@ -20,7 +20,7 @@ mod math_image;
 #[cfg(feature = "render")]
 mod table_image;
 #[cfg(feature = "render")]
-pub use math_image::render_math_to_svg;
+pub use math_image::{poll_render_batch, render_math_to_svg, start_render_batch};
 
 #[cfg(feature = "native")]
 pub mod animation;
@@ -29,11 +29,15 @@ mod audio;
 #[cfg(feature = "native")]
 mod chart;
 #[cfg(feature = "native")]
+mod clipboard;
+#[cfg(feature = "native")]
 pub mod gallery;
 #[cfg(feature = "native")]
 mod graphics;
 #[cfg(feature = "native")]
 mod health;
+#[cfg(feature = "native")]
+mod image_fit;
 #[cfg(feature = "native")]
 mod json_utils;
 #[cfg(feature = "native")]
@@ -60,7 +64,7 @@ use steel::steel_vm::ffi::FFIModule;
 #[cfg(feature = "native")]
 steel::declare_module!(build_module);
 
-pub const NOTHELIX_FFI_VERSION: u32 = 33;
+pub const NOTHELIX_FFI_VERSION: u32 = 38;
 
 pub fn build_id() -> &'static str {
     env!("NOTHELIX_BUILD_ID")
@@ -116,6 +120,7 @@ mod steel_bindings {
             );
             module.register_fn("kernel-poll-result", kernel::kernel_poll_result);
             module.register_fn("kernel-interrupt", kernel::kernel_interrupt);
+            module.register_fn("kernel-kill", kernel::kernel_kill);
             module.register_fn("kernel-set-var", kernel::kernel_set_var);
             module.register_fn("kernel-runner-stale", kernel::kernel_runner_stale);
         }
@@ -197,7 +202,7 @@ mod steel_bindings {
 
     mod terminal_graphics {
         use super::{FFIModule, RegisterFFIFn};
-        use crate::{graphics, kitty_placeholder};
+        use crate::{graphics, image_fit, kitty_placeholder};
 
         pub(super) fn register(module: &mut FFIModule) {
             module.register_fn("viuer-protocol", graphics::viuer_protocol);
@@ -222,6 +227,9 @@ mod steel_bindings {
                 "kitty-placeholder-max-dim",
                 kitty_placeholder::kitty_placeholder_max_dim,
             );
+            module.register_fn("image-dims-b64", image_fit::image_dims_b64);
+            module.register_fn("cached-image-dims", image_fit::cached_image_dims);
+            module.register_fn("fit-image-grid", image_fit::fit_image_grid);
         }
     }
 
@@ -235,7 +243,14 @@ mod steel_bindings {
         }
 
         fn overwrite_file(path: &str, content: &str) -> Result<String> {
-            std::fs::write(path, content).map_err(|source| Error::writing(path, source))?;
+            let target = Path::new(path);
+            if let Some(parent) = target.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|source| Error::creating(parent, source))?;
+            }
+            std::fs::write(target, content).map_err(|source| Error::writing(path, source))?;
             Ok(String::new())
         }
 
@@ -282,6 +297,30 @@ mod steel_bindings {
             module.register_fn("read-file-tail", read_file_tail);
             module.register_fn("resolve-symlink-dir", resolve_symlink_dir);
         }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn nested_write_creates_missing_parents() {
+                let root = tempfile::tempdir().unwrap();
+                let nested = root.path().join("a").join("b").join("c.conf");
+                overwrite_file(nested.to_str().unwrap(), "resume-last = true\n").unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(&nested).unwrap(),
+                    "resume-last = true\n"
+                );
+            }
+
+            #[test]
+            fn flat_write_still_works() {
+                let root = tempfile::tempdir().unwrap();
+                let flat = root.path().join("c.conf");
+                overwrite_file(flat.to_str().unwrap(), "x\n").unwrap();
+                assert_eq!(std::fs::read_to_string(&flat).unwrap(), "x\n");
+            }
+        }
     }
 
     mod workspace_state {
@@ -295,6 +334,7 @@ mod steel_bindings {
             module.register_fn("nothelix-trust-remove", trust::trust_remove);
             module.register_fn("resume-get", resume::resume_get);
             module.register_fn("resume-set", resume::resume_set);
+            module.register_fn("resume-touch", resume::resume_touch);
             module.register_fn("output-store-put", output_store::output_store_put);
             module.register_fn("output-store-get", output_store::output_store_get);
             module.register_fn("output-store-clear", output_store::output_store_clear);
@@ -312,12 +352,19 @@ mod steel_bindings {
             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
         }
 
+        fn now_ms() -> isize {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or_else(|_| 0, |d| d.as_millis() as isize)
+        }
+
         fn getenv(name: String) -> String {
             std::env::var(&name).unwrap_or_default()
         }
 
         pub(super) fn register(module: &mut FFIModule) {
             module.register_fn("sleep-ms", sleep_ms);
+            module.register_fn("now-ms", now_ms);
             module.register_fn("getenv", getenv);
         }
     }
@@ -384,6 +431,15 @@ mod steel_bindings {
         pub(super) fn register(module: &mut FFIModule) {
             module.register_fn("save-image-to-cache!", save_image_to_cache);
             module.register_fn("load-image-from-cache", load_image_from_cache);
+        }
+    }
+
+    mod clipboard_paste {
+        use super::{FFIModule, RegisterFFIFn};
+        use crate::clipboard;
+
+        pub(super) fn register(module: &mut FFIModule) {
+            module.register_fn("clipboard-paste-image", clipboard::clipboard_paste_image);
         }
     }
 
@@ -519,6 +575,7 @@ mod steel_bindings {
         workspace_state::register,
         host_runtime::register,
         image_cache::register,
+        clipboard_paste::register,
         braille_chart::register,
         unicode_completion::register,
         julia_diagnostics::register,

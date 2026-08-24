@@ -35,12 +35,12 @@ Neither block is a transcription or a screenshot. `just gallery` writes both str
 ## What you get
 
 - **Notebooks that behave like source.** A notebook is Julia with `@cell` markers. It diffs, greps, and edits with the motions you already use, and `:convert-notebook` and `:sync-to-ipynb` move it to and from `.ipynb` when a collaborator needs that.
-- **Results where the cell is.** Text output, plots, Markdown tables, and display equations render in the buffer. No browser and no second pane. `<space>ny` puts a cell's output on the system clipboard.
+- **Results where the cell is.** Text output, plots, Markdown tables, and display equations render in the buffer. No browser and no second pane. `<space>ny` puts a cell's output on the system clipboard, and `<space>nP` pastes a clipboard image into the notebook as a `# @image` marker that renders inline, fitted to the monitor so it never overflows the text area.
 - **Knobs you drive from the buffer.** A `# @param` comment turns a numeric literal into a live slider that draws a track above the line and follows the cursor, while `# @select` cycles a value through a closed set and `# @toggle` flips a flag. Each nudge rewrites the literal in place and re-runs the owning cell. A run can also call `nothelix_slider` or `nothelix_choice` to drop a knob under the cell that writes straight back to a kernel variable and lights a stale badge on every cell that reads it. `]w` walks between all of them and names the keys that act on each, the `widgets` setting gates the walk, and any Julia library can project its own objects as knobs by defining a single `nothelix_towidget` method. <!-- SCREENSHOT NEEDED: a @param slider track drawn above a cell line, and a kernel-declared slider row sitting under a cell -->
 - **Audio that plays as you work.** A `wavplay` call plays through the system output without blocking the cell and draws a peak-normalised braille waveform beneath it. While the clip runs the trace moves with it, a window of the signal centred on the playing position redrawn ten times a second, with an elapsed clock beside it. Flip the same cell to an STFT spectrogram heatmap for frequency work, through the `audio-view` knob or `v` in the scrub popup. `]a` and `[a` seek, accelerating through a step ladder as you tap, a modal scrub moves by ear with `h`, `l`, `j`, and `k`, `<space>ns` replays, and a `♪` badge marks the playing cell in the navigator. <!-- SCREENSHOT NEEDED: a braille waveform under a cell with a walking playhead column and an elapsed clock in the header row -->
 - **Output you can watch, and freshness you can see.** `<space>no` streams a running cell's stdout and stderr live as the kernel prints them, and shows the stored output once it finishes. After each run, cells whose inputs went stale, ran out of order, lost their writer, or were edited since they last ran wear a badge above the marker, their stored output dims, and the navigator carries the same glyph next to each cell's run time. <!-- SCREENSHOT NEEDED: cell markers wearing freshness badges above the line, with the dimmed stale output block below one of them -->
 - **A kernel that stays warm.** One kernel per notebook, keyed to the file path. State persists across cells the way it does in a REPL, survives closing the buffer and restarting Helix, and runs in the notebook's own directory so relative paths to your data resolve. The status line names the boot phase while it starts, and flags a kernel that predates the installed runner so you can restart it.
-- **Math that reads like math.** Inline `$…$` LaTeX conceals to Unicode as you read. Display `$$…$$` blocks and pipe tables compile through Typst and draw as typeset images.
+- **Math that reads like math.** Inline `$…$` LaTeX conceals to Unicode as you read. Display `$$…$$` blocks and pipe tables compile through Typst and draw as typeset images, and a `$$` that shares its line with your prose is formatted onto its own line so the equation never overlaps the sentence.
 - **One command to hand it over.** `:export-markdown`, `:export-typst`, and `:export-pdf` produce Markdown, a Typst source file, or a finished PDF. No LaTeX distribution required.
 
 ## A notebook is a Julia file
@@ -73,6 +73,9 @@ Then open the bundled demo.
 ```bash
 nothelix
 ```
+
+Pick up where you left off with `nothelix last`, which reopens the most recent
+file from a project that sets `resume-last = true` in its `.nothelix.conf`.
 
 You also need Julia 1.9 or newer on your PATH, via [juliaup](https://julialang.org/install/) if you do not have it, and a Kitty-protocol terminal for inline plots and typeset math. Run `nothelix doctor` if anything looks wrong.
 

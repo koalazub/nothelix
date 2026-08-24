@@ -15,6 +15,10 @@ pub fn kitty_placeholder_max_dim() -> isize {
     grid::capacity() as isize
 }
 
+pub(crate) fn grid_capacity() -> usize {
+    grid::capacity()
+}
+
 pub fn kitty_placeholder_payload(b64_data: String, image_id: isize) -> String {
     ffi(transmit_base64(&b64_data, addressable_id(image_id)))
 }
@@ -42,7 +46,9 @@ fn transmit_base64(b64_data: &str, image_id: u32) -> Result<String> {
         source,
     })?;
     let b64 = match ImageEncoding::of(&data) {
-        ImageEncoding::Png => trimmed.to_string(),
+        ImageEncoding::Png => {
+            BASE64.encode(crate::image_fit::shrink_to_transmit_limit(data))
+        }
         _ => BASE64.encode(kitty_png(&data)?),
     };
     Ok(transmission(&b64, image_id))
@@ -53,11 +59,12 @@ fn transmit_bytes(raw_data: &[u8], image_id: u32) -> Result<String> {
 }
 
 fn kitty_png(data: &[u8]) -> Result<Vec<u8>> {
-    match ImageEncoding::of(data) {
-        ImageEncoding::Png => Ok(data.to_vec()),
-        ImageEncoding::Svg => svg::rasterize_to_png(data),
-        _ => to_png(data),
-    }
+    let png = match ImageEncoding::of(data) {
+        ImageEncoding::Png => data.to_vec(),
+        ImageEncoding::Svg => svg::rasterize_to_png(data)?,
+        _ => to_png(data)?,
+    };
+    Ok(crate::image_fit::shrink_to_transmit_limit(png))
 }
 
 fn transmission(b64: &str, image_id: u32) -> String {

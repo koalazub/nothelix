@@ -41,7 +41,32 @@ a non-plot value shows its plain-text repr in the cell output instead.
 | `:view-chart` | | Open the last-executed plot in the interactive chart viewer |
 | `:plot-grow` | `<space>n=` | Grow the plot block under the cursor and re-render |
 | `:plot-shrink` | `<space>n-` | Shrink the plot block under the cursor and re-render |
-| `:insert-image` | | Drop a `# @image <path>` marker and blank canvas at the cursor |
+| `:insert-image` | | Drop a `# @image <path>` marker and blank canvas at the cursor, prompting for the path when called bare |
+| `:paste-image` | `<space>nP` | Save the clipboard image under `.nothelix/images/` and drop a `# @image` marker at the cursor |
+
+An image that never came from a cell can still live in the notebook. Copy a
+screenshot or a figure anywhere, press `<space>nP`, and nothelix reads the
+system clipboard, converts the bytes to PNG if the platform handed over TIFF or
+JPEG data, writes them into the notebook's `.nothelix/images/` sidecar, and
+inserts a `# @image` marker pointing at the file. The image renders inline
+immediately, survives reopening, and travels into exports like any other
+marker-referenced image. With no image on the clipboard the status line says so.
+`:insert-image` covers images that already exist on disk — it prompts for the
+path when called without an argument.
+
+Every image is fitted to the monitor before it draws: nothelix reads the
+image's pixel dimensions and the focused view's width and height, then picks
+the largest grid that preserves the aspect ratio without overflowing the text
+area, so a portrait phone photo arrives scaled to fit instead of cropped and a
+wide screenshot never runs past the right edge. Large pastes are downscaled
+toward a 1600-pixel longest side before transmission, keeping the Kitty
+payload small enough to paint in one frame. `:plot-grow` and `:plot-shrink`
+still resize the canvas by hand afterwards.
+
+A `# @image` marker whose file can no longer be read — deleted sidecar,
+moved notebook — renders nothing, and the status line names how many
+markers are unreadable so the gap is never silent. Re-paste the image or
+re-run the producing cell to restore it.
 
 Plots travel from Julia as PNG through the display system, and the terminal
 draws them over its graphics protocol. See
@@ -186,6 +211,35 @@ below is the engine's own output, written by `just gallery`.
 ```text
 {% include engine/math-reflow-pmatrix.txt %}
 ```
+
+The formatter also owns the delimiters themselves. You can type display math the
+way notes usually do, with the opening `$$` at the end of a sentence and the
+closing `$$` sharing its line with whatever follows:
+
+```text
+# Consider the system implementing the input-output relation $$
+# y_n = \mathcal{H}\{{x}\} = x_n^2.
+# $$ (a) Prove by example that the system is nonlinear. (3 marks)
+```
+
+On save — and on the render that follows open — the sentence keeps its line, the
+delimiters move onto bare `# $$` lines of their own, and the continuation lands
+below the block, so the typeset image never overlaps the prose around it:
+
+```text
+# Consider the system implementing the input-output relation
+# $$
+# y_n = \mathcal{H}\{{x}\} = x_n^2.
+# $$
+# (a) Prove by example that the system is nonlinear. (3 marks)
+```
+
+A complete `$$ … $$` span may also sit inside its prose line. Each span
+renders as its own image on reserved lines directly below the sentence, in
+left-to-right order, so `# (c) With $$r = e^{-i\omega}$$ evaluate` keeps its
+line and gains the typeset image underneath. The `$$` delimiters stay visible
+in the source; reservation only ever adds blank `# ` lines below, never
+rewrites prose.
 
 ## Tables
 
