@@ -274,11 +274,13 @@ function get_output_repr(x)
     x === nothing && return ""
     try
         io = IOBuffer()
-        show(IOContext(io, :limit => true, :displaysize => (40, 200)), MIME("text/plain"), x)
+        Base.invokelatest(show,
+            IOContext(io, :limit => true, :displaysize => (40, 200)),
+            MIME("text/plain"), x)
         return bound_output_text(String(take!(io)))
     catch
         try
-            return bound_output_text(repr(x))
+            return bound_output_text(Base.invokelatest(repr, x))
         catch
             return "<unable to display>"
         end

@@ -44,6 +44,22 @@
     (assert-equal seg (car parts) "split RS-batch first piece intact")
     (assert-equal seg (list-ref parts 199) "split RS-batch last piece intact"))
 
+  (let* ([rows (map number->string '(1 2 3 4 5 6 7 8 9 10))]
+         [marker "⋯ 5 more lines — <space>no shows the full output"]
+         [out (compact-string-rows rows 14 5 marker)])
+    (assert-equal 10 (length out) "compact: within cap keeps every row")
+    (assert-equal rows out "compact: within cap unchanged"))
+
+  (let* ([rows (map number->string
+                    '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20))]
+         [marker "⋯ 9 more lines"]
+         [out (compact-string-rows rows 14 5 marker)])
+    (assert-equal 11 (length out) "compact: capped at edge+marker+edge")
+    (assert-equal "1" (car out) "compact: keeps first row")
+    (assert-equal marker (list-ref out 5) "compact: marker sits after the head rows")
+    (assert-equal "20" (list-ref out 10) "compact: keeps last row")
+    (assert-true (not (member "11" out)) "compact: drops middle rows"))
+
   (print-test-suite-footer "string-utils"))
 
 (define (build-rs-batch n seg sep)

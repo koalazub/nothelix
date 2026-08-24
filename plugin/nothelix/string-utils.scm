@@ -10,7 +10,8 @@
          char->number
          json-get-string
          sanitise-error-message
-         truncate-string)
+         truncate-string
+         compact-string-rows)
 
 (define (string-find str substr start)
   (let loop ([pos start])
@@ -153,3 +154,24 @@
              [clean6 (string-replace-all clean5 "\t" " ")]
              [trimmed (string-trim clean6)])
         (truncate-string trimmed 120))))
+
+;;@doc
+;; Cap `rows` at `max-rows` display lines: the first `edge-rows` rows, the
+;; `marker` line, then the last `edge-rows` rows. Rows within the cap come
+;; back unchanged. Returns the compacted row list.
+(define (compact-string-rows rows max-rows edge-rows marker)
+  (define n (length rows))
+  (if (or (<= n max-rows) (<= n (* 2 edge-rows)))
+      rows
+      (append
+        (take-rows rows 0 edge-rows)
+        (list marker)
+        (take-rows rows (- n edge-rows) n))))
+
+(define (take-rows rows from to)
+  (let loop ([rest rows] [i 0] [acc '()])
+    (cond
+      [(null? rest) (reverse acc)]
+      [(< i from) (loop (cdr rest) (+ i 1) acc)]
+      [(< i to) (loop (cdr rest) (+ i 1) (cons (car rest) acc))]
+      [else (reverse acc)])))

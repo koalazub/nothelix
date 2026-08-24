@@ -4,10 +4,19 @@ import Pkg
 include(joinpath(@__DIR__, "cell_registry.jl"))
 include(joinpath(@__DIR__, "ast_analysis.jl"))
 include(joinpath(@__DIR__, "output_capture.jl"))
+include(joinpath(@__DIR__, "cell_macros.jl"))
 
 using .CellRegistry
 using .ASTAnalysis
 using .OutputCapture
+using .CellMacros
+
+# Compiled at include time: the kernel's main loop has the same property, so a
+# call through this frame reproduces the world-age failure mode where methods
+# defined by a later `using` are "too new" for the inlined Base machinery.
+function result_repr_via_boot_frame(cell_idx)
+    CellMacros.get_cell_result_json(cell_idx)["output_repr"]
+end
 
 @testset "live output capture" begin
     dir = mktempdir()
@@ -92,4 +101,13 @@ end
     if haskey(depot, :Circulant)
         @test "ToeplitzMatrices" in depot[:Circulant]
     end
+end
+
+@testset "a value whose size methods load after boot still displays" begin
+    result = CellMacros.execute_cell(60, "using ToeplitzMatrices\nCirculant([-2, 1, 0, 0, 1])")
+    @test result.success
+    payload = result_repr_via_boot_frame(60)
+    @test payload != "<unable to display>"
+    @test occursin("Circulant", payload)
+    @test occursin("-2", payload)
 end

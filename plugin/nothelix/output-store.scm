@@ -16,9 +16,11 @@
          encode-outputs+rows+text-plots
          encode-outputs+rows+text-plots+audio
          encode-outputs+rows+text-plots+audio+widgets
+         encode-outputs+rows+text-plots+audio+widgets+detail
          decode-stored-text-plots-blob
          decode-stored-audio-blob
          decode-stored-widgets-blob
+         decode-stored-detail-blob
          store-set-widgets-blob!
          decode-text-plots-blob
          stored-source-hash)
@@ -77,6 +79,7 @@
 (define *text-plots-sep-line* "###NOTHELIX-TEXT-PLOTS###")
 (define *audio-sep-line* "###NOTHELIX-AUDIO###")
 (define *widgets-sep-line* "###NOTHELIX-WIDGETS###")
+(define *detail-sep-line* "###NOTHELIX-OUTPUT-DETAIL###")
 
 ;;@doc
 ;; Bundle nbformat outputs-json with the exact text rows that were rendered
@@ -119,6 +122,20 @@
   (define base (encode-outputs+rows+text-plots+audio outputs-json rows text-plots-blob audio-blob))
   (if (and widgets-blob (string? widgets-blob) (> (string-length widgets-blob) 0))
       (string-append base "\n" *widgets-sep-line* "\n" widgets-blob)
+      base))
+
+;;@doc
+;; Like `encode-outputs+rows+text-plots+audio+widgets`, but also persists the
+;; full untruncated repr rows of a compacted cell after a detail marker so
+;; `decode-stored-detail-blob` can hand them to the output view. The detail
+;; section trails the widgets section, so an empty/`#false` `detail-blob`
+;; makes this byte-identical to `encode-outputs+rows+text-plots+audio+widgets`.
+(define (encode-outputs+rows+text-plots+audio+widgets+detail
+         outputs-json rows text-plots-blob audio-blob widgets-blob detail-blob)
+  (define base (encode-outputs+rows+text-plots+audio+widgets
+                outputs-json rows text-plots-blob audio-blob widgets-blob))
+  (if (and detail-blob (string? detail-blob) (> (string-length detail-blob) 0))
+      (string-append base "\n" *detail-sep-line* "\n" detail-blob)
       base))
 
 ;;@doc
@@ -166,9 +183,9 @@
 
 ;;@doc
 ;; Split a `stored-body-remainder` result into (pre-widgets . widgets-blob) on
-;; the widgets marker — widgets-blob is "" when the marker is absent. The widgets
-;; section trails everything, so callers strip it here first, then feed the
-;; pre-widgets part to `split-off-audio`.
+;; the widgets marker — widgets-blob is "" when the marker is absent. The
+;; widgets section trails the audio section, so callers strip it here first,
+;; then feed the pre-widgets part to `split-off-audio`.
 (define (split-off-widgets remainder)
   (define marker (string-append "\n" *widgets-sep-line* "\n"))
   (define parts (split-once remainder marker))
@@ -176,8 +193,21 @@
       (cons (car parts) (cadr parts))
       (cons remainder "")))
 
-;; The rows/text-plots/audio body with any trailing widgets section stripped.
-(define (pre-widgets-body remainder) (car (split-off-widgets remainder)))
+;;@doc
+;; Split a `stored-body-remainder` result into (pre-detail . detail-blob) on
+;; the detail marker — detail-blob is "" when the marker is absent. The
+;; detail section trails everything, so callers strip it here first.
+(define (split-off-detail remainder)
+  (define marker (string-append "\n" *detail-sep-line* "\n"))
+  (define parts (split-once remainder marker))
+  (if (list? parts)
+      (cons (car parts) (cadr parts))
+      (cons remainder "")))
+
+;; The rows/text-plots/audio body with any trailing widgets and detail
+;; sections stripped.
+(define (pre-widgets-body remainder)
+  (car (split-off-widgets (car (split-off-detail remainder)))))
 
 ;;@doc
 ;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
@@ -233,8 +263,20 @@
   (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
   (if (not remainder)
       #false
-      (let ([widgets-blob (cdr (split-off-widgets remainder))])
+      (let ([widgets-blob (cdr (split-off-widgets (car (split-off-detail remainder))))])
         (if (equal? widgets-blob "") #false widgets-blob))))
+
+;;@doc
+;; Given `store-get-for`'s raw "<hash>\t<body>" value and the cell's current
+;; source hash, return the stored full-repr detail rows when the hash matches
+;; and a detail section was stored, or #false. An optional trailing
+;; `legacy-hash` grants the one-launch migration grace.
+(define (decode-stored-detail-blob raw current-hash . legacy-hash)
+  (define remainder (stored-body-remainder raw current-hash (opt-legacy legacy-hash)))
+  (if (not remainder)
+      #false
+      (let ([detail-blob (cdr (split-off-detail remainder))])
+        (if (equal? detail-blob "") #false (string-split detail-blob "\n")))))
 
 ;;@doc
 ;; Replace the trailing widgets section of the focused workspace's stored entry
