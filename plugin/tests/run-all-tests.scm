@@ -5,6 +5,7 @@
 (require "execution-flow-test.scm")
 (require "math-image-test.scm")
 (require "string-utils-test.scm")
+(require "project-config-test.scm")
 (require "image-cache-test.scm")
 (require "output-insert-test.scm")
 (require "output-render-test.scm")
@@ -25,6 +26,7 @@
          run-execution-flow-tests
          run-math-image-tests
          run-string-utils-tests
+         run-project-config-tests
          run-image-cache-tests
          run-output-insert-tests
          run-output-render-tests
@@ -53,6 +55,7 @@
       (cons "execution-flow" (run-execution-flow-tests))
       (cons "math-image" (run-math-image-tests))
       (cons "string-utils" (run-string-utils-tests))
+      (cons "project-config" (run-project-config-tests))
       (cons "image-cache" (run-image-cache-tests))
       (cons "output-insert" (run-output-insert-tests))
       (cons "output-render" (run-output-render-tests))

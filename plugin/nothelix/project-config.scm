@@ -7,18 +7,14 @@
 ;;; runs.
 ;;;
 ;;; Format — a flat `key = value` file at the project root. Blank lines and
-;;; lines beginning with `#` or `;` are comments. Unparseable lines and unknown
-;;; keys are ignored; a missing file is a no-op:
+;;; lines beginning with `#` or `;` are comments. A missing file is a no-op:
 ;;;
 ;;;   # nothelix project config (display-only)
-;;;   math-font-pt    = 14
-;;;   table-font-pt   = 13
-;;;   math-color      = #d0d0d0     ; "#rrggbb" or "rrggbb"
-;;;   render-width    = 220         ; pin math/table image width in columns
-;;;   conceal-on-open = true        ; auto-conceal LaTeX when a file opens
-;;;   plots-per-cell  = 32          ; image-id slots reserved per cell
-;;;   plot-mode       = auto        ; auto | raster | braille
-;;;   slm-summaries   = false       ; opt-in on-device SLM picker labels
+;;;   render-cache     = true
+;;;
+;;; The authoritative key list lives in *config-key-specs* below and is what
+;;; `:nothelix-config-keys` prints; unknown keys warn on open instead of being
+;;; silently ignored.
 ;;;
 ;;; A line-based format (not s-expr) is deliberate: Steel's `read` leaves the
 ;;; reader wedged after a parse error, so one malformed config could silently
@@ -26,6 +22,7 @@
 ;;; is simply skipped.
 
 (require "string-utils.scm")
+(require "debug.scm")
 (require "math-image.scm")
 (require "table-image.scm")
 (require "image-cache.scm")
@@ -68,6 +65,9 @@
          set-audio-sweep-ms!
          widgets-enabled?
          set-widgets-enabled!
+         config-key-specs
+         config-keys-reference
+         unknown-config-keys
          maybe-apply-project-config!
          apply-project-config!
          find-project-config
@@ -322,49 +322,135 @@
 
 ;; --- apply ---
 
+(define (config-key-spec name type default doc setter)
+  (list name type default doc setter))
+
+(define (spec-name spec) (list-ref spec 0))
+(define (spec-type spec) (list-ref spec 1))
+(define (spec-default spec) (list-ref spec 2))
+(define (spec-doc spec) (list-ref spec 3))
+(define (spec-setter spec) (list-ref spec 4))
+
+(define (parse-seek-ladder-field v)
+  (if (string? v) (parse-seek-ladder-value v) #false))
+
+(define *config-key-specs*
+  (list
+    (config-key-spec "conceal-on-open" "boolean" "#true"
+      "auto-conceal LaTeX when a file opens"
+      (lambda (v) (when (boolean? v) (set-box! *conceal-on-open* v))))
+    (config-key-spec "render-cache" "boolean" "#true"
+      "persist completed math/table renders to disk and reuse them on reopen"
+      set-render-cache!)
+    (config-key-spec "math-font-pt" "integer" "14"
+      "font size for display-math images"
+      set-math-image-font-pt!)
+    (config-key-spec "table-font-pt" "integer" "13"
+      "font size for table images"
+      set-table-image-font-pt!)
+    (config-key-spec "math-color" "colour" "theme-derived"
+      "pin the math/table ink as rrggbb; disables theme auto-colour"
+      (lambda (v) (when (string? v) (set-math-image-color! (strip-hash v)))))
+    (config-key-spec "render-width" "integer" "derived from view"
+      "pin math/table image width in columns"
+      (lambda (v) (when (and (exact-integer? v) (> v 0)) (set-math-image-width-override! v))))
+    (config-key-spec "plots-per-cell" "integer" "32"
+      "cap on stacked plots rendered per cell, clamped to 1..256"
+      set-plots-per-cell!)
+    (config-key-spec "plot-mode" "auto|raster|braille" "auto"
+      "force a plot rendering path or let the backend decide"
+      set-plot-mode!)
+    (config-key-spec "picker-jump" "integer" "10"
+      "rows the cell navigator scrolls per jump, clamped to 1..100"
+      set-picker-jump!)
+    (config-key-spec "slm-summaries" "boolean" "#false"
+      "label picker rows with Apple's on-device model (macOS 26+, opt-in)"
+      set-slm-summaries!)
+    (config-key-spec "audio-autoplay" "boolean" "#true"
+      "auto-play a cell's audio when it runs"
+      set-audio-autoplay!)
+    (config-key-spec "audio-view" "waveform|spectrogram" "waveform"
+      "which view a cell's audio renders under its output"
+      set-audio-view!)
+    (config-key-spec "audio-waveform-rows" "integer" "4"
+      "braille rows drawn for a playing clip, clamped to 1..16"
+      set-audio-waveform-rows!)
+    (config-key-spec "audio-refresh-ms" "integer" "100"
+      "milliseconds between redraws of a playing clip's graph, clamped to 40..1000"
+      set-audio-refresh-ms!)
+    (config-key-spec "audio-window-ms" "integer" "40"
+      "milliseconds of signal shown around the playing position, clamped to 5..30000"
+      set-audio-window-ms!)
+    (config-key-spec "audio-seek-ladder" "comma-numbers" "100,500,1000,5000,30000"
+      "seek-step ladder in milliseconds, coarsest last"
+      (lambda (v) (let ([ladder (parse-seek-ladder-field v)]) (when ladder (set-audio-seek-ladder! ladder)))))
+    (config-key-spec "audio-accel-window-ms" "integer" "700"
+      "window in which repeated seeks escalate along the ladder"
+      set-audio-accel-window-ms!)
+    (config-key-spec "audio-sweep-ms" "integer" "100"
+      "duration of the scrub-mode playhead sweep between columns"
+      set-audio-sweep-ms!)
+    (config-key-spec "widgets" "boolean" "#true"
+      "enable the ]w/[w widget walk and shared modal surfaces"
+      set-widgets-enabled!)
+    (config-key-spec "run-interrupts" "boolean" "#true"
+      "whether running a running cell interrupts it instead of refusing"
+      set-run-interrupts!)))
+
 ;;@doc
-;; Apply a parsed config alist to the live display state. Each key is
-;; type-checked, so a malformed value is skipped rather than corrupting state.
+;; Every supported `.nothelix.conf` key as a spec list of
+;; (name type default doc setter). Single source of truth for parsing,
+;; validation warnings, and :nothelix-config-keys.
+(define (config-key-specs) *config-key-specs*)
+
+(define *executable-config-keys* '("julia-bin" "julia-project"))
+
+(define (known-config-key? name)
+  (or (member name *executable-config-keys*)
+      (let find ([specs *config-key-specs*])
+        (cond
+          [(null? specs) #false]
+          [(equal? (spec-name (car specs)) name) #true]
+          [else (find (cdr specs))]))))
+
+;;@doc
+;; Keys present in a parsed config that nothelix does not know, in file order.
+(define (unknown-config-keys alist)
+  (let loop ([xs alist] [seen '()] [acc '()])
+    (if (null? xs)
+        (reverse acc)
+        (let ([name (car (car xs))])
+          (loop (cdr xs)
+                (cons name seen)
+                (if (and (not (member name seen)) (not (known-config-key? name)))
+                    (cons name acc)
+                    acc))))))
+
+;;@doc
+;; Multi-line reference of every config key: name, type, default, and effect,
+;; formatted for the status line and helix.log.
+(define (config-keys-reference)
+  (string-join
+    (map (lambda (spec)
+           (string-append (spec-name spec)
+                          "  [" (spec-type spec) "]"
+                          "  default: " (spec-default spec)
+                          "  — " (spec-doc spec)))
+         *config-key-specs*)
+    "\n"))
+
+;;@doc
+;; Apply a parsed config alist to the live display state. Every setter
+;; type-checks its own input, so a malformed value is skipped rather than
+;; corrupting state. Returns the list of unknown keys that were skipped.
 (define (apply-project-config! alist)
-  (let ([mfp (config-ref alist "math-font-pt" #false)])
-    (when (number? mfp) (set-math-image-font-pt! mfp)))
-  (let ([tfp (config-ref alist "table-font-pt" #false)])
-    (when (number? tfp) (set-table-image-font-pt! tfp)))
-  (let ([mc (config-ref alist "math-color" #false)])
-    (when (string? mc) (set-math-image-color! (strip-hash mc))))
-  (let ([rw (config-ref alist "render-width" #false)])
-    (when (and (number? rw) (> rw 0)) (set-math-image-width-override! rw)))
-  (let ([ppc (config-ref alist "plots-per-cell" #false)])
-    (when (and (exact-integer? ppc) (> ppc 0)) (set-plots-per-cell! ppc)))
-  (let ([pm (config-ref alist "plot-mode" #false)])
-    (when (string? pm) (set-plot-mode! pm)))
-  (let ([pj (config-ref alist "picker-jump" #false)])
-    (when (exact-integer? pj) (set-picker-jump! pj)))
-  (let ([co (config-ref alist "conceal-on-open" 'unset)])
-    (when (boolean? co) (set-box! *conceal-on-open* co)))
-  (let ([ss (config-ref alist "slm-summaries" 'unset)])
-    (when (boolean? ss) (set-slm-summaries! ss)))
-  (let ([aa (config-ref alist "audio-autoplay" 'unset)])
-    (when (boolean? aa) (set-audio-autoplay! aa)))
-  (let ([awr (config-ref alist "audio-waveform-rows" #false)])
-    (when (exact-integer? awr) (set-audio-waveform-rows! awr)))
-  (let ([av (config-ref alist "audio-view" #false)])
-    (when (string? av) (set-audio-view! av)))
-  (let ([asl (parse-seek-ladder-value (config-ref alist "audio-seek-ladder" #false))])
-    (when asl (set-audio-seek-ladder! asl)))
-  (let ([aaw (config-ref alist "audio-accel-window-ms" #false)])
-    (when (exact-integer? aaw) (set-audio-accel-window-ms! aaw)))
-  (let ([asw (config-ref alist "audio-sweep-ms" #false)])
-    (when (exact-integer? asw) (set-audio-sweep-ms! asw)))
-  (let ([we (config-ref alist "widgets" 'unset)])
-    (when (boolean? we) (set-widgets-enabled! we)))
-  (let ([ri (config-ref alist "run-interrupts" 'unset)])
-    (when (boolean? ri) (set-run-interrupts! ri)))
-  (let ([arm (config-ref alist "audio-refresh-ms" #false)])
-    (when (exact-integer? arm) (set-audio-refresh-ms! arm)))
-  (let ([awm (config-ref alist "audio-window-ms" #false)])
-    (when (exact-integer? awm) (set-audio-window-ms! awm)))
-  alist)
+  (for-each
+    (lambda (spec)
+      (let ([v (config-ref alist (spec-name spec) 'unset)])
+        (when (not (eq? v 'unset))
+          ((spec-setter spec) v))))
+    *config-key-specs*)
+  (unknown-config-keys alist))
 
 ;; --- executable runtime (trust-gated) ---
 ;;
@@ -462,12 +548,25 @@
     (when path
       (let ([cfg-path (find-project-config path)])
         (when cfg-path
-          (let ([alist (parse-project-config cfg-path)]
-                [dir (path-dir cfg-path)])
-            (apply-project-config! alist)
-            (if (and (executable-fields-present? alist)
-                     (not (project-trusted? dir)))
-                (set-status!
-                  (string-append "nothelix: " dir
-                    " requests a custom Julia runtime — run :nothelix-trust-project to allow"))
-                (set-status! (string-append "nothelix: applied " cfg-path)))))))))
+          (let* ([alist (parse-project-config cfg-path)]
+                 [dir (path-dir cfg-path)]
+                 [unknown (apply-project-config! alist)]
+                 [untrusted?
+                  (and (executable-fields-present? alist)
+                       (not (project-trusted? dir)))])
+            (when (> (length unknown) 0)
+              (debug-log
+                (string-append "project-config: ignored unknown keys in " cfg-path ": "
+                               (string-join unknown ", "))))
+            (cond
+              [untrusted?
+               (set-status!
+                 (string-append "nothelix: " dir
+                                " requests a custom Julia runtime — run :nothelix-trust-project to allow"))]
+              [(> (length unknown) 0)
+               (set-status!
+                 (string-append "nothelix: applied " cfg-path
+                                " — ignored unknown key(s): "
+                                (string-join unknown ", ")))]
+              [else
+               (set-status! (string-append "nothelix: applied " cfg-path))])))))))
