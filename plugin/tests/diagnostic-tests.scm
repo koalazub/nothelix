@@ -173,12 +173,12 @@
 (cond
   [(equal? detected-protocol "kitty")
    (displayln "  Checking Kitty protocol format...")
-   (test "Starts with ESC_G" (string-starts-with? escape-seq "\x1b_G"))
+   (test "Starts with ESC_G" (string-starts-with? escape-seq "\x1b;_G"))
    (displayln (string-append "    First 80 chars: " (substring escape-seq 0 (min 80 (string-length escape-seq)))))
    ]
   [(equal? detected-protocol "iterm2")
    (displayln "  Checking iTerm2 protocol format...")
-   (test "Starts with OSC 1337" (string-starts-with? escape-seq "\x1b]1337;"))
+   (test "Starts with OSC 1337" (string-starts-with? escape-seq "\x1b;]1337;"))
    ]
   [else
    (displayln "  Unknown protocol - skipping format checks")])

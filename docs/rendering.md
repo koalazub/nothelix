@@ -171,7 +171,10 @@ Typst, compiles it to vector, rasterises it, and draws it inline.
 | `:math-render-buffer` | Stack big-operator limits (`\int`, `\sum`, `\prod`) above and below the glyph |
 | `:math-render-clear` | Remove the stacked-limit annotations |
 
-Display math renders on open and refreshes on save. The conversion uses
+Display math renders on open and refreshes on save. It also re-renders when you
+switch themes (`:theme`): the ink colour is derived from the active theme and
+baked into the image at render time, so a stale image would otherwise read as
+washed out against the new background. The conversion uses
 [MiTeX](credits.md), and [Architecture](architecture.md#mathematics-rendering)
 covers the layout strategy. Try it live on the [Playground](playground.md).
 
@@ -193,8 +196,8 @@ through the same Typst path as display math.
 |---|---|
 | `:render-all-tables` | Render every Markdown pipe table in the buffer |
 
-Tables refresh on save alongside math. The source text stays in the file and
-returns when you edit.
+Tables refresh on save alongside math, and re-render on a theme switch for the
+same reason. The source text stays in the file and returns when you edit.
 
 ## Graphics protocols
 

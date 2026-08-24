@@ -240,6 +240,13 @@ fn julia_missing() -> Option<HealthIssue> {
     })
 }
 
+fn inside_kitty_protocol_terminal() -> bool {
+    let term_identifies_kitty_capable = std::env::var("TERM")
+        .map(|term| term.contains("kitty") || term.contains("ghostty"))
+        .unwrap_or(false);
+    term_identifies_kitty_capable || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
+}
+
 fn terminal_multiplexer() -> Option<HealthIssue> {
     let multiplexer = if std::env::var_os("TMUX").is_some() {
         "tmux"
@@ -248,6 +255,9 @@ fn terminal_multiplexer() -> Option<HealthIssue> {
     } else {
         return None;
     };
+    if inside_kitty_protocol_terminal() {
+        return None;
+    }
     Some(HealthIssue::new(
         "terminal-multiplexer",
         format!("running inside {multiplexer} — inline plots, math, and tables may not render"),
